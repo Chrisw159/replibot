@@ -11,7 +11,7 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useQueryClient } from "@tanstack/react-query";
 import { getGetBetfairStatusQueryKey, getGetBetfairAccountQueryKey } from "@workspace/api-client-react";
-import { CheckCircle2, XCircle, Shield } from "lucide-react";
+import { CheckCircle2, XCircle, Shield, AlertTriangle } from "lucide-react";
 
 const connectSchema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -58,6 +58,16 @@ export default function Settings() {
     <div className="space-y-6 max-w-4xl">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+      </div>
+
+      <div className="flex items-start gap-3 p-4 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300">
+        <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+        <div className="text-sm">
+          <p className="font-semibold mb-1">Geo-restriction notice</p>
+          <p className="text-amber-300/80">
+            Betfair blocks API access from US-based servers. This development environment runs in the US, so live Betfair connections will be rejected. All other features (strategies, P&amp;L tracking, paper trading) work fully. To use live market data and real betting, <strong className="text-amber-300">deploy this app to a UK or EU server</strong>.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-6">

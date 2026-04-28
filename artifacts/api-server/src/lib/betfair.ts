@@ -1,6 +1,6 @@
 import { logger } from "./logger";
 
-const BETFAIR_LOGIN_URL = "https://identitysso-cert.betfair.com/api/login";
+const BETFAIR_LOGIN_URL = "https://identitysso.betfair.com/api/login";
 const BETFAIR_API_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1";
 const BETFAIR_ACCOUNTS_URL = "https://api.betfair.com/exchange/account/json-rpc/v1";
 
@@ -38,6 +38,22 @@ export async function loginWithCredentials(
       body: params.toString(),
     });
 
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!contentType.includes("application/json")) {
+      const text = await response.text();
+      if (text.includes("Restricted") || text.includes("country that Betfair does not")) {
+        logger.warn({ username }, "Betfair geo-restricted: server IP blocked");
+        return {
+          success: false,
+          error:
+            "Betfair is geo-restricted from this server's IP address (US region). To use live Betfair connectivity, deploy the app to a UK/EU server. Paper trading mode still works fully.",
+        };
+      }
+      logger.warn({ text: text.slice(0, 200) }, "Unexpected non-JSON response from Betfair");
+      return { success: false, error: "Unexpected response from Betfair login server" };
+    }
+
     const data = (await response.json()) as {
       token?: string;
       status?: string;
@@ -59,7 +75,7 @@ export async function loginWithCredentials(
     }
   } catch (err) {
     logger.error({ err }, "Betfair login request failed");
-    return { success: false, error: "Network error connecting to Betfair" };
+    return { success: false, error: "Network error connecting to Betfair. Please check your credentials and try again." };
   }
 }
 
