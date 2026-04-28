@@ -278,8 +278,9 @@ export function StrategyDialog({
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="BACK">BACK (bet for)</SelectItem>
+                          <SelectItem value="BACK">BACK (single selection)</SelectItem>
                           <SelectItem value="LAY">LAY (bet against)</SelectItem>
+                          <SelectItem value="DUTCH">DUTCH (back multiple to guarantee profit)</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -328,10 +329,15 @@ export function StrategyDialog({
                   name="stakeAmount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Stake Per Bet (£)</FormLabel>
+                      <FormLabel>
+                        {form.watch("betType") === "DUTCH" ? "Total Dutch Stake (£)" : "Stake Per Bet (£)"}
+                      </FormLabel>
                       <FormControl>
                         <Input type="number" step="0.01" min="0.01" {...field} />
                       </FormControl>
+                      {form.watch("betType") === "DUTCH" && (
+                        <FormDescription>Total stake spread across all qualifying runners to guarantee equal profit whichever wins.</FormDescription>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}

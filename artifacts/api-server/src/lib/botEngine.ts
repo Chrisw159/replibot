@@ -8,24 +8,20 @@ import {
   placeBet,
   loginWithEnvCredentials,
 } from "./betfair";
+import type { BetfairMarketDetail, BetfairRunner } from "./betfair";
 import OpenAI from "openai";
 
 async function getAIClient(model: string): Promise<OpenAI> {
   if (model.startsWith("grok-")) {
-    // Prefer env var, fall back to DB-stored key
     let apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
       const [config] = await db.select({ xaiApiKey: botConfigTable.xaiApiKey }).from(botConfigTable).limit(1);
       apiKey = config?.xaiApiKey ?? undefined;
     }
-    if (!apiKey) {
-      throw new Error("xAI API key is not set. Add it in Settings → AI Provider.");
-    }
+    if (!apiKey) throw new Error("xAI API key is not set. Add it in Settings → AI Provider.");
     return new OpenAI({ apiKey, baseURL: "https://api.x.ai/v1" });
   }
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-    throw new Error("AI_INTEGRATIONS_OPENAI_API_KEY is not set.");
-  }
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) throw new Error("AI_INTEGRATIONS_OPENAI_API_KEY is not set.");
   return new OpenAI({
     apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
     baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1",
@@ -36,57 +32,262 @@ let botInterval: NodeJS.Timeout | null = null;
 let botRunning = false;
 let startedAt: Date | null = null;
 
-export function isBotRunning(): boolean {
-  return botRunning;
-}
+export function isBotRunning(): boolean { return botRunning; }
+export function getStartedAt(): Date | null { return startedAt; }
 
-export function getStartedAt(): Date | null {
-  return startedAt;
-}
-
-async function logBotActivity(
-  level: string,
-  message: string,
-  metadata?: Record<string, unknown>
-): Promise<void> {
-  await db.insert(botLogsTable).values({
-    level,
-    message,
-    metadata: metadata ? JSON.stringify(metadata) : null,
-  });
+async function logBotActivity(level: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
+  await db.insert(botLogsTable).values({ level, message, metadata: metadata ? JSON.stringify(metadata) : null });
   logger.info({ level, message, metadata }, "Bot activity");
 }
 
 async function getBotConfig() {
   const [config] = await db.select().from(botConfigTable).limit(1);
   if (!config) {
-    const [newConfig] = await db
-      .insert(botConfigTable)
-      .values({})
-      .returning();
+    const [newConfig] = await db.insert(botConfigTable).values({}).returning();
     return newConfig;
   }
   return config;
 }
 
+// ─── Dutch Betting ──────────────────────────────────────────────────────────
+
+interface DutchConfig {
+  maxRunners: number;
+  minLiquidity: number;
+  minutesBeforeStart: number;
+  countryCode: string;
+  excludeRaceTypes: string[];
+}
+
+function parseDutchConfig(marketFilter: string | null): DutchConfig {
+  const defaults: DutchConfig = {
+    maxRunners: 12,
+    minLiquidity: 10000,
+    minutesBeforeStart: 3,
+    countryCode: "GB",
+    excludeRaceTypes: ["Novice", "Maiden"],
+  };
+  try {
+    return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
+  } catch {
+    return defaults;
+  }
+}
+
+function calcDutchStake(odds: number, bookPct: number, totalStake: number): number {
+  // stake_i = totalStake / (bookPct * odds_i)  →  stake_i * odds_i = totalStake / bookPct for all i
+  return Math.round((totalStake / (bookPct * odds)) * 100) / 100;
+}
+
+async function runDutchStrategy(
+  strategy: typeof strategiesTable.$inferSelect,
+  config: typeof botConfigTable.$inferSelect
+): Promise<void> {
+  const dc = parseDutchConfig(strategy.marketFilter);
+  const minFavOdds = Number(strategy.minOdds);   // 2/1 = 3.0
+  const maxSelOdds = Number(strategy.maxOdds);    // 30/1 = 31.0
+  const totalStake = Number(strategy.stakeAmount);
+
+  const markets = await listMarkets({
+    eventTypeId: strategy.eventTypeId,
+    countryCode: dc.countryCode,
+    limit: 20,
+  });
+
+  if (markets.length === 0) return;
+
+  const now = Date.now();
+
+  // Only races starting within the timing window
+  const candidateMarkets = markets.filter(m => {
+    const startMs = new Date(m.marketStartTime).getTime();
+    const minsToStart = (startMs - now) / 60_000;
+    return minsToStart >= 0 && minsToStart <= dc.minutesBeforeStart;
+  });
+
+  if (candidateMarkets.length === 0) {
+    await logBotActivity("info", `[DUTCH:${strategy.name}] No races within ${dc.minutesBeforeStart}-min window.`);
+    return;
+  }
+
+  for (const market of candidateMarkets) {
+    // ── Liquidity filter ──
+    if (market.totalMatched < dc.minLiquidity) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${dc.minLiquidity}`);
+      continue;
+    }
+
+    // ── Race type filter (Novice / Maiden) ──
+    const raceName = `${market.marketName} ${market.eventName}`.toUpperCase();
+    const excluded = dc.excludeRaceTypes.find(t => raceName.includes(t.toUpperCase()));
+    if (excluded) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — excluded race type "${excluded}"`);
+      continue;
+    }
+
+    const marketDetail = await getMarketDetail(market.marketId);
+    if (!marketDetail) continue;
+
+    const activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
+    if (activeRunners.length === 0) continue;
+
+    // ── Runner count filter ──
+    if (activeRunners.length > dc.maxRunners) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — ${activeRunners.length} runners > max ${dc.maxRunners}`);
+      continue;
+    }
+
+    // ── Minimum favourite odds filter ──
+    const sortedByOdds = [...activeRunners].sort((a, b) => (a.bestBackPrice ?? 999) - (b.bestBackPrice ?? 999));
+    const favouriteOdds = sortedByOdds[0].bestBackPrice ?? 0;
+
+    if (favouriteOdds < minFavOdds) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — favourite ${favouriteOdds} < min ${minFavOdds} (2/1)`);
+      continue;
+    }
+
+    // ── Build qualifying selection list (odds ≤ maxSelOdds) ──
+    const qualifying: BetfairRunner[] = activeRunners.filter(r => (r.bestBackPrice ?? 0) <= maxSelOdds);
+    if (qualifying.length === 0) continue;
+
+    // ── Book percentage check ──
+    const bookPct = qualifying.reduce((sum, r) => sum + 1 / r.bestBackPrice!, 0);
+    const guaranteedReturn = totalStake / bookPct;
+    const guaranteedProfit = guaranteedReturn - totalStake;
+    const roiPct = (guaranteedProfit / totalStake) * 100;
+
+    if (bookPct >= 1) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — book ${(bookPct * 100).toFixed(1)}% ≥ 100% (no profit possible)`);
+      continue;
+    }
+
+    // ── AI validation ──
+    const marketContext = `
+Dutch Bet Opportunity — Horse Racing
+Race: ${marketDetail.eventName} — ${marketDetail.marketName}
+Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.length}
+Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
+Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
+
+Qualifying runners (odds ≤ ${maxSelOdds}):
+${qualifying.map(r => `  • ${r.runnerName}: ${r.bestBackPrice}`).join("\n")}
+
+Book percentage: ${(bookPct * 100).toFixed(1)}%
+Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roiPct.toFixed(1)}% ROI on £${totalStake} stake)
+    `.trim();
+
+    const systemPrompt = strategy.aiPrompt ??
+      "You are a horse racing dutching validator. Approve only solid opportunities on reputable UK tracks.";
+
+    let aiDecision = { shouldBet: false, reasoning: "AI not called", confidence: 0 };
+    try {
+      const aiClient = await getAIClient(strategy.aiModel);
+      const response = await aiClient.chat.completions.create({
+        model: strategy.aiModel,
+        max_completion_tokens: 300,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `Validate this dutch bet.\n\n${marketContext}\n\nReply with JSON only: { "shouldBet": boolean, "reasoning": string, "confidence": number (0-1) }`,
+          },
+        ],
+      });
+      const raw = response.choices[0]?.message?.content ?? "{}";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) aiDecision = JSON.parse(match[0]);
+    } catch (err) {
+      aiDecision = { shouldBet: false, reasoning: `AI error: ${err instanceof Error ? err.message : "Unknown"}`, confidence: 0 };
+    }
+
+    if (!aiDecision.shouldBet) {
+      await logBotActivity("info", `[DUTCH] AI rejected ${market.eventName}: ${aiDecision.reasoning}`);
+      continue;
+    }
+
+    // ── Place bets ──
+    const dutchGroupId = `DUTCH-${market.marketId}-${Date.now()}`;
+
+    if (config.paperTradingMode) {
+      for (const runner of qualifying) {
+        const stake = calcDutchStake(runner.bestBackPrice!, bookPct, totalStake);
+        await db.insert(betsTable).values({
+          strategyId: strategy.id,
+          strategyName: strategy.name,
+          marketId: market.marketId,
+          marketName: marketDetail.marketName,
+          eventName: marketDetail.eventName,
+          selectionId: runner.selectionId,
+          selectionName: runner.runnerName,
+          betType: "BACK",
+          requestedOdds: runner.bestBackPrice!.toString(),
+          matchedOdds: runner.bestBackPrice!.toString(),
+          stakeAmount: stake.toString(),
+          potentialProfit: guaranteedProfit.toFixed(2),
+          status: "MATCHED",
+          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Book: ${(bookPct * 100).toFixed(1)}% | ROI: ${roiPct.toFixed(1)}%`,
+          betId: `${dutchGroupId}-${runner.selectionId}`,
+        });
+      }
+      await logBotActivity("info",
+        `[DUTCH][PAPER] Placed ${qualifying.length} bets on ${marketDetail.eventName} — Book: ${(bookPct * 100).toFixed(1)}%, Guaranteed profit: £${guaranteedProfit.toFixed(2)} (${roiPct.toFixed(1)}% ROI)`,
+        { race: market.eventName, qualifying: qualifying.length, bookPct, guaranteedProfit, reasoning: aiDecision.reasoning }
+      );
+    } else {
+      for (const runner of qualifying) {
+        const stake = calcDutchStake(runner.bestBackPrice!, bookPct, totalStake);
+        const result = await placeBet({
+          marketId: market.marketId,
+          selectionId: runner.selectionId,
+          betType: "BACK",
+          price: runner.bestBackPrice!,
+          size: stake,
+        });
+        await db.insert(betsTable).values({
+          strategyId: strategy.id,
+          strategyName: strategy.name,
+          marketId: market.marketId,
+          marketName: marketDetail.marketName,
+          eventName: marketDetail.eventName,
+          selectionId: runner.selectionId,
+          selectionName: runner.runnerName,
+          betType: "BACK",
+          requestedOdds: runner.bestBackPrice!.toString(),
+          stakeAmount: stake.toString(),
+          potentialProfit: guaranteedProfit.toFixed(2),
+          status: result.status === "PLACED" ? "PLACED" : "CANCELLED",
+          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId}`,
+          betId: result.betId ?? `${dutchGroupId}-${runner.selectionId}`,
+        });
+        if (result.status !== "PLACED") {
+          await logBotActivity("error", `[DUTCH] Failed to place on ${runner.runnerName}: ${result.error}`);
+        }
+      }
+      await logBotActivity("info",
+        `[DUTCH] Placed ${qualifying.length} live bets on ${marketDetail.eventName} — Guaranteed profit: £${guaranteedProfit.toFixed(2)}`,
+        { race: market.eventName, qualifying: qualifying.length, bookPct, guaranteedProfit }
+      );
+    }
+  }
+}
+
+// ─── Standard Single-Bet Cycle ───────────────────────────────────────────────
+
 async function runBotCycle(): Promise<void> {
   try {
     const config = await getBotConfig();
 
-    if (!config.isRunning) {
-      stopBot();
-      return;
-    }
+    if (!config.isRunning) { stopBot(); return; }
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const todayBets = await db
+    const [todayBets] = await db
       .select({ count: sql<number>`count(*)`, totalLoss: sql<number>`coalesce(sum(case when actual_profit < 0 then abs(actual_profit) else 0 end), 0)` })
       .from(betsTable)
       .where(gte(betsTable.placedAt, todayStart));
 
-    const todayLoss = Number(todayBets[0]?.totalLoss ?? 0);
+    const todayLoss = Number(todayBets?.totalLoss ?? 0);
     const dailyLossLimit = Number(config.dailyLossLimit);
 
     if (todayLoss >= dailyLossLimit) {
@@ -96,25 +297,14 @@ async function runBotCycle(): Promise<void> {
       return;
     }
 
-    const pendingBets = await db
-      .select()
-      .from(betsTable)
-      .where(eq(betsTable.status, "PLACED"));
-
+    const pendingBets = await db.select().from(betsTable).where(eq(betsTable.status, "PLACED"));
     if (pendingBets.length >= config.maxConcurrentBets) {
       await logBotActivity("info", `Max concurrent bets reached (${pendingBets.length}/${config.maxConcurrentBets}). Waiting.`);
       return;
     }
 
-    const strategies = await db
-      .select()
-      .from(strategiesTable)
-      .where(eq(strategiesTable.isActive, true));
-
-    if (strategies.length === 0) {
-      await logBotActivity("info", "No active strategies found.");
-      return;
-    }
+    const strategies = await db.select().from(strategiesTable).where(eq(strategiesTable.isActive, true));
+    if (strategies.length === 0) { await logBotActivity("info", "No active strategies found."); return; }
 
     const session = getSession();
     if (!session) {
@@ -127,26 +317,25 @@ async function runBotCycle(): Promise<void> {
     }
 
     for (const strategy of strategies) {
-      const markets = await listMarkets({
-        eventTypeId: strategy.eventTypeId,
-        limit: 5,
-      });
+      // ── Route DUTCH strategies to dedicated handler ──
+      if (strategy.betType === "DUTCH") {
+        await runDutchStrategy(strategy, config);
+        continue;
+      }
 
+      // ── Standard single-bet logic ──
+      const markets = await listMarkets({ eventTypeId: strategy.eventTypeId, limit: 5 });
       if (markets.length === 0) continue;
 
       const targetMarket = markets[0];
       const marketDetail = await getMarketDetail(targetMarket.marketId);
-
       if (!marketDetail || marketDetail.runners.length === 0) continue;
 
-      const eligibleRunners = marketDetail.runners.filter((r) => {
+      const eligibleRunners = marketDetail.runners.filter(r => {
         const odds = r.bestBackPrice;
         if (!odds) return false;
-        const minOdds = Number(strategy.minOdds);
-        const maxOdds = Number(strategy.maxOdds);
-        return odds >= minOdds && odds <= maxOdds && r.status === "ACTIVE";
+        return odds >= Number(strategy.minOdds) && odds <= Number(strategy.maxOdds) && r.status === "ACTIVE";
       });
-
       if (eligibleRunners.length === 0) continue;
 
       const marketContext = `
@@ -154,18 +343,14 @@ Market: ${marketDetail.eventName} - ${marketDetail.marketName}
 Start Time: ${marketDetail.marketStartTime}
 Total Matched: £${marketDetail.totalMatched.toFixed(0)}
 Runners:
-${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice}, Best Lay ${r.bestLayPrice}`).join("\n")}
+${eligibleRunners.map(r => `  - ${r.runnerName}: Back ${r.bestBackPrice}, Lay ${r.bestLayPrice}`).join("\n")}
       `.trim();
 
-      const systemPrompt = strategy.aiPrompt ?? 
-        "You are an expert Betfair exchange bettor. Analyze the given market and decide whether to place a bet. Consider odds value, market liquidity, and risk management. Be selective — only bet when you have high confidence.";
+      const systemPrompt = strategy.aiPrompt ??
+        "You are an expert Betfair exchange bettor. Analyze the given market and decide whether to place a bet. Be selective — only bet when you have high confidence.";
 
-      let aiDecision: {
-        shouldBet: boolean;
-        selectionName?: string;
-        reasoning: string;
-        confidence?: number;
-      };
+      let aiDecision: { shouldBet: boolean; selectionName?: string; reasoning: string; confidence?: number } =
+        { shouldBet: false, reasoning: "Not called" };
 
       try {
         const aiClient = await getAIClient(strategy.aiModel);
@@ -180,10 +365,9 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
             },
           ],
         });
-
-        const content = response.choices[0]?.message?.content ?? "{}";
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        aiDecision = jsonMatch ? JSON.parse(jsonMatch[0]) : { shouldBet: false, reasoning: "Could not parse AI response" };
+        const raw = response.choices[0]?.message?.content ?? "{}";
+        const match = raw.match(/\{[\s\S]*\}/);
+        aiDecision = match ? JSON.parse(match[0]) : { shouldBet: false, reasoning: "Could not parse AI response" };
       } catch (err) {
         aiDecision = { shouldBet: false, reasoning: `AI error: ${err instanceof Error ? err.message : "Unknown"}` };
       }
@@ -196,11 +380,8 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
         continue;
       }
 
-      const targetRunner = eligibleRunners.find(
-        (r) => r.runnerName === aiDecision.selectionName
-      ) ?? eligibleRunners[0];
-
-      if (!targetRunner || !targetRunner.bestBackPrice) continue;
+      const targetRunner = eligibleRunners.find(r => r.runnerName === aiDecision.selectionName) ?? eligibleRunners[0];
+      if (!targetRunner?.bestBackPrice) continue;
 
       const stakeAmount = Number(strategy.stakeAmount);
       const odds = targetRunner.bestBackPrice;
@@ -224,8 +405,7 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
           aiReasoning: aiDecision.reasoning,
           betId: `PAPER-${Date.now()}`,
         });
-
-        await logBotActivity("info", `[PAPER] Placed ${strategy.betType} bet: ${targetRunner.runnerName} @ ${odds} (£${stakeAmount})`, {
+        await logBotActivity("info", `[PAPER] ${strategy.betType}: ${targetRunner.runnerName} @ ${odds} (£${stakeAmount})`, {
           market: targetMarket.eventName,
           reasoning: aiDecision.reasoning,
         });
@@ -237,7 +417,6 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
           price: odds,
           size: stakeAmount,
         });
-
         await db.insert(betsTable).values({
           strategyId: strategy.id,
           strategyName: strategy.name,
@@ -254,16 +433,13 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
           aiReasoning: aiDecision.reasoning,
           betId: betResult.betId,
         });
-
         if (betResult.status === "PLACED") {
-          await logBotActivity("info", `Placed ${strategy.betType} bet: ${targetRunner.runnerName} @ ${odds} (£${stakeAmount})`, {
-            betId: betResult.betId,
-            market: targetMarket.eventName,
+          await logBotActivity("info", `${strategy.betType}: ${targetRunner.runnerName} @ ${odds} (£${stakeAmount})`, {
+            betId: betResult.betId, market: targetMarket.eventName,
           });
         } else {
           await logBotActivity("error", `Bet failed: ${betResult.error}`, {
-            market: targetMarket.eventName,
-            selection: targetRunner.runnerName,
+            market: targetMarket.eventName, selection: targetRunner.runnerName,
           });
         }
       }
@@ -276,36 +452,22 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
 
 export async function startBot(): Promise<void> {
   if (botRunning) return;
-
   const config = await getBotConfig();
   await db.update(botConfigTable).set({ isRunning: true }).where(eq(botConfigTable.id, config.id));
-
   botRunning = true;
   startedAt = new Date();
-
   await logBotActivity("info", "Bot started");
-
-  botInterval = setInterval(
-    () => void runBotCycle(),
-    config.checkIntervalSeconds * 1000
-  );
-
+  botInterval = setInterval(() => void runBotCycle(), config.checkIntervalSeconds * 1000);
   void runBotCycle();
 }
 
 export async function stopBot(): Promise<void> {
-  if (botInterval) {
-    clearInterval(botInterval);
-    botInterval = null;
-  }
-
+  if (botInterval) { clearInterval(botInterval); botInterval = null; }
   botRunning = false;
   startedAt = null;
-
   const [config] = await db.select().from(botConfigTable).limit(1);
   if (config) {
     await db.update(botConfigTable).set({ isRunning: false }).where(eq(botConfigTable.id, config.id));
   }
-
   await logBotActivity("info", "Bot stopped");
 }
