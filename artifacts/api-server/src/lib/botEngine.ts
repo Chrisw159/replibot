@@ -74,9 +74,11 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
   }
 }
 
-function calcDutchStake(odds: number, bookPct: number, totalStake: number): number {
-  // stake_i = totalStake / (bookPct * odds_i)  →  stake_i * odds_i = totalStake / bookPct for all i
-  return Math.round((totalStake / (bookPct * odds)) * 100) / 100;
+// Equal-stake dutching: each qualifying runner gets the same stake.
+// Profit from runner i = stake * odds_i - totalStake  (varies by odds — bigger price = bigger profit)
+// Condition for profit from EVERY winner: min_odds > n_qualifiers
+function calcEqualDutchStake(totalStake: number, nRunners: number): number {
+  return Math.round((totalStake / nRunners) * 100) / 100;
 }
 
 async function runDutchStrategy(
@@ -150,16 +152,24 @@ async function runDutchStrategy(
     const qualifying: BetfairRunner[] = activeRunners.filter(r => (r.bestBackPrice ?? 0) <= maxSelOdds);
     if (qualifying.length === 0) continue;
 
-    // ── Book percentage check ──
-    const bookPct = qualifying.reduce((sum, r) => sum + 1 / r.bestBackPrice!, 0);
-    const guaranteedReturn = totalStake / bookPct;
-    const guaranteedProfit = guaranteedReturn - totalStake;
-    const roiPct = (guaranteedProfit / totalStake) * 100;
+    // ── Profit guarantee check ──
+    // With equal stakes, profit from runner i = stake * odds_i - totalStake
+    // For every qualifier to return a profit: min_qualifier_odds > n_qualifiers
+    const stakePerRunner = calcEqualDutchStake(totalStake, qualifying.length);
+    const shortestQualOdds = Math.min(...qualifying.map(r => r.bestBackPrice!));
 
-    if (bookPct >= 1) {
-      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — book ${(bookPct * 100).toFixed(1)}% ≥ 100% (no profit possible)`);
+    if (shortestQualOdds <= qualifying.length) {
+      await logBotActivity("info",
+        `[DUTCH] Skipping ${market.eventName} — shortest qualifier ${shortestQualOdds} ≤ ${qualifying.length} runners (shortest winner would not profit)`
+      );
       continue;
     }
+
+    // Profit range: min profit (shortest odds winner) → max profit (longest odds winner)
+    const longestQualOdds = Math.max(...qualifying.map(r => r.bestBackPrice!));
+    const minProfit = stakePerRunner * shortestQualOdds - totalStake;
+    const maxProfit = stakePerRunner * longestQualOdds - totalStake;
+    const minRoi = (minProfit / totalStake) * 100;
 
     // ── AI validation ──
     const marketContext = `
@@ -169,11 +179,10 @@ Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.l
 Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
 Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
 
-Qualifying runners (odds ≤ ${maxSelOdds}):
-${qualifying.map(r => `  • ${r.runnerName}: ${r.bestBackPrice}`).join("\n")}
+Qualifying runners (odds ≤ ${maxSelOdds}), equal stake £${stakePerRunner.toFixed(2)} each:
+${qualifying.map(r => `  • ${r.runnerName}: ${r.bestBackPrice} → profit £${(stakePerRunner * r.bestBackPrice! - totalStake).toFixed(2)}`).join("\n")}
 
-Book percentage: ${(bookPct * 100).toFixed(1)}%
-Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roiPct.toFixed(1)}% ROI on £${totalStake} stake)
+Total stake: £${totalStake}  |  Profit range: £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)} (min ROI ${minRoi.toFixed(1)}%)
     `.trim();
 
     const systemPrompt = strategy.aiPrompt ??
@@ -210,7 +219,7 @@ Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roi
 
     if (config.paperTradingMode) {
       for (const runner of qualifying) {
-        const stake = calcDutchStake(runner.bestBackPrice!, bookPct, totalStake);
+        const runnerProfit = stakePerRunner * runner.bestBackPrice! - totalStake;
         await db.insert(betsTable).values({
           strategyId: strategy.id,
           strategyName: strategy.name,
@@ -222,26 +231,26 @@ Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roi
           betType: "BACK",
           requestedOdds: runner.bestBackPrice!.toString(),
           matchedOdds: runner.bestBackPrice!.toString(),
-          stakeAmount: stake.toString(),
-          potentialProfit: guaranteedProfit.toFixed(2),
+          stakeAmount: stakePerRunner.toString(),
+          potentialProfit: runnerProfit.toFixed(2),
           status: "MATCHED",
-          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Book: ${(bookPct * 100).toFixed(1)}% | ROI: ${roiPct.toFixed(1)}%`,
+          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Min ROI: ${minRoi.toFixed(1)}%`,
           betId: `${dutchGroupId}-${runner.selectionId}`,
         });
       }
       await logBotActivity("info",
-        `[DUTCH][PAPER] Placed ${qualifying.length} bets on ${marketDetail.eventName} — Book: ${(bookPct * 100).toFixed(1)}%, Guaranteed profit: £${guaranteedProfit.toFixed(2)} (${roiPct.toFixed(1)}% ROI)`,
-        { race: market.eventName, qualifying: qualifying.length, bookPct, guaranteedProfit, reasoning: aiDecision.reasoning }
+        `[DUTCH][PAPER] ${qualifying.length} bets on ${marketDetail.eventName} — £${stakePerRunner.toFixed(2)}/runner, profit range £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)}`,
+        { race: market.eventName, qualifying: qualifying.length, totalStake, minProfit, maxProfit, reasoning: aiDecision.reasoning }
       );
     } else {
       for (const runner of qualifying) {
-        const stake = calcDutchStake(runner.bestBackPrice!, bookPct, totalStake);
+        const runnerProfit = stakePerRunner * runner.bestBackPrice! - totalStake;
         const result = await placeBet({
           marketId: market.marketId,
           selectionId: runner.selectionId,
           betType: "BACK",
           price: runner.bestBackPrice!,
-          size: stake,
+          size: stakePerRunner,
         });
         await db.insert(betsTable).values({
           strategyId: strategy.id,
@@ -253,10 +262,10 @@ Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roi
           selectionName: runner.runnerName,
           betType: "BACK",
           requestedOdds: runner.bestBackPrice!.toString(),
-          stakeAmount: stake.toString(),
-          potentialProfit: guaranteedProfit.toFixed(2),
+          stakeAmount: stakePerRunner.toString(),
+          potentialProfit: runnerProfit.toFixed(2),
           status: result.status === "PLACED" ? "PLACED" : "CANCELLED",
-          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId}`,
+          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Min ROI: ${minRoi.toFixed(1)}%`,
           betId: result.betId ?? `${dutchGroupId}-${runner.selectionId}`,
         });
         if (result.status !== "PLACED") {
@@ -264,8 +273,8 @@ Guaranteed profit if any qualifier wins: £${guaranteedProfit.toFixed(2)} (${roi
         }
       }
       await logBotActivity("info",
-        `[DUTCH] Placed ${qualifying.length} live bets on ${marketDetail.eventName} — Guaranteed profit: £${guaranteedProfit.toFixed(2)}`,
-        { race: market.eventName, qualifying: qualifying.length, bookPct, guaranteedProfit }
+        `[DUTCH] ${qualifying.length} live bets on ${marketDetail.eventName} — profit range £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)}`,
+        { race: market.eventName, qualifying: qualifying.length, totalStake, minProfit, maxProfit }
       );
     }
   }
