@@ -3,13 +3,25 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Betfair AI Betting Bot API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: betfair
+    description: Betfair connection and authentication
+  - name: markets
+    description: Betfair market browsing
+  - name: strategies
+    description: AI betting strategies
+  - name: bets
+    description: Bet history and management
+  - name: bot
+    description: Bot control and configuration
+  - name: dashboard
+    description: Dashboard summaries and analytics
 paths:
   /healthz:
     get:
@@ -24,6 +36,416 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /betfair/status:
+    get:
+      operationId: getBetfairStatus
+      tags: [betfair]
+      summary: Get Betfair connection status
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BetfairStatus"
+
+  /betfair/connect:
+    post:
+      operationId: connectBetfair
+      tags: [betfair]
+      summary: Connect to Betfair using stored credentials
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BetfairConnectBody"
+      responses:
+        "200":
+          description: Connected successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BetfairStatus"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /betfair/account:
+    get:
+      operationId: getBetfairAccount
+      tags: [betfair]
+      summary: Get Betfair account funds and details
+      responses:
+        "200":
+          description: Account information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountFunds"
+
+  /markets:
+    get:
+      operationId: listMarkets
+      tags: [markets]
+      summary: List available markets from Betfair
+      parameters:
+        - name: eventTypeId
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: countryCode
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: marketType
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: List of markets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Market"
+
+  /markets/{marketId}:
+    get:
+      operationId: getMarket
+      tags: [markets]
+      summary: Get detailed market info including runners and odds
+      parameters:
+        - name: marketId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Market details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketDetail"
+        "404":
+          description: Market not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /strategies:
+    get:
+      operationId: listStrategies
+      tags: [strategies]
+      summary: List all betting strategies
+      responses:
+        "200":
+          description: List of strategies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Strategy"
+    post:
+      operationId: createStrategy
+      tags: [strategies]
+      summary: Create a new betting strategy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStrategyBody"
+      responses:
+        "201":
+          description: Strategy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Strategy"
+
+  /strategies/{id}:
+    get:
+      operationId: getStrategy
+      tags: [strategies]
+      summary: Get a strategy by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Strategy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Strategy"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateStrategy
+      tags: [strategies]
+      summary: Update a strategy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStrategyBody"
+      responses:
+        "200":
+          description: Updated strategy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Strategy"
+    delete:
+      operationId: deleteStrategy
+      tags: [strategies]
+      summary: Delete a strategy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /bets:
+    get:
+      operationId: listBets
+      tags: [bets]
+      summary: List bet history
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: strategyId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: offset
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: List of bets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bet"
+
+  /bets/{id}:
+    get:
+      operationId: getBet
+      tags: [bets]
+      summary: Get a single bet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bet"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /bot/config:
+    get:
+      operationId: getBotConfig
+      tags: [bot]
+      summary: Get bot configuration
+      responses:
+        "200":
+          description: Bot configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotConfig"
+    patch:
+      operationId: updateBotConfig
+      tags: [bot]
+      summary: Update bot configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBotConfigBody"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotConfig"
+
+  /bot/start:
+    post:
+      operationId: startBot
+      tags: [bot]
+      summary: Start the betting bot
+      responses:
+        "200":
+          description: Bot started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+
+  /bot/stop:
+    post:
+      operationId: stopBot
+      tags: [bot]
+      summary: Stop the betting bot
+      responses:
+        "200":
+          description: Bot stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+
+  /bot/status:
+    get:
+      operationId: getBotStatus
+      tags: [bot]
+      summary: Get current bot status
+      responses:
+        "200":
+          description: Bot status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+
+  /bot/logs:
+    get:
+      operationId: getBotLogs
+      tags: [bot]
+      summary: Get recent bot activity logs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Bot log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BotLogEntry"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get overall P&L, win rate and bet counts
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /dashboard/pnl-chart:
+    get:
+      operationId: getPnlChart
+      tags: [dashboard]
+      summary: Get cumulative P&L over time for charting
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: P&L chart data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PnlDataPoint"
+
+  /dashboard/recent-bets:
+    get:
+      operationId: getRecentBets
+      tags: [dashboard]
+      summary: Get most recent bets for activity feed
+      responses:
+        "200":
+          description: Recent bets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bet"
+
+  /dashboard/strategy-performance:
+    get:
+      operationId: getStrategyPerformance
+      tags: [dashboard]
+      summary: Get P&L and win rate breakdown per strategy
+      responses:
+        "200":
+          description: Per-strategy performance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StrategyPerformance"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +456,484 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    BetfairConnectBody:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        appKey:
+          type: string
+      required:
+        - username
+        - password
+        - appKey
+
+    BetfairStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        sessionToken:
+          type: ["string", "null"]
+        username:
+          type: ["string", "null"]
+        lastConnectedAt:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+      required:
+        - connected
+
+    AccountFunds:
+      type: object
+      properties:
+        availableToBetBalance:
+          type: number
+        exposure:
+          type: number
+        retainedCommission:
+          type: number
+        exposureLimit:
+          type: number
+        currency:
+          type: string
+      required:
+        - availableToBetBalance
+        - exposure
+        - retainedCommission
+        - exposureLimit
+        - currency
+
+    Market:
+      type: object
+      properties:
+        marketId:
+          type: string
+        marketName:
+          type: string
+        eventName:
+          type: string
+        eventTypeId:
+          type: string
+        eventTypeName:
+          type: string
+        countryCode:
+          type: ["string", "null"]
+        marketStartTime:
+          type: string
+        totalMatched:
+          type: number
+        status:
+          type: string
+        inPlay:
+          type: boolean
+      required:
+        - marketId
+        - marketName
+        - eventName
+        - eventTypeId
+        - eventTypeName
+        - marketStartTime
+        - totalMatched
+        - status
+        - inPlay
+
+    Runner:
+      type: object
+      properties:
+        selectionId:
+          type: integer
+        runnerName:
+          type: string
+        status:
+          type: string
+        lastPriceTraded:
+          type: ["number", "null"]
+        totalMatched:
+          type: ["number", "null"]
+        bestBackPrice:
+          type: ["number", "null"]
+        bestLayPrice:
+          type: ["number", "null"]
+      required:
+        - selectionId
+        - runnerName
+        - status
+
+    MarketDetail:
+      type: object
+      properties:
+        marketId:
+          type: string
+        marketName:
+          type: string
+        eventName:
+          type: string
+        marketStartTime:
+          type: string
+        status:
+          type: string
+        inPlay:
+          type: boolean
+        totalMatched:
+          type: number
+        runners:
+          type: array
+          items:
+            $ref: "#/components/schemas/Runner"
+      required:
+        - marketId
+        - marketName
+        - eventName
+        - marketStartTime
+        - status
+        - inPlay
+        - totalMatched
+        - runners
+
+    Strategy:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        eventTypeId:
+          type: string
+        minOdds:
+          type: number
+        maxOdds:
+          type: number
+        stakeAmount:
+          type: number
+        maxStakeAmount:
+          type: number
+        betType:
+          type: string
+        isActive:
+          type: boolean
+        aiPrompt:
+          type: ["string", "null"]
+        aiModel:
+          type: string
+        marketFilter:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - name
+        - eventTypeId
+        - minOdds
+        - maxOdds
+        - stakeAmount
+        - maxStakeAmount
+        - betType
+        - isActive
+        - aiModel
+        - createdAt
+        - updatedAt
+
+    CreateStrategyBody:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        eventTypeId:
+          type: string
+        minOdds:
+          type: number
+        maxOdds:
+          type: number
+        stakeAmount:
+          type: number
+        maxStakeAmount:
+          type: number
+        betType:
+          type: string
+        isActive:
+          type: boolean
+        aiPrompt:
+          type: ["string", "null"]
+        aiModel:
+          type: string
+        marketFilter:
+          type: ["string", "null"]
+      required:
+        - name
+        - eventTypeId
+        - minOdds
+        - maxOdds
+        - stakeAmount
+        - maxStakeAmount
+        - betType
+        - isActive
+        - aiModel
+
+    UpdateStrategyBody:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        eventTypeId:
+          type: ["string", "null"]
+        minOdds:
+          type: ["number", "null"]
+        maxOdds:
+          type: ["number", "null"]
+        stakeAmount:
+          type: ["number", "null"]
+        maxStakeAmount:
+          type: ["number", "null"]
+        betType:
+          type: ["string", "null"]
+        isActive:
+          type: ["boolean", "null"]
+        aiPrompt:
+          type: ["string", "null"]
+        aiModel:
+          type: ["string", "null"]
+        marketFilter:
+          type: ["string", "null"]
+
+    Bet:
+      type: object
+      properties:
+        id:
+          type: integer
+        betId:
+          type: ["string", "null"]
+        strategyId:
+          type: ["integer", "null"]
+        strategyName:
+          type: ["string", "null"]
+        marketId:
+          type: string
+        marketName:
+          type: string
+        eventName:
+          type: string
+        selectionId:
+          type: integer
+        selectionName:
+          type: string
+        betType:
+          type: string
+        requestedOdds:
+          type: number
+        matchedOdds:
+          type: ["number", "null"]
+        stakeAmount:
+          type: number
+        potentialProfit:
+          type: number
+        actualProfit:
+          type: ["number", "null"]
+        status:
+          type: string
+        aiReasoning:
+          type: ["string", "null"]
+        placedAt:
+          type: string
+        settledAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - marketId
+        - marketName
+        - eventName
+        - selectionId
+        - selectionName
+        - betType
+        - requestedOdds
+        - stakeAmount
+        - potentialProfit
+        - status
+        - placedAt
+
+    BotConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+        isRunning:
+          type: boolean
+        checkIntervalSeconds:
+          type: integer
+        maxConcurrentBets:
+          type: integer
+        dailyLossLimit:
+          type: number
+        dailyProfitTarget:
+          type: ["number", "null"]
+        enabledEventTypes:
+          type: string
+        paperTradingMode:
+          type: boolean
+        updatedAt:
+          type: string
+      required:
+        - id
+        - isRunning
+        - checkIntervalSeconds
+        - maxConcurrentBets
+        - dailyLossLimit
+        - paperTradingMode
+        - enabledEventTypes
+        - updatedAt
+
+    UpdateBotConfigBody:
+      type: object
+      properties:
+        checkIntervalSeconds:
+          type: ["integer", "null"]
+        maxConcurrentBets:
+          type: ["integer", "null"]
+        dailyLossLimit:
+          type: ["number", "null"]
+        dailyProfitTarget:
+          type: ["number", "null"]
+        enabledEventTypes:
+          type: ["string", "null"]
+        paperTradingMode:
+          type: ["boolean", "null"]
+
+    BotStatus:
+      type: object
+      properties:
+        isRunning:
+          type: boolean
+        startedAt:
+          type: ["string", "null"]
+        betsPlacedToday:
+          type: integer
+        profitToday:
+          type: number
+        lossToday:
+          type: number
+        paperTradingMode:
+          type: boolean
+      required:
+        - isRunning
+        - betsPlacedToday
+        - profitToday
+        - lossToday
+        - paperTradingMode
+
+    BotLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        level:
+          type: string
+        message:
+          type: string
+        metadata:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - level
+        - message
+        - createdAt
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalBets:
+          type: integer
+        winningBets:
+          type: integer
+        losingBets:
+          type: integer
+        pendingBets:
+          type: integer
+        totalStaked:
+          type: number
+        totalProfit:
+          type: number
+        winRate:
+          type: number
+        roi:
+          type: number
+        profitToday:
+          type: number
+        betsToday:
+          type: integer
+        activeStrategies:
+          type: integer
+      required:
+        - totalBets
+        - winningBets
+        - losingBets
+        - pendingBets
+        - totalStaked
+        - totalProfit
+        - winRate
+        - roi
+        - profitToday
+        - betsToday
+        - activeStrategies
+
+    PnlDataPoint:
+      type: object
+      properties:
+        date:
+          type: string
+        cumulativePnl:
+          type: number
+        dailyPnl:
+          type: number
+        betCount:
+          type: integer
+      required:
+        - date
+        - cumulativePnl
+        - dailyPnl
+        - betCount
+
+    StrategyPerformance:
+      type: object
+      properties:
+        strategyId:
+          type: integer
+        strategyName:
+          type: string
+        totalBets:
+          type: integer
+        winRate:
+          type: number
+        totalProfit:
+          type: number
+        roi:
+          type: number
+        isActive:
+          type: boolean
+      required:
+        - strategyId
+        - strategyName
+        - totalBets
+        - winRate
+        - totalProfit
+        - roi
+        - isActive

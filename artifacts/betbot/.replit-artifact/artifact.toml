@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Betfair AI Bot"
+version = "1.0.0"
+id = "artifacts/betbot"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22499
+
+[services.development]
+run = "pnpm --filter @workspace/betbot run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/betbot", "run", "build" ]
+publicDir = "artifacts/betbot/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22499"
+BASE_PATH = "/"
