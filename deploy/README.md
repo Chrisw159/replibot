@@ -1,92 +1,155 @@
 # Deploying REPLIBOT to Hetzner
 
-## 1. Install Docker on your Hetzner server
+## What you need before starting
 
-SSH into your server and run:
+- SSH access to your Hetzner server (the IP address + root password or SSH key)
+- Your Betfair login email, password, and **live** App Key from the Betfair Developer Portal
+- Your xAI API key from https://console.x.ai
+- A GitHub account to transfer the code (free)
+
+---
+
+## Step 1 — Push the code to GitHub (from Replit)
+
+In the Replit shell, run:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/replibot.git
+git push -u origin main
+```
+
+---
+
+## Step 2 — SSH into your Hetzner server
+
+On your computer, open Terminal (Mac/Linux) or PowerShell (Windows) and run:
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+---
+
+## Step 3 — Install Docker on the server
+
+Paste this and press Enter:
 
 ```bash
 curl -fsSL https://get.docker.com | sh
 ```
 
-## 2. Copy the project to your server
+Wait about 1 minute for it to finish.
 
-From your local machine (or Replit shell), use `rsync` or `scp`:
+---
+
+## Step 4 — Download the code onto your server
 
 ```bash
-rsync -az --exclude node_modules --exclude '*/dist' --exclude .git \
-  ./ root@YOUR_SERVER_IP:/opt/replibot/
+git clone https://github.com/YOUR_USERNAME/replibot.git /opt/replibot
+cd /opt/replibot
 ```
 
-Or push to GitHub and `git clone` on the server.
+---
 
-## 3. Create your environment file
-
-On the server:
+## Step 5 — Create your settings file
 
 ```bash
-cd /opt/replibot
 cp deploy/.env.production.example .env
 nano .env
 ```
 
-Fill in:
+You'll see a text file. Fill in each value:
 
-| Variable | Description |
-|---|---|
-| `POSTGRES_PASSWORD` | Make up a strong password |
-| `SESSION_SECRET` | Run `openssl rand -hex 32` to generate one |
-| `OPENAI_API_KEY` | From https://platform.openai.com |
-| `BETFAIR_USERNAME` | Your Betfair login email |
-| `BETFAIR_PASSWORD` | Your Betfair password |
-| `BETFAIR_APP_KEY` | Your live app key from Betfair Developer portal |
+- **POSTGRES_PASSWORD** — make up any strong password, e.g. `MyDB_Pass_2025!`
+- **SESSION_SECRET** — run `openssl rand -hex 32` in a separate terminal tab and paste the result
+- **XAI_API_KEY** — your key from https://console.x.ai (starts with `xai-`)
+- **BETFAIR_USERNAME** — your Betfair login email
+- **BETFAIR_PASSWORD** — your Betfair password
+- **BETFAIR_APP_KEY** — your live app key from the Betfair Developer Portal
 
-## 4. Start everything
+Save with **Ctrl+O**, then exit with **Ctrl+X**.
+
+---
+
+## Step 6 — Launch REPLIBOT
 
 ```bash
-cd /opt/replibot
 docker compose up -d --build
 ```
 
-First build takes 3–5 minutes. The app will be live at `http://YOUR_SERVER_IP`.
+The first build takes **3–5 minutes**. You'll see a lot of text scrolling past — that's normal.
 
-## 5. Push the database schema (first time only)
+When it's done, open your browser and go to:
 
-Once the containers are running, push the DB schema from inside the container:
-
-```bash
-docker compose exec postgres psql -U replibot replibot -c "SELECT version();"
+```
+http://YOUR_SERVER_IP
 ```
 
-Then from your **Replit environment**, run the schema push pointing at Hetzner:
+You should see the REPLIBOT dashboard. The database is set up automatically on first start.
+
+---
+
+## Step 7 — First-time setup in the app
+
+1. Click **Settings** in the left menu
+2. Check your Betfair credentials are showing correctly
+3. Check your xAI key is saved
+
+4. Click **Markets** — you should see live UK horse racing markets loading (this is the key difference from Replit — Betfair works from your EU server)
+
+5. Click **Bot Control** — confirm **Paper Trading** is switched ON (this means no real money is bet yet)
+
+6. Click **Start Bot**
+
+7. Watch the **Dashboard** — every 30 seconds you'll see log entries as the bot scans races, filters them, calls Grok, and either places paper bets or explains why it skipped a race
+
+---
+
+## Step 8 — Going live with real money
+
+Once you're happy with the paper trading results over a few days:
+
+1. Go to **Bot Control**
+2. Switch off **Paper Trading**
+3. Click **Start Bot**
+
+Real bets will now be placed on Betfair through your account.
+
+---
+
+## Updating after a code change
+
+Pull the latest code and rebuild:
 
 ```bash
-DATABASE_URL="postgres://replibot:YOUR_POSTGRES_PASSWORD@YOUR_SERVER_IP:5432/replibot" \
-  pnpm --filter @workspace/db run push
+cd /opt/replibot
+git pull
+docker compose up -d --build
 ```
-
-(Replace `YOUR_POSTGRES_PASSWORD` and `YOUR_SERVER_IP` with your actual values.)
-
-After the first push, the database port (5432) can be blocked in your Hetzner firewall for security — only port 80 (or 443) needs to be open for the app to work.
 
 ---
 
 ## Useful commands
 
 ```bash
-# View live logs
+# Watch live logs from the bot
 docker compose logs -f api
 
-# Restart just the API (after a code update)
-docker compose up -d --build api
+# Restart just the bot
+docker compose restart api
 
 # Stop everything
 docker compose down
 
-# Full update after code change
-git pull && docker compose up -d --build
+# Check what's running
+docker compose ps
 ```
 
-## Setting up HTTPS with Caddy (optional but recommended)
+---
+
+## Optional: HTTPS with your own domain
+
+If you have a domain name pointing at your server:
 
 ```bash
 apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
@@ -95,10 +158,10 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /
 apt update && apt install caddy
 ```
 
-Change `HOST_PORT=8888` in your `.env`, then create `/etc/caddy/Caddyfile`:
+Change `HOST_PORT=8888` in your `.env`, then edit `/etc/caddy/Caddyfile`:
 
 ```
-your-domain.com {
+yourdomain.com {
     reverse_proxy localhost:8888
 }
 ```
@@ -108,4 +171,4 @@ systemctl reload caddy
 docker compose up -d
 ```
 
-Your app is now at `https://your-domain.com` with automatic HTTPS.
+Your app will be at `https://yourdomain.com` with a free auto-renewing SSL certificate.
