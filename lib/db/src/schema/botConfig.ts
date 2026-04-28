@@ -20,6 +20,9 @@ export const botConfigTable = pgTable("bot_config", {
   enabledEventTypes: text("enabled_event_types").notNull().default("1,2,4"),
   paperTradingMode: boolean("paper_trading_mode").notNull().default(true),
   xaiApiKey: text("xai_api_key"),
+  betfairUsername: text("betfair_username"),
+  betfairPassword: text("betfair_password"),
+  betfairAppKey: text("betfair_app_key"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 

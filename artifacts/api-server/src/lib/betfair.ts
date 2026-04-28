@@ -1,4 +1,6 @@
 import { logger } from "./logger";
+import { db } from "@workspace/db";
+import { botConfigTable } from "@workspace/db/schema";
 
 const BETFAIR_LOGIN_URL = "https://identitysso.betfair.com/api/login";
 const BETFAIR_API_URL = "https://api.betfair.com/exchange/betting/json-rpc/v1";
@@ -83,14 +85,29 @@ export async function loginWithEnvCredentials(): Promise<{
   success: boolean;
   error?: string;
 }> {
-  const username = process.env.BETFAIR_USERNAME;
-  const password = process.env.BETFAIR_PASSWORD;
-  const appKey = process.env.BETFAIR_APP_KEY;
+  // 1. Try environment variables first
+  let username = process.env.BETFAIR_USERNAME;
+  let password = process.env.BETFAIR_PASSWORD;
+  let appKey = process.env.BETFAIR_APP_KEY;
+
+  // 2. Fall back to credentials stored in the database (via Settings page)
+  if (!username || !password || !appKey) {
+    try {
+      const [cfg] = await db.select().from(botConfigTable).limit(1);
+      if (cfg) {
+        username = username || cfg.betfairUsername || undefined;
+        password = password || cfg.betfairPassword || undefined;
+        appKey   = appKey   || cfg.betfairAppKey   || undefined;
+      }
+    } catch {
+      // DB not ready yet — fall through to the error below
+    }
+  }
 
   if (!username || !password || !appKey) {
     return {
       success: false,
-      error: "Betfair credentials not configured. Please set BETFAIR_USERNAME, BETFAIR_PASSWORD, and BETFAIR_APP_KEY.",
+      error: "Betfair credentials not configured. Enter them in Settings and click Save.",
     };
   }
 

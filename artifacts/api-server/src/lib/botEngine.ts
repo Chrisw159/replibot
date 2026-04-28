@@ -84,13 +84,26 @@ async function runDutchStrategy(
   const maxSelOdds = Number(strategy.maxOdds);    // 30/1 = 31.0
   const totalStake = Number(strategy.stakeAmount);
 
-  const markets = await listMarkets({
-    eventTypeId: strategy.eventTypeId,
-    countryCode: dc.countryCode,
-    limit: 20,
-  });
+  await logBotActivity("info", `[DUTCH] Cycle start — scanning UK horse racing (country: ${dc.countryCode})`);
 
-  if (markets.length === 0) return;
+  let markets: Awaited<ReturnType<typeof listMarkets>> = [];
+  try {
+    markets = await listMarkets({
+      eventTypeId: strategy.eventTypeId,
+      countryCode: dc.countryCode,
+      limit: 20,
+    });
+  } catch (err) {
+    await logBotActivity("error", `[DUTCH] Failed to fetch markets from Betfair: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  await logBotActivity("info", `[DUTCH] Found ${markets.length} UK racing markets from Betfair`);
+
+  if (markets.length === 0) {
+    await logBotActivity("info", `[DUTCH] No UK horse racing markets available right now — Betfair may have none listed or racing is not active`);
+    return;
+  }
 
   const now = Date.now();
 
@@ -101,8 +114,17 @@ async function runDutchStrategy(
     return minsToStart >= 0 && minsToStart <= dc.minutesBeforeStart;
   });
 
+  // Log all markets and whether they're in the window
+  for (const m of markets) {
+    const minsToStart = (new Date(m.marketStartTime).getTime() - now) / 60_000;
+    const inWindow = minsToStart >= 0 && minsToStart <= dc.minutesBeforeStart;
+    await logBotActivity("info",
+      `[DUTCH] Market: ${m.eventName} — ${m.marketName} | Starts in ${minsToStart.toFixed(1)} min | ${inWindow ? "IN WINDOW ✓" : `outside ${dc.minutesBeforeStart}-min window`}`
+    );
+  }
+
   if (candidateMarkets.length === 0) {
-    await logBotActivity("info", `[DUTCH:${strategy.name}] No races within ${dc.minutesBeforeStart}-min window.`);
+    await logBotActivity("info", `[DUTCH] No races within the ${dc.minutesBeforeStart}-min window — waiting for next cycle`);
     return;
   }
 

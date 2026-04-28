@@ -11,6 +11,9 @@ import {
   loginWithEnvCredentials,
   getAccountFunds,
 } from "../lib/betfair";
+import { db } from "@workspace/db";
+import { botConfigTable } from "@workspace/db/schema";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -41,6 +44,20 @@ router.post("/betfair/connect", async (req, res): Promise<void> => {
   if (!result.success) {
     res.status(401).json({ error: result.error ?? "Authentication failed" });
     return;
+  }
+
+  // Persist credentials in DB so auto-connect survives container restarts
+  try {
+    const [existing] = await db.select().from(botConfigTable).limit(1);
+    if (existing) {
+      await db.update(botConfigTable)
+        .set({ betfairUsername: username, betfairPassword: password, betfairAppKey: appKey })
+        .where(eq(botConfigTable.id, existing.id));
+    } else {
+      await db.insert(botConfigTable).values({ betfairUsername: username, betfairPassword: password, betfairAppKey: appKey });
+    }
+  } catch (e) {
+    // Non-fatal — session is already live even if we can't save to DB
   }
 
   const session = getSession();
