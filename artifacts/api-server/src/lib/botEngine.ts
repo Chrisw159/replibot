@@ -74,12 +74,6 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
   }
 }
 
-// Equal-stake dutching: each qualifying runner gets the same stake.
-// Profit from runner i = stake * odds_i - totalStake  (varies by odds — bigger price = bigger profit)
-// Condition for profit from EVERY winner: min_odds > n_qualifiers
-function calcEqualDutchStake(totalStake: number, nRunners: number): number {
-  return Math.round((totalStake / nRunners) * 100) / 100;
-}
 
 async function runDutchStrategy(
   strategy: typeof strategiesTable.$inferSelect,
@@ -148,30 +142,19 @@ async function runDutchStrategy(
       continue;
     }
 
-    // ── Build qualifying selection list (odds ≤ maxSelOdds) ──
-    const qualifying: BetfairRunner[] = activeRunners.filter(r => (r.bestBackPrice ?? 0) <= maxSelOdds);
+    // ── Build qualifying selection list (odds within range) ──
+    const qualifying: BetfairRunner[] = activeRunners.filter(
+      r => (r.bestBackPrice ?? 0) >= Number(strategy.minOdds) && (r.bestBackPrice ?? 0) <= maxSelOdds
+    );
     if (qualifying.length === 0) continue;
 
-    // ── Profit guarantee check ──
-    // With equal stakes, profit from runner i = stake * odds_i - totalStake
-    // For every qualifier to return a profit: min_qualifier_odds > n_qualifiers
-    const stakePerRunner = calcEqualDutchStake(totalStake, qualifying.length);
-    const shortestQualOdds = Math.min(...qualifying.map(r => r.bestBackPrice!));
+    // ── AI: validate race AND calculate per-runner stakes ──
+    const budget = totalStake; // max £40 per race
 
-    if (shortestQualOdds <= qualifying.length) {
-      await logBotActivity("info",
-        `[DUTCH] Skipping ${market.eventName} — shortest qualifier ${shortestQualOdds} ≤ ${qualifying.length} runners (shortest winner would not profit)`
-      );
-      continue;
-    }
+    const runnerList = qualifying
+      .map(r => `  • selectionId ${r.selectionId} — ${r.runnerName}: ${r.bestBackPrice}`)
+      .join("\n");
 
-    // Profit range: min profit (shortest odds winner) → max profit (longest odds winner)
-    const longestQualOdds = Math.max(...qualifying.map(r => r.bestBackPrice!));
-    const minProfit = stakePerRunner * shortestQualOdds - totalStake;
-    const maxProfit = stakePerRunner * longestQualOdds - totalStake;
-    const minRoi = (minProfit / totalStake) * 100;
-
-    // ── AI validation ──
     const marketContext = `
 Dutch Bet Opportunity — Horse Racing
 Race: ${marketDetail.eventName} — ${marketDetail.marketName}
@@ -179,47 +162,87 @@ Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.l
 Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
 Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
 
-Qualifying runners (odds ≤ ${maxSelOdds}), equal stake £${stakePerRunner.toFixed(2)} each:
-${qualifying.map(r => `  • ${r.runnerName}: ${r.bestBackPrice} → profit £${(stakePerRunner * r.bestBackPrice! - totalStake).toFixed(2)}`).join("\n")}
+Qualifying runners (odds ${strategy.minOdds}–${maxSelOdds}):
+${runnerList}
 
-Total stake: £${totalStake}  |  Profit range: £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)} (min ROI ${minRoi.toFixed(1)}%)
+Total budget: £${budget.toFixed(2)} (must not be exceeded)
     `.trim();
 
     const systemPrompt = strategy.aiPrompt ??
-      "You are a horse racing dutching validator. Approve only solid opportunities on reputable UK tracks.";
+      "You are a UK horse racing dutching specialist. Approve only solid opportunities on reputable UK tracks.";
 
-    let aiDecision = { shouldBet: false, reasoning: "AI not called", confidence: 0 };
+    const userMessage = `
+You have been given a potential dutch betting opportunity. Your job is to:
+
+1. Validate the race (UK track, not Novice/Maiden/Bumper/NH Flat, sensible opportunity).
+2. If approved: calculate the stake for EACH qualifying runner so that if ANY of them wins, the total return exceeds the total amount staked. Profit per winner can vary — it does NOT need to be equal. The sum of all stakes must not exceed £${budget.toFixed(2)}.
+3. Use the standard dutching formula as a starting point: stake_i = (budget / bookPct) / odds_i, where bookPct = sum(1/odds). You may adjust stakes slightly but must ensure every winner returns a profit.
+
+Reply with JSON ONLY — no prose outside the JSON block:
+{
+  "approved": boolean,
+  "reasoning": string,
+  "stakes": [
+    { "selectionId": number, "runnerName": string, "stake": number, "odds": number, "expectedProfit": number }
+  ]
+}
+If not approved, return an empty stakes array.
+
+Market data:
+${marketContext}
+    `.trim();
+
+    interface AiStake { selectionId: number; runnerName: string; stake: number; odds: number; expectedProfit: number; }
+    interface AiDutchResponse { approved: boolean; reasoning: string; stakes: AiStake[]; }
+
+    let aiResponse: AiDutchResponse = { approved: false, reasoning: "AI not called", stakes: [] };
     try {
       const aiClient = await getAIClient(strategy.aiModel);
       const response = await aiClient.chat.completions.create({
         model: strategy.aiModel,
-        max_completion_tokens: 300,
+        max_completion_tokens: 600,
         messages: [
           { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: `Validate this dutch bet.\n\n${marketContext}\n\nReply with JSON only: { "shouldBet": boolean, "reasoning": string, "confidence": number (0-1) }`,
-          },
+          { role: "user", content: userMessage },
         ],
       });
       const raw = response.choices[0]?.message?.content ?? "{}";
       const match = raw.match(/\{[\s\S]*\}/);
-      if (match) aiDecision = JSON.parse(match[0]);
+      if (match) aiResponse = JSON.parse(match[0]);
     } catch (err) {
-      aiDecision = { shouldBet: false, reasoning: `AI error: ${err instanceof Error ? err.message : "Unknown"}`, confidence: 0 };
+      aiResponse.reasoning = `AI error: ${err instanceof Error ? err.message : "Unknown"}`;
     }
 
-    if (!aiDecision.shouldBet) {
-      await logBotActivity("info", `[DUTCH] AI rejected ${market.eventName}: ${aiDecision.reasoning}`);
+    if (!aiResponse.approved || aiResponse.stakes.length === 0) {
+      await logBotActivity("info", `[DUTCH] AI rejected ${market.eventName}: ${aiResponse.reasoning}`);
+      continue;
+    }
+
+    // ── Sanity-check the AI's stakes ──
+    // Each winner must return more than the total staked
+    const totalStaked = aiResponse.stakes.reduce((s, r) => s + r.stake, 0);
+
+    if (totalStaked > budget * 1.01) { // allow 1p rounding
+      await logBotActivity("warn", `[DUTCH] AI over-budget (£${totalStaked.toFixed(2)} > £${budget}). Skipping.`);
+      continue;
+    }
+
+    const failingRunner = aiResponse.stakes.find(r => r.stake * r.odds <= totalStaked);
+    if (failingRunner) {
+      await logBotActivity("warn",
+        `[DUTCH] AI stake for ${failingRunner.runnerName} (£${failingRunner.stake} @ ${failingRunner.odds}) would not profit. Skipping.`
+      );
       continue;
     }
 
     // ── Place bets ──
     const dutchGroupId = `DUTCH-${market.marketId}-${Date.now()}`;
+    const profitRange = `£${Math.min(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}–£${Math.max(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}`;
 
     if (config.paperTradingMode) {
-      for (const runner of qualifying) {
-        const runnerProfit = stakePerRunner * runner.bestBackPrice! - totalStake;
+      for (const r of aiResponse.stakes) {
+        const runner = qualifying.find(q => q.selectionId === r.selectionId);
+        if (!runner) continue;
         await db.insert(betsTable).values({
           strategyId: strategy.id,
           strategyName: strategy.name,
@@ -229,28 +252,29 @@ Total stake: £${totalStake}  |  Profit range: £${minProfit.toFixed(2)}–£${m
           selectionId: runner.selectionId,
           selectionName: runner.runnerName,
           betType: "BACK",
-          requestedOdds: runner.bestBackPrice!.toString(),
-          matchedOdds: runner.bestBackPrice!.toString(),
-          stakeAmount: stakePerRunner.toString(),
-          potentialProfit: runnerProfit.toFixed(2),
+          requestedOdds: r.odds.toString(),
+          matchedOdds: r.odds.toString(),
+          stakeAmount: r.stake.toString(),
+          potentialProfit: r.expectedProfit.toFixed(2),
           status: "MATCHED",
-          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Min ROI: ${minRoi.toFixed(1)}%`,
+          aiReasoning: `[DUTCH] ${aiResponse.reasoning} | Group: ${dutchGroupId}`,
           betId: `${dutchGroupId}-${runner.selectionId}`,
         });
       }
       await logBotActivity("info",
-        `[DUTCH][PAPER] ${qualifying.length} bets on ${marketDetail.eventName} — £${stakePerRunner.toFixed(2)}/runner, profit range £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)}`,
-        { race: market.eventName, qualifying: qualifying.length, totalStake, minProfit, maxProfit, reasoning: aiDecision.reasoning }
+        `[DUTCH][PAPER] ${aiResponse.stakes.length} bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}`,
+        { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange, reasoning: aiResponse.reasoning }
       );
     } else {
-      for (const runner of qualifying) {
-        const runnerProfit = stakePerRunner * runner.bestBackPrice! - totalStake;
+      for (const r of aiResponse.stakes) {
+        const runner = qualifying.find(q => q.selectionId === r.selectionId);
+        if (!runner) continue;
         const result = await placeBet({
           marketId: market.marketId,
           selectionId: runner.selectionId,
           betType: "BACK",
-          price: runner.bestBackPrice!,
-          size: stakePerRunner,
+          price: r.odds,
+          size: r.stake,
         });
         await db.insert(betsTable).values({
           strategyId: strategy.id,
@@ -261,11 +285,11 @@ Total stake: £${totalStake}  |  Profit range: £${minProfit.toFixed(2)}–£${m
           selectionId: runner.selectionId,
           selectionName: runner.runnerName,
           betType: "BACK",
-          requestedOdds: runner.bestBackPrice!.toString(),
-          stakeAmount: stakePerRunner.toString(),
-          potentialProfit: runnerProfit.toFixed(2),
+          requestedOdds: r.odds.toString(),
+          stakeAmount: r.stake.toString(),
+          potentialProfit: r.expectedProfit.toFixed(2),
           status: result.status === "PLACED" ? "PLACED" : "CANCELLED",
-          aiReasoning: `[DUTCH] ${aiDecision.reasoning} | Group: ${dutchGroupId} | Min ROI: ${minRoi.toFixed(1)}%`,
+          aiReasoning: `[DUTCH] ${aiResponse.reasoning} | Group: ${dutchGroupId}`,
           betId: result.betId ?? `${dutchGroupId}-${runner.selectionId}`,
         });
         if (result.status !== "PLACED") {
@@ -273,8 +297,8 @@ Total stake: £${totalStake}  |  Profit range: £${minProfit.toFixed(2)}–£${m
         }
       }
       await logBotActivity("info",
-        `[DUTCH] ${qualifying.length} live bets on ${marketDetail.eventName} — profit range £${minProfit.toFixed(2)}–£${maxProfit.toFixed(2)}`,
-        { race: market.eventName, qualifying: qualifying.length, totalStake, minProfit, maxProfit }
+        `[DUTCH] ${aiResponse.stakes.length} live bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}`,
+        { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange }
       );
     }
   }
