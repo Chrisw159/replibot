@@ -11,7 +11,7 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useQueryClient } from "@tanstack/react-query";
 import { getGetBetfairStatusQueryKey, getGetBetfairAccountQueryKey } from "@workspace/api-client-react";
-import { CheckCircle2, XCircle, Shield, AlertTriangle } from "lucide-react";
+import { CheckCircle2, XCircle, Shield, AlertTriangle, Bot } from "lucide-react";
 
 const connectSchema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -71,6 +71,33 @@ export default function Settings() {
       </div>
 
       <div className="grid gap-6">
+        {/* Grok / AI Config */}
+        <Card className="border-border/50 bg-card/50">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Bot className="w-5 h-5" />
+              AI Provider — Grok (xAI)
+            </CardTitle>
+            <CardDescription>
+              The bot uses Grok to analyse markets and make betting decisions. You need an xAI API key.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 rounded-lg bg-muted/30 border border-border/50 space-y-3 text-sm">
+              <p className="font-medium">How to get your xAI API key:</p>
+              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                <li>Go to <a href="https://console.x.ai" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">console.x.ai</a> and sign in</li>
+                <li>Create a new API key</li>
+                <li>Copy it and add it as the <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">XAI_API_KEY</code> secret in the Replit Secrets panel (lock icon in the sidebar)</li>
+                <li>Restart the API server workflow for the key to take effect</li>
+              </ol>
+              <p className="text-muted-foreground">
+                When deploying to Hetzner, add <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">XAI_API_KEY=your_key</code> to your <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">.env</code> file.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="border-border/50 bg-card/50">
           <CardHeader>
             <CardTitle className="text-lg">Exchange Connection</CardTitle>

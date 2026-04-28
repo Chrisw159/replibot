@@ -51,10 +51,11 @@ const EVENT_TYPES = [
 ];
 
 const AI_MODELS = [
-  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini (fast, cheap)" },
-  { id: "gpt-4.1", name: "GPT-4.1 (accurate)" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-  { id: "gpt-4o", name: "GPT-4o" },
+  { id: "grok-3-mini", name: "Grok 3 Mini (fast, cheap)" },
+  { id: "grok-3", name: "Grok 3 (most capable)" },
+  { id: "grok-3-mini-fast", name: "Grok 3 Mini Fast (fastest)" },
+  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
+  { id: "gpt-4.1", name: "GPT-4.1" },
 ];
 
 const formSchema = z
@@ -111,7 +112,7 @@ export function StrategyDialog({
       maxOdds: 10.0,
       stakeAmount: 5.0,
       maxStakeAmount: 50.0,
-      aiModel: "gpt-4.1-mini",
+      aiModel: "grok-3-mini",
       aiPrompt:
         "Analyse this horse racing market. Back selections where you see clear value based on the odds, recent form and market movement. Only recommend a bet if you are confident. Reply with your recommendation and a brief reason.",
       marketFilter: "",

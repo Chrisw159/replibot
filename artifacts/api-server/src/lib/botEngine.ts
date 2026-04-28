@@ -1,6 +1,6 @@
 import { logger } from "./logger";
 import { db, strategiesTable, betsTable, botConfigTable, botLogsTable } from "@workspace/db";
-import { eq, and, gte, sql } from "drizzle-orm";
+import { eq, gte, sql } from "drizzle-orm";
 import {
   getSession,
   listMarkets,
@@ -8,7 +8,26 @@ import {
   placeBet,
   loginWithEnvCredentials,
 } from "./betfair";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import OpenAI from "openai";
+
+function getAIClient(model: string): OpenAI {
+  if (model.startsWith("grok-")) {
+    if (!process.env.XAI_API_KEY) {
+      throw new Error("XAI_API_KEY is not set. Add your xAI API key in Settings.");
+    }
+    return new OpenAI({
+      apiKey: process.env.XAI_API_KEY,
+      baseURL: "https://api.x.ai/v1",
+    });
+  }
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+    throw new Error("AI_INTEGRATIONS_OPENAI_API_KEY is not set.");
+  }
+  return new OpenAI({
+    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+  });
+}
 
 let botInterval: NodeJS.Timeout | null = null;
 let botRunning = false;
@@ -146,7 +165,8 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
       };
 
       try {
-        const response = await openai.chat.completions.create({
+        const aiClient = getAIClient(strategy.aiModel);
+        const response = await aiClient.chat.completions.create({
           model: strategy.aiModel,
           max_completion_tokens: 500,
           messages: [
