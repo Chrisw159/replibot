@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: replibot
+      POSTGRES_USER: replibot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replibot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://replibot:${POSTGRES_PASSWORD}@postgres:5432/replibot
+      SESSION_SECRET: ${SESSION_SECRET}
+      AI_INTEGRATIONS_OPENAI_API_KEY: ${OPENAI_API_KEY}
+      AI_INTEGRATIONS_OPENAI_BASE_URL: https://api.openai.com/v1
+      BETFAIR_USERNAME: ${BETFAIR_USERNAME:-}
+      BETFAIR_PASSWORD: ${BETFAIR_PASSWORD:-}
+      BETFAIR_APP_KEY: ${BETFAIR_APP_KEY:-}
+      NODE_ENV: production
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-80}:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

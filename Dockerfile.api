@@ -1,0 +1,23 @@
+FROM node:22-alpine AS base
+RUN corepack enable && corepack prepare pnpm@latest --activate
+WORKDIR /app
+
+# Copy the entire workspace (needed because of workspace:* dependencies)
+FROM base AS builder
+COPY . .
+# Remove Replit-specific dev files that might not exist on build machine
+RUN rm -f .replit replit.nix 2>/dev/null || true
+RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm --filter @workspace/api-server run build
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=8080
+
+# Only copy what's needed to run
+COPY --from=builder /app/artifacts/api-server/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+
+EXPOSE 8080
+CMD ["node", "--enable-source-maps", "./dist/index.mjs"]
