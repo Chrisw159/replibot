@@ -10,15 +10,18 @@ import {
 } from "./betfair";
 import OpenAI from "openai";
 
-function getAIClient(model: string): OpenAI {
+async function getAIClient(model: string): Promise<OpenAI> {
   if (model.startsWith("grok-")) {
-    if (!process.env.XAI_API_KEY) {
-      throw new Error("XAI_API_KEY is not set. Add your xAI API key in Settings.");
+    // Prefer env var, fall back to DB-stored key
+    let apiKey = process.env.XAI_API_KEY;
+    if (!apiKey) {
+      const [config] = await db.select({ xaiApiKey: botConfigTable.xaiApiKey }).from(botConfigTable).limit(1);
+      apiKey = config?.xaiApiKey ?? undefined;
     }
-    return new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
-      baseURL: "https://api.x.ai/v1",
-    });
+    if (!apiKey) {
+      throw new Error("xAI API key is not set. Add it in Settings → AI Provider.");
+    }
+    return new OpenAI({ apiKey, baseURL: "https://api.x.ai/v1" });
   }
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
     throw new Error("AI_INTEGRATIONS_OPENAI_API_KEY is not set.");
@@ -165,7 +168,7 @@ ${eligibleRunners.map((r) => `  - ${r.runnerName}: Best Back ${r.bestBackPrice},
       };
 
       try {
-        const aiClient = getAIClient(strategy.aiModel);
+        const aiClient = await getAIClient(strategy.aiModel);
         const response = await aiClient.chat.completions.create({
           model: strategy.aiModel,
           max_completion_tokens: 500,

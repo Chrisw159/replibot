@@ -19,6 +19,7 @@ export const botConfigTable = pgTable("bot_config", {
   dailyProfitTarget: numeric("daily_profit_target", { precision: 10, scale: 2 }),
   enabledEventTypes: text("enabled_event_types").notNull().default("1,2,4"),
   paperTradingMode: boolean("paper_trading_mode").notNull().default(true),
+  xaiApiKey: text("xai_api_key"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 

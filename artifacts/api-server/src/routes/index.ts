@@ -6,6 +6,7 @@ import strategiesRouter from "./strategies";
 import betsRouter from "./bets";
 import botRouter from "./bot";
 import dashboardRouter from "./dashboard";
+import settingsRouter from "./settings";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(strategiesRouter);
 router.use(betsRouter);
 router.use(botRouter);
 router.use(dashboardRouter);
+router.use(settingsRouter);
 
 export default router;
