@@ -14,11 +14,12 @@
     "@workspace/db": "workspace:*",
     "@workspace/integrations-openai-ai-server": "workspace:*",
     "axios": "^1.7.9",
-    "node-fetch": "^3.3.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "node-fetch": "^3.3.2",
+    "openai": "^6.34.0",
     "pino": "^9",
     "pino-http": "^10"
   },
