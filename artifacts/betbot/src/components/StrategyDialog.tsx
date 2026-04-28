@@ -58,12 +58,28 @@ const AI_MODELS = [
   { id: "gpt-4.1", name: "GPT-4.1" },
 ];
 
+const BLANK_DEFAULTS = {
+  name: "",
+  description: "",
+  eventTypeId: "7",
+  betType: "BACK" as const,
+  minOdds: 2.0,
+  maxOdds: 10.0,
+  stakeAmount: 5.0,
+  maxStakeAmount: 50.0,
+  aiModel: "grok-3-mini",
+  aiPrompt:
+    "Analyse this horse racing market. Back selections where you see clear value based on the odds, recent form and market movement. Only recommend a bet if you are confident. Reply with your recommendation and a brief reason.",
+  marketFilter: "",
+  isActive: true,
+};
+
 const formSchema = z
   .object({
     name: z.string().min(1, "Name is required").max(100),
     description: z.string().optional(),
     eventTypeId: z.string().min(1, "Select a sport"),
-    betType: z.enum(["BACK", "LAY"]),
+    betType: z.enum(["BACK", "LAY", "DUTCH"]),
     minOdds: z.coerce.number().min(1.01, "Min odds must be ≥ 1.01"),
     maxOdds: z.coerce.number().min(1.01, "Max odds must be ≥ 1.01"),
     stakeAmount: z.coerce.number().min(0.01, "Stake must be > 0"),
@@ -103,21 +119,7 @@ export function StrategyDialog({
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: "",
-      description: "",
-      eventTypeId: "7",
-      betType: "BACK",
-      minOdds: 2.0,
-      maxOdds: 10.0,
-      stakeAmount: 5.0,
-      maxStakeAmount: 50.0,
-      aiModel: "grok-3-mini",
-      aiPrompt:
-        "Analyse this horse racing market. Back selections where you see clear value based on the odds, recent form and market movement. Only recommend a bet if you are confident. Reply with your recommendation and a brief reason.",
-      marketFilter: "",
-      isActive: true,
-    },
+    defaultValues: BLANK_DEFAULTS,
   });
 
   useEffect(() => {
@@ -126,7 +128,7 @@ export function StrategyDialog({
         name: strategy.name,
         description: strategy.description ?? "",
         eventTypeId: strategy.eventTypeId,
-        betType: strategy.betType as "BACK" | "LAY",
+        betType: strategy.betType as "BACK" | "LAY" | "DUTCH",
         minOdds: parseFloat(strategy.minOdds as unknown as string),
         maxOdds: parseFloat(strategy.maxOdds as unknown as string),
         stakeAmount: parseFloat(strategy.stakeAmount as unknown as string),
@@ -139,7 +141,7 @@ export function StrategyDialog({
         isActive: strategy.isActive,
       });
     } else if (open && !strategy) {
-      form.reset();
+      form.reset(BLANK_DEFAULTS);
     }
   }, [open, strategy]);
 
