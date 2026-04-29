@@ -56,16 +56,18 @@ interface DutchConfig {
   minLiquidity: number;
   minutesBeforeStart: number;
   countryCode: string;
+  countryCodes: string[];
   excludeRaceTypes: string[];
 }
 
 function parseDutchConfig(marketFilter: string | null): DutchConfig {
   const defaults: DutchConfig = {
     maxRunners: 12,
-    minLiquidity: 10000,
-    minutesBeforeStart: 3,
+    minLiquidity: 1000,
+    minutesBeforeStart: 5,
     countryCode: "GB",
-    excludeRaceTypes: ["Novice", "Maiden"],
+    countryCodes: ["GB", "IE"],
+    excludeRaceTypes: [],
   };
   try {
     return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
@@ -84,24 +86,26 @@ async function runDutchStrategy(
   const maxSelOdds = Number(strategy.maxOdds);    // 30/1 = 31.0
   const totalStake = Number(strategy.stakeAmount);
 
-  await logBotActivity("info", `[DUTCH] Cycle start — scanning UK horse racing (country: ${dc.countryCode})`);
+  const countries = dc.countryCodes?.length ? dc.countryCodes : [dc.countryCode];
+  await logBotActivity("info", `[DUTCH] Cycle start — scanning horse racing (countries: ${countries.join(",")}), window: ±${dc.minutesBeforeStart} min`);
 
   let markets: Awaited<ReturnType<typeof listMarkets>> = [];
   try {
     markets = await listMarkets({
       eventTypeId: strategy.eventTypeId,
-      countryCode: dc.countryCode,
-      limit: 20,
+      countryCodes: countries,
+      limit: 30,
+      hoursAhead: 4,
     });
   } catch (err) {
-    await logBotActivity("error", `[DUTCH] Failed to fetch markets from Betfair: ${err instanceof Error ? err.message : String(err)}`);
+    await logBotActivity("error", `[DUTCH] Betfair API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
-  await logBotActivity("info", `[DUTCH] Found ${markets.length} UK racing markets from Betfair`);
+  await logBotActivity("info", `[DUTCH] Betfair returned ${markets.length} markets (next 4h, countries: ${countries.join(",")})`);
 
   if (markets.length === 0) {
-    await logBotActivity("info", `[DUTCH] No UK horse racing markets available right now — Betfair may have none listed or racing is not active`);
+    await logBotActivity("info", `[DUTCH] No horse racing markets found — check Betfair connection and that races are scheduled`);
     return;
   }
 

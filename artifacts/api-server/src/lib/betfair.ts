@@ -183,8 +183,10 @@ export interface BetfairMarketDetail extends BetfairMarket {
 export async function listMarkets(params: {
   eventTypeId?: string;
   countryCode?: string;
+  countryCodes?: string[];
   marketType?: string;
   limit?: number;
+  hoursAhead?: number;
 }): Promise<BetfairMarket[]> {
   interface MarketCatalogueResult {
     marketId: string;
@@ -199,45 +201,54 @@ export async function listMarkets(params: {
 
   const filter: Record<string, unknown> = {};
   if (params.eventTypeId) filter["eventTypeIds"] = [params.eventTypeId];
-  if (params.countryCode) filter["marketCountries"] = [params.countryCode];
+
+  // Support array of country codes (e.g. ["GB","IE"]) or single code
+  const countries = params.countryCodes ?? (params.countryCode ? [params.countryCode] : null);
+  if (countries && countries.length > 0) filter["marketCountries"] = countries;
+
   if (params.marketType) filter["marketTypes"] = [params.marketType];
 
-  const maxResults = params.limit ?? 20;
+  // Fetch markets starting within the next N hours (default 4h)
+  const hours = params.hoursAhead ?? 4;
+  const now = new Date();
+  const future = new Date(now.getTime() + hours * 60 * 60 * 1000);
+  filter["marketStartTime"] = {
+    from: now.toISOString(),
+    to: future.toISOString(),
+  };
 
-  try {
-    const results = await apiRequest<MarketCatalogueResult[]>(
-      BETFAIR_API_URL,
-      "SportsAPING/v1.0/listMarketCatalogue",
-      {
-        filter,
-        marketProjection: [
-          "EVENT",
-          "EVENT_TYPE",
-          "MARKET_START_TIME",
-          "MARKET_DESCRIPTION",
-          "RUNNER_METADATA",
-        ],
-        maxResults,
-        sort: "FIRST_TO_START",
-      }
-    );
+  const maxResults = params.limit ?? 30;
 
-    return results.map((m) => ({
-      marketId: m.marketId,
-      marketName: m.marketName,
-      eventName: m.event?.name ?? m.marketName,
-      eventTypeId: m.eventType?.id ?? "1",
-      eventTypeName: m.eventType?.name ?? "Horse Racing",
-      countryCode: m.country,
-      marketStartTime: m.marketStartTime ?? new Date().toISOString(),
-      totalMatched: m.totalMatched ?? 0,
-      status: m.marketCatalogueDescription?.marketStatus ?? "OPEN",
-      inPlay: false,
-    }));
-  } catch (err) {
-    logger.error({ err }, "Failed to list markets");
-    return [];
-  }
+  // Let errors propagate — caller (botEngine) handles and logs them
+  const results = await apiRequest<MarketCatalogueResult[]>(
+    BETFAIR_API_URL,
+    "SportsAPING/v1.0/listMarketCatalogue",
+    {
+      filter,
+      marketProjection: [
+        "EVENT",
+        "EVENT_TYPE",
+        "MARKET_START_TIME",
+        "MARKET_DESCRIPTION",
+        "RUNNER_METADATA",
+      ],
+      maxResults,
+      sort: "FIRST_TO_START",
+    }
+  );
+
+  return (results ?? []).map((m) => ({
+    marketId: m.marketId,
+    marketName: m.marketName,
+    eventName: m.event?.name ?? m.marketName,
+    eventTypeId: m.eventType?.id ?? "1",
+    eventTypeName: m.eventType?.name ?? "Horse Racing",
+    countryCode: m.country,
+    marketStartTime: m.marketStartTime ?? new Date().toISOString(),
+    totalMatched: m.totalMatched ?? 0,
+    status: m.marketCatalogueDescription?.marketStatus ?? "OPEN",
+    inPlay: false,
+  }));
 }
 
 export async function getMarketDetail(

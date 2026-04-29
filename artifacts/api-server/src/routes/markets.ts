@@ -21,12 +21,18 @@ router.get("/markets", async (req, res): Promise<void> => {
     await loginWithEnvCredentials();
   }
 
-  const markets = await listMarkets({
-    eventTypeId: parsed.data.eventTypeId ?? undefined,
-    countryCode: parsed.data.countryCode ?? undefined,
-    marketType: parsed.data.marketType ?? undefined,
-    limit: parsed.data.limit ?? 20,
-  });
+  let markets;
+  try {
+    markets = await listMarkets({
+      eventTypeId: parsed.data.eventTypeId ?? undefined,
+      countryCode: parsed.data.countryCode ?? undefined,
+      marketType: parsed.data.marketType ?? undefined,
+      limit: parsed.data.limit ?? 20,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
 
   res.json(ListMarketsResponse.parse(markets));
 });
