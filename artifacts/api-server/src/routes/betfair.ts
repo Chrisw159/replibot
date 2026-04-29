@@ -10,6 +10,7 @@ import {
   loginWithCredentials,
   loginWithEnvCredentials,
   getAccountFunds,
+  debugListEventTypes,
 } from "../lib/betfair";
 import { db } from "@workspace/db";
 import { botConfigTable } from "@workspace/db/schema";
@@ -81,6 +82,15 @@ router.get("/betfair/account", async (_req, res): Promise<void> => {
 
   const funds = await getAccountFunds();
   res.json(GetBetfairAccountResponse.parse(funds));
+});
+
+router.get("/betfair/debug-event-types", async (_req, res): Promise<void> => {
+  try {
+    const result = await debugListEventTypes();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 export default router;

@@ -147,7 +147,13 @@ async function apiRequest<T>(
   }>;
 
   if (data[0]?.error) {
-    throw new Error(`Betfair API error: ${data[0].error.message}`);
+    const errMsg = data[0].error.message ?? String(data[0].error.code);
+    // DSC-0018 = session token expired — clear so auto-connect triggers next cycle
+    if (errMsg.includes("DSC-0018")) {
+      logger.warn("Betfair session expired (DSC-0018) — clearing session for re-auth");
+      currentSession = null;
+    }
+    throw new Error(`Betfair API error: ${errMsg}`);
   }
 
   return data[0]?.result as T;
@@ -180,6 +186,31 @@ export interface BetfairMarketDetail extends BetfairMarket {
   runners: BetfairRunner[];
 }
 
+export async function debugListEventTypes(): Promise<unknown> {
+  const body = JSON.stringify([{
+    jsonrpc: "2.0",
+    method: "SportsAPING/v1.0/listEventTypes",
+    params: { filter: {} },
+    id: 1,
+  }]);
+
+  if (!currentSession) throw new Error("Not connected");
+
+  const response = await fetch(BETFAIR_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Application": currentSession.appKey,
+      "X-Authentication": currentSession.token,
+      Accept: "application/json",
+    },
+    body,
+  });
+
+  const raw = await response.text();
+  return { status: response.status, body: raw.substring(0, 2000) };
+}
+
 export async function listMarkets(params: {
   eventTypeId?: string;
   countryCode?: string;
@@ -208,14 +239,15 @@ export async function listMarkets(params: {
 
   if (params.marketType) filter["marketTypes"] = [params.marketType];
 
-  // Fetch markets starting within the next N hours (default 4h)
-  const hours = params.hoursAhead ?? 4;
-  const now = new Date();
-  const future = new Date(now.getTime() + hours * 60 * 60 * 1000);
-  filter["marketStartTime"] = {
-    from: now.toISOString(),
-    to: future.toISOString(),
-  };
+  // Only apply time range when explicitly requested
+  if (params.hoursAhead) {
+    const now = new Date();
+    const future = new Date(now.getTime() + params.hoursAhead * 60 * 60 * 1000);
+    filter["marketStartTime"] = {
+      from: new Date(now.getTime() - 60_000).toISOString(), // 1 min grace for clock drift
+      to: future.toISOString(),
+    };
+  }
 
   const maxResults = params.limit ?? 30;
 
@@ -230,14 +262,21 @@ export async function listMarkets(params: {
         "EVENT_TYPE",
         "MARKET_START_TIME",
         "MARKET_DESCRIPTION",
-        "RUNNER_METADATA",
       ],
       maxResults,
       sort: "FIRST_TO_START",
     }
   );
 
-  return (results ?? []).map((m) => ({
+  if (!Array.isArray(results)) {
+    const msg = `Betfair listMarketCatalogue returned unexpected response: ${JSON.stringify(results)}`;
+    logger.error({ results }, msg);
+    throw new Error(msg);
+  }
+
+  logger.info({ count: results.length, filter }, "listMarketCatalogue raw response");
+
+  return results.map((m) => ({
     marketId: m.marketId,
     marketName: m.marketName,
     eventName: m.event?.name ?? m.marketName,

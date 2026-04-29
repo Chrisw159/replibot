@@ -95,7 +95,6 @@ async function runDutchStrategy(
       eventTypeId: strategy.eventTypeId,
       countryCodes: countries,
       limit: 30,
-      hoursAhead: 4,
     });
   } catch (err) {
     await logBotActivity("error", `[DUTCH] Betfair API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
