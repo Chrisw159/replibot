@@ -189,52 +189,47 @@ export interface BetfairMarketDetail extends BetfairMarket {
 export async function debugListEventTypes(): Promise<unknown> {
   if (!currentSession) throw new Error("Not connected");
 
-  const headers = {
-    "Content-Type": "application/json",
-    "X-Application": currentSession.appKey,
-    "X-Authentication": currentSession.token,
-    Accept: "application/json",
-  };
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10000);
 
-  // Test 1: listEventTypes (should always return sports list)
-  const r1 = await fetch(BETFAIR_API_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {} }, id: 1 }]),
-  });
-  const t1 = await r1.text();
+  try {
+    // Test the current session with listEventTypes
+    const r1 = await fetch(BETFAIR_API_URL, {
+      method: "POST",
+      signal: abort.signal,
+      headers: { "Content-Type": "application/json", "X-Application": currentSession.appKey, "X-Authentication": currentSession.token, Accept: "application/json" },
+      body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {} }, id: 1 }]),
+    });
+    const t1 = await r1.text();
 
-  // Test 2: listCountries (should always return countries)
-  const r2 = await fetch(BETFAIR_API_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listCountries", params: { filter: {} }, id: 2 }]),
-  });
-  const t2 = await r2.text();
+    // Test with listCountries
+    const r2 = await fetch(BETFAIR_API_URL, {
+      method: "POST",
+      signal: abort.signal,
+      headers: { "Content-Type": "application/json", "X-Application": currentSession.appKey, "X-Authentication": currentSession.token, Accept: "application/json" },
+      body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listCountries", params: { filter: {} }, id: 2 }]),
+    });
+    const t2 = await r2.text();
 
-  // Test 3: listMarketCatalogue with horse racing, no date/country filter
-  const r3 = await fetch(BETFAIR_API_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listMarketCatalogue", params: { filter: { eventTypeIds: ["7"] }, maxResults: 5, marketProjection: ["EVENT", "MARKET_START_TIME"] }, id: 3 }]),
-  });
-  const t3 = await r3.text();
+    // Test horse racing markets, no filter
+    const r3 = await fetch(BETFAIR_API_URL, {
+      method: "POST",
+      signal: abort.signal,
+      headers: { "Content-Type": "application/json", "X-Application": currentSession.appKey, "X-Authentication": currentSession.token, Accept: "application/json" },
+      body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listMarketCatalogue", params: { filter: { eventTypeIds: ["7"] }, maxResults: 3, marketProjection: ["MARKET_START_TIME"] }, id: 3 }]),
+    });
+    const t3 = await r3.text();
 
-  // Test 4: REST API format instead of JSON-RPC
-  const r4 = await fetch("https://api.betfair.com/exchange/betting/rest/v1.0/listEventTypes/", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ filter: {} }),
-  });
-  const t4 = await r4.text();
-
-  return {
-    session: { username: currentSession.username, appKeyPrefix: currentSession.appKey.substring(0, 4) + "..." },
-    jsonRpcEventTypes: { status: r1.status, body: t1 },
-    jsonRpcCountries: { status: r2.status, body: t2.substring(0, 500) },
-    jsonRpcHorseRacing: { status: r3.status, body: t3.substring(0, 500) },
-    restEventTypes: { status: r4.status, body: t4.substring(0, 500) },
-  };
+    return {
+      sessionAge: `${Math.round((Date.now() - currentSession.connectedAt.getTime()) / 1000)}s`,
+      appKeyPrefix: currentSession.appKey.substring(0, 6) + "...",
+      listEventTypes: { status: r1.status, body: t1 },
+      listCountries: { status: r2.status, body: t2.substring(0, 400) },
+      listMarketCatalogue: { status: r3.status, body: t3.substring(0, 400) },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function listMarkets(params: {
