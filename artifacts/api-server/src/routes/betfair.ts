@@ -11,6 +11,8 @@ import {
   loginWithEnvCredentials,
   getAccountFunds,
   debugListEventTypes,
+  activateSubscription,
+  createNewAppKey,
 } from "../lib/betfair";
 import { db } from "@workspace/db";
 import { botConfigTable } from "@workspace/db/schema";
@@ -87,6 +89,24 @@ router.get("/betfair/account", async (_req, res): Promise<void> => {
 router.get("/betfair/debug-event-types", async (_req, res): Promise<void> => {
   try {
     const result = await debugListEventTypes();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/betfair/create-app-key", async (_req, res): Promise<void> => {
+  try {
+    const result = await createNewAppKey();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/betfair/activate-subscription", async (_req, res): Promise<void> => {
+  try {
+    const result = await activateSubscription();
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

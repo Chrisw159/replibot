@@ -186,6 +186,100 @@ export interface BetfairMarketDetail extends BetfairMarket {
   runners: BetfairRunner[];
 }
 
+export async function createNewAppKey(): Promise<unknown> {
+  if (!currentSession) throw new Error("Not connected to Betfair");
+
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Application": currentSession.appKey,
+    "X-Authentication": currentSession.token,
+    Accept: "application/json",
+  };
+
+  // Try the LIVE (inactive) key with current session to see if it returns exchange data
+  const liveKey = "sPU646LvWJaXf76L";
+  const liveHeaders = { ...headers, "X-Application": liveKey };
+
+  const liveResp = await fetch(BETFAIR_API_URL, {
+    method: "POST",
+    headers: liveHeaders,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {} }, id: 1 }]),
+  });
+  const liveData = await liveResp.text();
+
+  // Also try listMarketCatalogue with live key
+  const marketResp = await fetch(BETFAIR_API_URL, {
+    method: "POST",
+    headers: liveHeaders,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listMarketCatalogue", params: { filter: {}, maxResults: 3, marketProjection: ["MARKET_START_TIME"] }, id: 2 }]),
+  });
+  const marketData = await marketResp.text();
+
+  // Also try delay key with account URL (wrong URL - should fail with error, helps diagnose)
+  const wrongResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {} }, id: 3 }]),
+  });
+  const wrongData = await wrongResp.text();
+
+  return {
+    liveKeyListEventTypes: liveData,
+    liveKeyListMarkets: marketData,
+    delayKeyOnAccountsUrl: wrongData.substring(0, 200),
+  };
+}
+
+export async function activateSubscription(): Promise<unknown> {
+  if (!currentSession) throw new Error("Not connected to Betfair");
+
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Application": currentSession.appKey,
+    "X-Authentication": currentSession.token,
+    Accept: "application/json",
+  };
+
+  // Check developer app keys status
+  const keysResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/getDeveloperAppKeys", params: {}, id: 1 }]),
+  });
+  const keysData = await keysResp.text();
+
+  // List account subscriptions
+  const subsResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/listAccountSubscriptionTokens", params: {}, id: 2 }]),
+  });
+  const subsData = await subsResp.text();
+
+  // Check account details (might reveal account status/restrictions)
+  const detailsResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/getAccountDetails", params: {}, id: 3 }]),
+  });
+  const detailsData = await detailsResp.text();
+
+  // Attempt listEventTypes with explicit "GB" locale header
+  const eventsResp = await fetch(BETFAIR_API_URL, {
+    method: "POST",
+    headers: { ...headers, "Accept-Language": "en-GB" },
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {}, locale: "en" }, id: 4 }]),
+  });
+  const eventsData = await eventsResp.text();
+
+  return {
+    developerAppKeys: keysData.substring(0, 1000),
+    accountSubscriptions: subsData,
+    accountDetails: detailsData.substring(0, 500),
+    listEventTypesWithLocale: eventsData,
+  };
+}
+
 export async function debugListEventTypes(): Promise<unknown> {
   if (!currentSession) throw new Error("Not connected");
 
