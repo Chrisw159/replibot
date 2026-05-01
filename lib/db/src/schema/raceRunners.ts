@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, numeric, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, numeric, boolean, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const raceRunnersTable = pgTable("race_runners", {
   id: serial("id").primaryKey(),
@@ -12,6 +12,6 @@ export const raceRunnersTable = pgTable("race_runners", {
   included: boolean("included").notNull().default(false),
   excludeReason: text("exclude_reason"),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, t => [unique("race_runners_market_selection_unique").on(t.marketId, t.selectionId)]);
 
 export type RaceRunner = typeof raceRunnersTable.$inferSelect;
