@@ -104,37 +104,39 @@ router.get("/dashboard/pnl-chart", async (req, res): Promise<void> => {
 });
 
 router.get("/dashboard/recent-bets", async (_req, res): Promise<void> => {
-  const bets = await db
-    .select()
+  // Return race-level summaries instead of individual bets
+  const races = await db
+    .select({
+      marketId: betsTable.marketId,
+      marketName: betsTable.marketName,
+      eventName: betsTable.eventName,
+      strategyName: betsTable.strategyName,
+      placedAt: sql<string>`min(${betsTable.placedAt})`.as("placed_at"),
+      runnersBackedCount: sql<number>`count(*)::int`.as("runners_backed"),
+      totalStaked: sql<number>`sum(${betsTable.stakeAmount})::float`.as("total_staked"),
+      netProfit: sql<number>`sum(${betsTable.actualProfit})::float`.as("net_profit"),
+      settled: sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','SETTLED'))`.as("settled"),
+      hasWinner: sql<boolean>`bool_or(${betsTable.status} = 'WON')`.as("has_winner"),
+      winnerName: sql<string>`max(case when ${betsTable.status} = 'WON' then ${betsTable.selectionName} end)`.as("winner_name"),
+    })
     .from(betsTable)
-    .orderBy(desc(betsTable.placedAt))
+    .groupBy(betsTable.marketId, betsTable.marketName, betsTable.eventName, betsTable.strategyName)
+    .orderBy(desc(sql`min(${betsTable.placedAt})`))
     .limit(10);
 
-  res.json(
-    GetRecentBetsResponse.parse(
-      bets.map((b) => ({
-        id: b.id,
-        betId: b.betId ?? null,
-        strategyId: b.strategyId ?? null,
-        strategyName: b.strategyName ?? null,
-        marketId: b.marketId,
-        marketName: b.marketName,
-        eventName: b.eventName,
-        selectionId: b.selectionId,
-        selectionName: b.selectionName,
-        betType: b.betType,
-        requestedOdds: Number(b.requestedOdds),
-        matchedOdds: b.matchedOdds !== null ? Number(b.matchedOdds) : null,
-        stakeAmount: Number(b.stakeAmount),
-        potentialProfit: Number(b.potentialProfit),
-        actualProfit: b.actualProfit !== null ? Number(b.actualProfit) : null,
-        status: b.status,
-        aiReasoning: b.aiReasoning ?? null,
-        placedAt: b.placedAt.toISOString(),
-        settledAt: b.settledAt ? b.settledAt.toISOString() : null,
-      }))
-    )
-  );
+  res.json(races.map(r => ({
+    marketId: r.marketId,
+    marketName: r.marketName,
+    eventName: r.eventName,
+    strategyName: r.strategyName ?? null,
+    placedAt: r.placedAt,
+    runnersBackedCount: r.runnersBackedCount,
+    totalStaked: Math.round(Number(r.totalStaked) * 100) / 100,
+    netProfit: r.netProfit != null ? Math.round(Number(r.netProfit) * 100) / 100 : null,
+    settled: r.settled,
+    hasWinner: r.hasWinner,
+    winnerName: r.winnerName ?? null,
+  })));
 });
 
 router.get("/dashboard/strategy-performance", async (_req, res): Promise<void> => {

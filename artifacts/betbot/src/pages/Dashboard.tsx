@@ -1,5 +1,19 @@
 import { useGetDashboardSummary, useGetPnlChart, useGetRecentBets, useGetStrategyPerformance } from "@workspace/api-client-react";
 import { formatCurrency, formatPercent } from "@/lib/format";
+
+interface RecentRace {
+  marketId: string;
+  marketName: string;
+  eventName: string;
+  strategyName: string | null;
+  placedAt: string;
+  runnersBackedCount: number;
+  totalStaked: number;
+  netProfit: number | null;
+  settled: boolean;
+  hasWinner: boolean;
+  winnerName: string | null;
+}
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar, Legend } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,30 +97,39 @@ export default function Dashboard() {
         </Card>
       </div>
       
-      {/* Recent Bets */}
+      {/* Recent Activity — race level */}
       <Card className="border-border/50 bg-card/50 backdrop-blur">
         <CardHeader>
           <CardTitle className="text-sm font-medium text-muted-foreground">Recent Activity</CardTitle>
         </CardHeader>
         <CardContent>
           {loadingBets ? <Skeleton className="w-full h-32" /> : (
-            <div className="space-y-4">
-              {recentBets?.map(bet => (
-                <div key={bet.id} className="flex items-center justify-between p-3 rounded bg-muted/30 border border-border/50">
-                  <div>
-                    <div className="font-medium text-sm">{bet.eventName} - {bet.selectionName}</div>
-                    <div className="text-xs text-muted-foreground">{bet.marketName} • {bet.strategyName}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono text-sm">{formatCurrency(bet.stakeAmount)} @ {bet.requestedOdds}</div>
-                    <div className={`text-xs font-bold ${bet.status === 'WON' ? 'text-chart-1' : bet.status === 'LOST' ? 'text-chart-4' : 'text-chart-2'}`}>
-                      {bet.status}
+            <div className="divide-y divide-border/30">
+              {(recentBets as unknown as RecentRace[])?.map(race => (
+                <div key={race.marketId} className="flex items-center justify-between py-3 gap-4">
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm truncate">{race.eventName}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {race.marketName} · {race.runnersBackedCount} runners · {new Date(race.placedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                     </div>
+                    {race.winnerName && (
+                      <div className="text-xs text-chart-1 mt-0.5">🏆 {race.winnerName}</div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    {race.settled ? (
+                      <div className={`font-mono font-bold text-sm ${(race.netProfit ?? 0) >= 0 ? "text-chart-1" : "text-chart-4"}`}>
+                        {(race.netProfit ?? 0) >= 0 ? "+" : ""}{formatCurrency(race.netProfit ?? 0)}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-chart-2 font-semibold">Pending</div>
+                    )}
+                    <div className="text-xs text-muted-foreground">{formatCurrency(race.totalStaked)} staked</div>
                   </div>
                 </div>
               ))}
               {!recentBets?.length && (
-                <div className="text-center py-8 text-muted-foreground text-sm">No recent bets found</div>
+                <div className="text-center py-8 text-muted-foreground text-sm">No recent races found</div>
               )}
             </div>
           )}
