@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, sql } from "drizzle-orm";
-import { db, betsTable } from "@workspace/db";
+import { db, betsTable, raceRunnersTable } from "@workspace/db";
 import {
   ListBetsQueryParams,
   GetBetParams,
@@ -84,6 +84,26 @@ router.get("/bets/race/:marketId", async (req, res): Promise<void> => {
     .orderBy(desc(betsTable.placedAt));
 
   res.json(bets.map(mapBet));
+});
+
+router.get("/bets/race/:marketId/runners", async (req, res): Promise<void> => {
+  const { marketId } = req.params;
+  const runners = await db
+    .select()
+    .from(raceRunnersTable)
+    .where(eq(raceRunnersTable.marketId, marketId))
+    .orderBy(raceRunnersTable.bestBackPrice);
+
+  res.json(runners.map(r => ({
+    id: r.id,
+    selectionId: r.selectionId,
+    runnerName: r.runnerName,
+    bestBackPrice: r.bestBackPrice != null ? Number(r.bestBackPrice) : null,
+    status: r.status,
+    included: r.included,
+    excludeReason: r.excludeReason,
+    recordedAt: r.recordedAt.toISOString(),
+  })));
 });
 
 router.get("/bets/:id", async (req, res): Promise<void> => {

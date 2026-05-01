@@ -31,6 +31,16 @@ interface Bet {
   placedAt: string;
 }
 
+interface Runner {
+  id: number;
+  selectionId: number;
+  runnerName: string;
+  bestBackPrice: number | null;
+  status: string;
+  included: boolean;
+  excludeReason: string | null;
+}
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function groupByDate(races: RaceSummary[]) {
@@ -63,6 +73,16 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
       return res.json();
     },
   });
+
+  const { data: runners } = useQuery<Runner[]>({
+    queryKey: ["race-runners", marketId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/bets/race/${encodeURIComponent(marketId)}/runners`);
+      return res.json();
+    },
+  });
+
+  const excludedRunners = runners?.filter(r => !r.included) ?? [];
 
   const totalStaked = bets?.reduce((s, b) => s + b.stakeAmount, 0) ?? 0;
   const totalProfit = bets?.reduce((s, b) => s + (b.actualProfit ?? 0), 0) ?? 0;
@@ -174,6 +194,34 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
           )}
         </CardContent>
       </Card>
+
+      {excludedRunners.length > 0 && (
+        <Card className="border-border/50 bg-card/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+              Excluded Runners ({excludedRunners.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y divide-border/50">
+              {excludedRunners.map((runner) => (
+                <div key={runner.id} className="px-4 py-3 flex items-center justify-between gap-4 opacity-60">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-2 h-2 rounded-full bg-muted-foreground shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">{runner.runnerName}</p>
+                      <p className="text-xs text-muted-foreground">{runner.excludeReason ?? "Not selected"}</p>
+                    </div>
+                  </div>
+                  <span className="font-mono text-sm text-muted-foreground shrink-0">
+                    {runner.bestBackPrice != null ? formatNumber(runner.bestBackPrice) : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {bets?.some(b => b.aiReasoning) && (
         <Card className="border-border/50 bg-card/50">

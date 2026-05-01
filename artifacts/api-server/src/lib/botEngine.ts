@@ -1,5 +1,5 @@
 import { logger } from "./logger";
-import { db, strategiesTable, betsTable, botConfigTable, botLogsTable } from "@workspace/db";
+import { db, strategiesTable, betsTable, botConfigTable, botLogsTable, raceRunnersTable } from "@workspace/db";
 import { eq, gte, sql } from "drizzle-orm";
 import {
   getSession,
@@ -172,6 +172,31 @@ async function runDutchStrategy(
       r => (r.bestBackPrice ?? 0) >= Number(strategy.minOdds) && (r.bestBackPrice ?? 0) <= maxSelOdds
     );
     if (qualifying.length === 0) continue;
+
+    // ── Record all runners (included + excluded) for race history ──
+    const qualifyingIds = new Set(qualifying.map(r => r.selectionId));
+    const allRunners = marketDetail.runners.map(r => ({
+      marketId: market.marketId,
+      marketName: market.marketName,
+      eventName: market.eventName,
+      selectionId: r.selectionId,
+      runnerName: r.runnerName,
+      bestBackPrice: r.bestBackPrice != null ? String(r.bestBackPrice) : null,
+      status: r.status ?? "ACTIVE",
+      included: qualifyingIds.has(r.selectionId),
+      excludeReason: r.status !== "ACTIVE"
+        ? "Non-runner / withdrawn"
+        : r.bestBackPrice == null
+          ? "No price available"
+          : (r.bestBackPrice ?? 0) < Number(strategy.minOdds)
+            ? `Odds too short (${r.bestBackPrice} < ${strategy.minOdds})`
+            : (r.bestBackPrice ?? 0) > maxSelOdds
+              ? `Odds too big (${r.bestBackPrice} > ${maxSelOdds})`
+              : null,
+    }));
+    try {
+      await db.insert(raceRunnersTable).values(allRunners).onConflictDoNothing();
+    } catch { /* non-fatal */ }
 
     // ── AI: validate race AND calculate per-runner stakes ──
     const budget = totalStake; // max £40 per race
