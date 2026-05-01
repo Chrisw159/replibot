@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db, betsTable } from "@workspace/db";
 import {
   ListBetsQueryParams,
@@ -53,6 +53,37 @@ router.get("/bets", async (req, res): Promise<void> => {
 
   const bets = await query.orderBy(desc(betsTable.placedAt)).limit(parsed.data.limit ?? 50);
   res.json(ListBetsResponse.parse(bets.map(mapBet)));
+});
+
+router.get("/bets/races", async (_req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      marketId: betsTable.marketId,
+      marketName: betsTable.marketName,
+      eventName: betsTable.eventName,
+      placedAt: sql<string>`min(${betsTable.placedAt})`.as("placed_at"),
+      betCount: sql<number>`count(*)::int`.as("bet_count"),
+      totalStaked: sql<number>`sum(${betsTable.stakeAmount})::float`.as("total_staked"),
+      totalProfit: sql<number>`sum(${betsTable.actualProfit})::float`.as("total_profit"),
+      settled: sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','SETTLED'))`.as("settled"),
+    })
+    .from(betsTable)
+    .groupBy(betsTable.marketId, betsTable.marketName, betsTable.eventName)
+    .orderBy(desc(sql`min(${betsTable.placedAt})`))
+    .limit(100);
+
+  res.json(rows);
+});
+
+router.get("/bets/race/:marketId", async (req, res): Promise<void> => {
+  const { marketId } = req.params;
+  const bets = await db
+    .select()
+    .from(betsTable)
+    .where(eq(betsTable.marketId, marketId))
+    .orderBy(desc(betsTable.placedAt));
+
+  res.json(bets.map(mapBet));
 });
 
 router.get("/bets/:id", async (req, res): Promise<void> => {
