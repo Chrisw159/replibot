@@ -238,7 +238,7 @@ Total budget: £${budget.toFixed(2)} (must not be exceeded)
     const userMessage = `
 You have been given a potential dutch betting opportunity. Your job is to:
 
-1. Validate the race (reputable track in ${countryList}, not Novice/Maiden/Bumper/NH Flat, sensible opportunity).
+1. Validate the race (reputable track in ${countryList}, sensible opportunity${countries.some(c => ["GB","IE"].includes(c)) && countries.every(c => ["GB","IE"].includes(c)) ? ", and reject Novice/Maiden/Bumper/NH Flat race types" : countries.some(c => ["GB","IE"].includes(c)) ? ". For GB/IE races reject Novice/Bumper/NH Flat types, but Maiden is fine for US/AU. Do NOT reject a race simply because it is at a non-British track" : ". Do NOT reject a race simply because it is at a non-British track — US, Australian and Irish tracks are all valid"}).
 2. If approved: calculate the stake for EACH qualifying runner so that if ANY of them wins, the total return exceeds the total amount staked. Profit per winner can vary — it does NOT need to be equal. The sum of all stakes must not exceed £${budget.toFixed(2)}.
 3. Use the standard dutching formula as a starting point: stake_i = (budget / bookPct) / odds_i, where bookPct = sum(1/odds). You may adjust stakes slightly but must ensure every winner returns a profit.
 
