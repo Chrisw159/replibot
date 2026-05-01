@@ -542,6 +542,53 @@ export interface PlaceBetResult {
   error?: string;
 }
 
+export interface MarketSettlement {
+  marketId: string;
+  status: string; // "OPEN" | "SUSPENDED" | "CLOSED"
+  settled: boolean;
+  winnerSelectionId?: number;
+}
+
+export async function getMarketSettlement(marketId: string): Promise<MarketSettlement | null> {
+  interface BookResult {
+    marketId?: string;
+    status?: string;
+    runners?: Array<{
+      selectionId: number;
+      status: string; // "WINNER" | "LOSER" | "REMOVED" | "ACTIVE" | ...
+    }>;
+  }
+
+  try {
+    const results = await apiRequest<BookResult[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketBook",
+      {
+        marketIds: [marketId],
+        priceProjection: { priceData: [] },
+      }
+    );
+
+    const book = results?.[0];
+    if (!book) return null;
+
+    const status = book.status ?? "OPEN";
+    const closed = status === "CLOSED";
+
+    const winner = book.runners?.find(r => r.status === "WINNER");
+
+    return {
+      marketId,
+      status,
+      settled: closed && !!winner,
+      winnerSelectionId: winner?.selectionId,
+    };
+  } catch (err) {
+    logger.warn({ err, marketId }, "Could not get market settlement");
+    return null;
+  }
+}
+
 export async function placeBet(params: PlaceBetParams): Promise<PlaceBetResult> {
   interface PlaceResult {
     status?: string;

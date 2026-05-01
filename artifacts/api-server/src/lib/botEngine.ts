@@ -5,6 +5,7 @@ import {
   getSession,
   listMarkets,
   getMarketDetail,
+  getMarketSettlement,
   placeBet,
   loginWithEnvCredentials,
 } from "./betfair";
@@ -29,6 +30,7 @@ async function getAIClient(model: string): Promise<OpenAI> {
 }
 
 let botInterval: NodeJS.Timeout | null = null;
+let settlementInterval: NodeJS.Timeout | null = null;
 let botRunning = false;
 let startedAt: Date | null = null;
 
@@ -544,6 +546,71 @@ ${eligibleRunners.map(r => `  - ${r.runnerName}: Back ${r.bestBackPrice}, Lay ${
   }
 }
 
+async function runSettlementCheck(): Promise<void> {
+  if (!getSession()) return;
+
+  try {
+    // Find all unsettled bets from the last 48 hours
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const unsettledBets = await db
+      .select()
+      .from(betsTable)
+      .where(
+        sql`${betsTable.status} IN ('MATCHED','PLACED') AND ${betsTable.placedAt} >= ${cutoff}`
+      );
+
+    if (unsettledBets.length === 0) return;
+
+    // Group by marketId
+    const byMarket = new Map<string, typeof unsettledBets>();
+    for (const bet of unsettledBets) {
+      const list = byMarket.get(bet.marketId) ?? [];
+      list.push(bet);
+      byMarket.set(bet.marketId, list);
+    }
+
+    for (const [marketId, bets] of byMarket) {
+      const settlement = await getMarketSettlement(marketId);
+      if (!settlement?.settled) continue;
+
+      const winnerSelectionId = settlement.winnerSelectionId;
+      const settledAt = new Date();
+
+      for (const bet of bets) {
+        const won = bet.selectionId === winnerSelectionId;
+        const actualProfit = won
+          ? Number(bet.potentialProfit)      // already accounts for stake returned
+          : -Number(bet.stakeAmount);
+
+        await db
+          .update(betsTable)
+          .set({
+            status: won ? "WON" : "LOST",
+            actualProfit: actualProfit.toFixed(2),
+            settledAt,
+          })
+          .where(eq(betsTable.id, bet.id));
+      }
+
+      const winnerBet = bets.find(b => b.selectionId === winnerSelectionId);
+      const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
+      if (winnerBet) {
+        await logBotActivity("info",
+          `[SETTLED] ${winnerBet.eventName} — WINNER: ${winnerBet.selectionName} (+£${Number(winnerBet.potentialProfit).toFixed(2)})`,
+          { marketId, totalStaked }
+        );
+      } else {
+        await logBotActivity("info",
+          `[SETTLED] ${bets[0]?.eventName} — no backed horse won, lost £${totalStaked.toFixed(2)}`,
+          { marketId }
+        );
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, "Settlement check error");
+  }
+}
+
 export async function startBot(): Promise<void> {
   if (botRunning) return;
   const config = await getBotConfig();
@@ -552,11 +619,15 @@ export async function startBot(): Promise<void> {
   startedAt = new Date();
   await logBotActivity("info", "Bot started");
   botInterval = setInterval(() => void runBotCycle(), config.checkIntervalSeconds * 1000);
+  // Settlement check runs every 2 minutes independently of main cycle
+  settlementInterval = setInterval(() => void runSettlementCheck(), 2 * 60 * 1000);
   void runBotCycle();
+  void runSettlementCheck();
 }
 
 export async function stopBot(): Promise<void> {
   if (botInterval) { clearInterval(botInterval); botInterval = null; }
+  if (settlementInterval) { clearInterval(settlementInterval); settlementInterval = null; }
   botRunning = false;
   startedAt = null;
   const [config] = await db.select().from(botConfigTable).limit(1);
