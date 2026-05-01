@@ -231,13 +231,14 @@ ${runnerList}
 Total budget: £${budget.toFixed(2)} (must not be exceeded)
     `.trim();
 
+    const countryList = countries.join(", ");
     const systemPrompt = strategy.aiPrompt ??
-      "You are a UK horse racing dutching specialist. Approve only solid opportunities on reputable UK tracks.";
+      `You are a horse racing dutching specialist covering ${countryList} racing. Approve solid opportunities on reputable tracks in any of these countries.`;
 
     const userMessage = `
 You have been given a potential dutch betting opportunity. Your job is to:
 
-1. Validate the race (UK track, not Novice/Maiden/Bumper/NH Flat, sensible opportunity).
+1. Validate the race (reputable track in ${countryList}, not Novice/Maiden/Bumper/NH Flat, sensible opportunity).
 2. If approved: calculate the stake for EACH qualifying runner so that if ANY of them wins, the total return exceeds the total amount staked. Profit per winner can vary — it does NOT need to be equal. The sum of all stakes must not exceed £${budget.toFixed(2)}.
 3. Use the standard dutching formula as a starting point: stake_i = (budget / bookPct) / odds_i, where bookPct = sum(1/odds). You may adjust stakes slightly but must ensure every winner returns a profit.
 
