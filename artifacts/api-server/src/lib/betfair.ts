@@ -240,43 +240,34 @@ export async function activateSubscription(): Promise<unknown> {
     Accept: "application/json",
   };
 
-  // Check developer app keys status
-  const keysResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+  // List subscription tokens that have been generated for THIS app (REPLIBOT)
+  const appTokensResp = await fetch(BETFAIR_ACCOUNTS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/getDeveloperAppKeys", params: {}, id: 1 }]),
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/listApplicationSubscriptionTokens", params: { subscriptionStatus: "ALL" }, id: 1 }]),
   });
-  const keysData = await keysResp.text();
+  const appTokensData = await appTokensResp.text();
 
-  // List account subscriptions
-  const subsResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+  // Also try with no status filter
+  const appTokensResp2 = await fetch(BETFAIR_ACCOUNTS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/listAccountSubscriptionTokens", params: {}, id: 2 }]),
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/listApplicationSubscriptionTokens", params: {}, id: 2 }]),
   });
-  const subsData = await subsResp.text();
+  const appTokensData2 = await appTokensResp2.text();
 
-  // Check account details (might reveal account status/restrictions)
-  const detailsResp = await fetch(BETFAIR_ACCOUNTS_URL, {
+  // Try getApplicationSubscriptionHistory
+  const histResp = await fetch(BETFAIR_ACCOUNTS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/getAccountDetails", params: {}, id: 3 }]),
+    body: JSON.stringify([{ jsonrpc: "2.0", method: "AccountAPING/v1.0/getApplicationSubscriptionHistory", params: {}, id: 3 }]),
   });
-  const detailsData = await detailsResp.text();
-
-  // Attempt listEventTypes with explicit "GB" locale header
-  const eventsResp = await fetch(BETFAIR_API_URL, {
-    method: "POST",
-    headers: { ...headers, "Accept-Language": "en-GB" },
-    body: JSON.stringify([{ jsonrpc: "2.0", method: "SportsAPING/v1.0/listEventTypes", params: { filter: {}, locale: "en" }, id: 4 }]),
-  });
-  const eventsData = await eventsResp.text();
+  const histData = await histResp.text();
 
   return {
-    developerAppKeys: keysData.substring(0, 1000),
-    accountSubscriptions: subsData,
-    accountDetails: detailsData.substring(0, 500),
-    listEventTypesWithLocale: eventsData,
+    listApplicationSubscriptionTokens_ALL: appTokensData,
+    listApplicationSubscriptionTokens_noFilter: appTokensData2,
+    subscriptionHistory: histData,
   };
 }
 
