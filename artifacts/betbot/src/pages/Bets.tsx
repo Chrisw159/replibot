@@ -88,6 +88,11 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
   const totalProfit = bets?.reduce((s, b) => s + (b.actualProfit ?? 0), 0) ?? 0;
   const settled = bets?.every(b => b.status === "WON" || b.status === "LOST" || b.status === "SETTLED") ?? false;
   const winner = bets?.find(b => b.status === "WON");
+  const minPotentialProfit = bets && bets.length > 0
+    ? Math.min(...bets.map(b => b.potentialProfit))
+    : 0;
+  const totalRunnersInRace = runners && runners.length > 0 ? runners.length : null;
+  const backedCount = bets?.length ?? 0;
 
   return (
     <div className="space-y-4">
@@ -109,7 +114,7 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Card className="border-border/50 bg-card/50">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Total Staked</p>
@@ -118,20 +123,34 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
         </Card>
         <Card className="border-border/50 bg-card/50">
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Result</p>
+            <p className="text-xs text-muted-foreground">{settled ? "Profit / Loss" : "Possible Profit"}</p>
             {settled ? (
               <p className={`text-lg font-bold font-mono ${totalProfit >= 0 ? "text-chart-1" : "text-chart-4"}`}>
                 {totalProfit >= 0 ? "+" : ""}{formatCurrency(totalProfit)}
               </p>
             ) : (
-              <p className="text-lg font-bold text-muted-foreground">Pending</p>
+              <p className="text-lg font-bold font-mono text-chart-1">
+                +{formatCurrency(minPotentialProfit)}
+              </p>
             )}
           </CardContent>
         </Card>
         <Card className="border-border/50 bg-card/50">
           <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">Possible Loss</p>
+            <p className="text-lg font-bold font-mono text-chart-4">
+              {settled ? (totalProfit < 0 ? formatCurrency(Math.abs(totalProfit)) : "—") : formatCurrency(totalStaked)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 bg-card/50">
+          <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Runners Backed</p>
-            <p className="text-lg font-bold">{bets?.length ?? "—"}</p>
+            <p className="text-lg font-bold">
+              {totalRunnersInRace
+                ? `${backedCount} of ${totalRunnersInRace}`
+                : backedCount}
+            </p>
           </CardContent>
         </Card>
       </div>
