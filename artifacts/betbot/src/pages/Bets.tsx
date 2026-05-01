@@ -292,72 +292,96 @@ export default function Bets() {
   const grouped = races ? groupByDate(races) : {};
   const hasRaces = races && races.length > 0;
 
+  // On mobile, show only the detail view when a race is selected
+  const showList = !selectedRace;
+  const showDetail = !!selectedRace;
+
+  const raceList = (
+    <Card className="border-border/50 bg-card/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Races</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0 max-h-[75vh] overflow-y-auto">
+        {isLoading ? (
+          <div className="space-y-2 p-4">
+            {Array(6).fill(0).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+          </div>
+        ) : !hasRaces ? (
+          <div className="text-center py-12 text-muted-foreground text-sm px-4">
+            <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
+            No races yet — they'll appear here once the bot places bets
+          </div>
+        ) : (
+          Object.entries(grouped).map(([day, dayRaces]) => (
+            <div key={day}>
+              <div className="px-4 py-2 bg-muted/40 border-y border-border/30">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{day}</p>
+              </div>
+              {dayRaces.map((race) => {
+                const isSelected = selectedRace?.marketId === race.marketId;
+                const profit = race.totalProfit ?? 0;
+                return (
+                  <button
+                    key={race.marketId}
+                    onClick={() => setSelectedRace(race)}
+                    className={`w-full text-left px-4 py-3 border-b border-border/30 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2 ${isSelected ? "bg-muted/50 border-l-2 border-l-primary" : ""}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-sm truncate">{race.eventName}</p>
+                        <span className="text-xs font-mono font-semibold text-primary shrink-0 bg-primary/10 px-1.5 py-0.5 rounded">
+                          {race.marketName}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {race.betCount} runners · Staked {formatCurrency(race.totalStaked)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {race.settled ? (
+                        profit >= 0 ? (
+                          <span className="text-chart-1 font-mono text-sm font-semibold flex items-center gap-1">
+                            <Trophy className="h-3 w-3" />+{formatCurrency(profit)}
+                          </span>
+                        ) : (
+                          <span className="text-chart-4 font-mono text-sm font-semibold flex items-center gap-1">
+                            <TrendingDown className="h-3 w-3" />{formatCurrency(profit)}
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Pending</span>
+                      )}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <h1 className="text-3xl font-bold tracking-tight">Race History</h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 items-start">
-        <Card className="border-border/50 bg-card/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Races</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0 max-h-[70vh] overflow-y-auto">
-            {isLoading ? (
-              <div className="space-y-2 p-4">
-                {Array(6).fill(0).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
-              </div>
-            ) : !hasRaces ? (
-              <div className="text-center py-12 text-muted-foreground text-sm px-4">
-                <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                No races yet — they'll appear here once the bot places bets
-              </div>
-            ) : (
-              Object.entries(grouped).map(([day, dayRaces]) => (
-                <div key={day}>
-                  <div className="px-4 py-2 bg-muted/40 border-y border-border/30">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{day}</p>
-                  </div>
-                  {dayRaces.map((race) => {
-                    const isSelected = selectedRace?.marketId === race.marketId;
-                    const profit = race.totalProfit ?? 0;
-                    return (
-                      <button
-                        key={race.marketId}
-                        onClick={() => setSelectedRace(race)}
-                        className={`w-full text-left px-4 py-3 border-b border-border/30 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2 ${isSelected ? "bg-muted/50 border-l-2 border-l-primary" : ""}`}
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium text-sm truncate">{race.eventName}</p>
-                          <p className="text-xs text-muted-foreground truncate">{race.marketName}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {race.betCount} {race.betCount === 1 ? "bet" : "bets"} · Staked {formatCurrency(race.totalStaked)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {race.settled ? (
-                            profit >= 0 ? (
-                              <span className="text-chart-1 font-mono text-sm font-semibold flex items-center gap-1">
-                                <Trophy className="h-3 w-3" />+{formatCurrency(profit)}
-                              </span>
-                            ) : (
-                              <span className="text-chart-4 font-mono text-sm font-semibold flex items-center gap-1">
-                                <TrendingDown className="h-3 w-3" />{formatCurrency(profit)}
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Pending</span>
-                          )}
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+      {/* Mobile: show list or detail, not both */}
+      <div className="lg:hidden">
+        {showList && raceList}
+        {showDetail && (
+          <RaceDetail
+            marketId={selectedRace.marketId}
+            race={selectedRace}
+            onBack={() => setSelectedRace(null)}
+          />
+        )}
+      </div>
 
+      {/* Desktop: side-by-side */}
+      <div className="hidden lg:grid lg:grid-cols-[320px_1fr] gap-6 items-start">
+        {raceList}
         <div>
           {selectedRace ? (
             <RaceDetail
