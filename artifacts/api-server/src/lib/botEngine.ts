@@ -378,16 +378,19 @@ async function runBotCycle(): Promise<void> {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
+    // Daily loss check: use net P&L across all settled bets today.
+    // Dutch betting naturally has many small losing bets — we care about the
+    // overall net, not the sum of individual losing stakes.
     const [todayBets] = await db
-      .select({ count: sql<number>`count(*)`, totalLoss: sql<number>`coalesce(sum(case when actual_profit < 0 then abs(actual_profit) else 0 end), 0)` })
+      .select({ netProfit: sql<number>`coalesce(sum(actual_profit), 0)` })
       .from(betsTable)
       .where(gte(betsTable.placedAt, todayStart));
 
-    const todayLoss = Number(todayBets?.totalLoss ?? 0);
+    const todayNetProfit = Number(todayBets?.netProfit ?? 0);
     const dailyLossLimit = Number(config.dailyLossLimit);
 
-    if (todayLoss >= dailyLossLimit) {
-      await logBotActivity("warn", `Daily loss limit reached: £${todayLoss.toFixed(2)} / £${dailyLossLimit.toFixed(2)}. Bot paused.`);
+    if (todayNetProfit <= -dailyLossLimit) {
+      await logBotActivity("warn", `Daily loss limit reached: net P&L £${todayNetProfit.toFixed(2)} / limit -£${dailyLossLimit.toFixed(2)}. Bot paused.`);
       await db.update(botConfigTable).set({ isRunning: false }).where(eq(botConfigTable.id, config.id));
       stopBot();
       return;
