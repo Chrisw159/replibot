@@ -19,10 +19,9 @@ export function formatNumber(num: number | null | undefined, decimals = 2): stri
 export function formatPercent(num: number | null | undefined): string {
   if (num === null || num === undefined) return "0.00%";
   return new Intl.NumberFormat("en-US", {
-    style: "percent",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(num);
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(num) + "%";
 }
 
 export function formatDate(dateString: string | null | undefined): string {
