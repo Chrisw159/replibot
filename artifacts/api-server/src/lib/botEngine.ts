@@ -578,8 +578,11 @@ async function runSettlementCheck(): Promise<void> {
 
       for (const bet of bets) {
         const won = bet.selectionId === winnerSelectionId;
+        // For the winner: profit = stake * (odds - 1)  — the per-bet P&L
+        // Summing across all bets gives the correct Dutch net: stake_w*odds_w - totalStaked
+        const odds = Number(bet.matchedOdds ?? bet.requestedOdds);
         const actualProfit = won
-          ? Number(bet.potentialProfit)      // already accounts for stake returned
+          ? Number(bet.stakeAmount) * (odds - 1)
           : -Number(bet.stakeAmount);
 
         await db
@@ -595,9 +598,12 @@ async function runSettlementCheck(): Promise<void> {
       const winnerBet = bets.find(b => b.selectionId === winnerSelectionId);
       const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
       if (winnerBet) {
+        const winOdds = Number(winnerBet.matchedOdds ?? winnerBet.requestedOdds);
+        const winnerStake = Number(winnerBet.stakeAmount);
+        const netProfit = winnerStake * (winOdds - 1) - (totalStaked - winnerStake);
         await logBotActivity("info",
-          `[SETTLED] ${winnerBet.eventName} — WINNER: ${winnerBet.selectionName} (+£${Number(winnerBet.potentialProfit).toFixed(2)})`,
-          { marketId, totalStaked }
+          `[SETTLED] ${winnerBet.eventName} — WINNER: ${winnerBet.selectionName} @ ${winOdds} | Net: ${netProfit >= 0 ? "+" : ""}£${netProfit.toFixed(2)}`,
+          { marketId, totalStaked: totalStaked.toFixed(2), netProfit: netProfit.toFixed(2) }
         );
       } else {
         await logBotActivity("info",
