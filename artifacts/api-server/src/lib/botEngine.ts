@@ -132,6 +132,17 @@ async function runDutchStrategy(
   }
 
   for (const market of candidateMarkets) {
+    // ── Already bet on this market? Skip to avoid double-betting ──
+    const [existing] = await db
+      .select({ id: betsTable.id })
+      .from(betsTable)
+      .where(eq(betsTable.marketId, market.marketId))
+      .limit(1);
+    if (existing) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — already bet on this market`);
+      continue;
+    }
+
     // ── Liquidity filter ──
     if (market.totalMatched < dc.minLiquidity) {
       await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${dc.minLiquidity}`);

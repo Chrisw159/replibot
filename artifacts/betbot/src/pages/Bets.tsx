@@ -84,15 +84,28 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
 
   const excludedRunners = runners?.filter(r => !r.included) ?? [];
 
-  const totalStaked = bets?.reduce((s, b) => s + b.stakeAmount, 0) ?? 0;
-  const totalProfit = bets?.reduce((s, b) => s + (b.actualProfit ?? 0), 0) ?? 0;
-  const settled = bets?.every(b => b.status === "WON" || b.status === "LOST" || b.status === "SETTLED") ?? false;
-  const winner = bets?.find(b => b.status === "WON");
-  const minPotentialProfit = bets && bets.length > 0
-    ? Math.min(...bets.map(b => b.potentialProfit))
+  // Deduplicate bets by selectionId — keep latest bet per horse, sum stakes
+  const uniqueBets = bets ? Object.values(
+    bets.reduce<Record<number, Bet>>((acc, b) => {
+      if (!acc[b.selectionId] || b.placedAt > acc[b.selectionId].placedAt) {
+        acc[b.selectionId] = { ...b, stakeAmount: (acc[b.selectionId]?.stakeAmount ?? 0) + b.stakeAmount };
+      } else {
+        acc[b.selectionId].stakeAmount += b.stakeAmount;
+      }
+      return acc;
+    }, {})
+  ) : [];
+
+  const totalStaked = uniqueBets.reduce((s, b) => s + b.stakeAmount, 0);
+  const totalProfit = uniqueBets.reduce((s, b) => s + (b.actualProfit ?? 0), 0);
+  const settled = uniqueBets.length > 0 && uniqueBets.every(b => b.status === "WON" || b.status === "LOST" || b.status === "SETTLED");
+  const winner = uniqueBets.find(b => b.status === "WON");
+  const minPotentialProfit = uniqueBets.length > 0
+    ? Math.min(...uniqueBets.map(b => b.potentialProfit))
     : 0;
-  const totalRunnersInRace = runners && runners.length > 0 ? runners.length : null;
-  const backedCount = bets?.length ?? 0;
+  const hasRunnerData = runners !== undefined && runners.length > 0;
+  const totalRunnersInRace = hasRunnerData ? runners!.length : null;
+  const backedCount = uniqueBets.length;
 
   return (
     <div className="space-y-4">
@@ -182,8 +195,8 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
             <p className="text-center py-8 text-muted-foreground text-sm">No bets found for this race</p>
           ) : (
             <div className="divide-y divide-border/50">
-              {bets?.map((bet) => (
-                <div key={bet.id} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-muted/20">
+              {uniqueBets.map((bet) => (
+                <div key={bet.selectionId} className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-muted/20">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className={`w-2 h-2 rounded-full shrink-0 ${bet.status === "WON" ? "bg-chart-1" : bet.status === "LOST" ? "bg-chart-4" : "bg-chart-3"}`} />
                     <div className="min-w-0">
@@ -214,14 +227,20 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
         </CardContent>
       </Card>
 
-      {excludedRunners.length > 0 && (
-        <Card className="border-border/50 bg-card/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-              Excluded Runners ({excludedRunners.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
+      <Card className="border-border/50 bg-card/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            Not Backed {hasRunnerData ? `(${excludedRunners.length})` : ""}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {!hasRunnerData ? (
+            <p className="px-4 py-4 text-sm text-muted-foreground italic">
+              Full runner data is only recorded for races processed after today's update — future races will show every horse with its odds and the reason it was excluded.
+            </p>
+          ) : excludedRunners.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-muted-foreground">All runners in this race were backed.</p>
+          ) : (
             <div className="divide-y divide-border/50">
               {excludedRunners.map((runner) => (
                 <div key={runner.id} className="px-4 py-3 flex items-center justify-between gap-4 opacity-60">
@@ -238,9 +257,9 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {bets?.some(b => b.aiReasoning) && (
         <Card className="border-border/50 bg-card/50">
