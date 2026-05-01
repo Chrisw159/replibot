@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const EVENT_TYPES = [
   { id: "1", name: "Football (Soccer)" },
@@ -58,6 +59,31 @@ const AI_MODELS = [
   { id: "gpt-4.1", name: "GPT-4.1" },
 ];
 
+function parseCountryCodes(marketFilter: string | null | undefined): { ireland: boolean; usa: boolean; australia: boolean } {
+  try {
+    const parsed = JSON.parse(marketFilter ?? "{}") as { countryCodes?: string[] };
+    const codes = parsed.countryCodes ?? ["GB", "IE"];
+    return {
+      ireland: codes.includes("IE"),
+      usa: codes.includes("US"),
+      australia: codes.includes("AU"),
+    };
+  } catch {
+    return { ireland: true, usa: false, australia: false };
+  }
+}
+
+function buildMarketFilter(existing: string | null | undefined, ireland: boolean, usa: boolean, australia: boolean): string {
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(existing ?? "{}") as Record<string, unknown>; } catch { /* ignore */ }
+  const codes = ["GB"];
+  if (ireland) codes.push("IE");
+  if (usa) codes.push("US");
+  if (australia) codes.push("AU");
+  parsed.countryCodes = codes;
+  return JSON.stringify(parsed);
+}
+
 const BLANK_DEFAULTS = {
   name: "",
   description: "",
@@ -71,6 +97,9 @@ const BLANK_DEFAULTS = {
   aiPrompt:
     "Analyse this horse racing market. Back selections where you see clear value based on the odds, recent form and market movement. Only recommend a bet if you are confident. Reply with your recommendation and a brief reason.",
   marketFilter: "",
+  includeIreland: true,
+  includeUSA: false,
+  includeAustralia: false,
   isActive: true,
 };
 
@@ -87,6 +116,9 @@ const formSchema = z
     aiModel: z.string().min(1),
     aiPrompt: z.string().optional(),
     marketFilter: z.string().optional(),
+    includeIreland: z.boolean(),
+    includeUSA: z.boolean(),
+    includeAustralia: z.boolean(),
     isActive: z.boolean(),
   })
   .refine((d) => d.maxOdds > d.minOdds, {
@@ -124,6 +156,7 @@ export function StrategyDialog({
 
   useEffect(() => {
     if (open && strategy) {
+      const cc = parseCountryCodes(strategy.marketFilter);
       form.reset({
         name: strategy.name,
         description: strategy.description ?? "",
@@ -132,12 +165,13 @@ export function StrategyDialog({
         minOdds: parseFloat(strategy.minOdds as unknown as string),
         maxOdds: parseFloat(strategy.maxOdds as unknown as string),
         stakeAmount: parseFloat(strategy.stakeAmount as unknown as string),
-        maxStakeAmount: parseFloat(
-          strategy.maxStakeAmount as unknown as string
-        ),
+        maxStakeAmount: parseFloat(strategy.maxStakeAmount as unknown as string),
         aiModel: strategy.aiModel,
         aiPrompt: strategy.aiPrompt ?? "",
         marketFilter: strategy.marketFilter ?? "",
+        includeIreland: cc.ireland,
+        includeUSA: cc.usa,
+        includeAustralia: cc.australia,
         isActive: strategy.isActive,
       });
     } else if (open && !strategy) {
@@ -150,7 +184,7 @@ export function StrategyDialog({
       ...values,
       description: values.description || null,
       aiPrompt: values.aiPrompt || null,
-      marketFilter: values.marketFilter || null,
+      marketFilter: buildMarketFilter(values.marketFilter, values.includeIreland, values.includeUSA, values.includeAustralia),
     };
 
     if (isEditing && strategy) {
@@ -290,6 +324,50 @@ export function StrategyDialog({
                   )}
                 />
               </div>
+
+              {/* Racing Countries — only shown for Horse Racing or Greyhound */}
+              {(form.watch("eventTypeId") === "7" || form.watch("eventTypeId") === "4339") && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Racing Countries</p>
+                  <p className="text-xs text-muted-foreground">GB is always included. Tick to add additional countries.</p>
+                  <div className="flex flex-wrap gap-4 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer opacity-50 select-none">
+                      <Checkbox checked={true} disabled />
+                      <span className="text-sm">🇬🇧 Great Britain (always on)</span>
+                    </label>
+                    <FormField
+                      control={form.control}
+                      name="includeIreland"
+                      render={({ field }) => (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                          <span className="text-sm">🇮🇪 Ireland</span>
+                        </label>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="includeUSA"
+                      render={({ field }) => (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                          <span className="text-sm">🇺🇸 USA</span>
+                        </label>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="includeAustralia"
+                      render={({ field }) => (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                          <span className="text-sm">🇦🇺 Australia</span>
+                        </label>
+                      )}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <Separator />
