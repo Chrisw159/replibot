@@ -94,9 +94,9 @@ router.get("/dashboard/pnl-chart", async (req, res): Promise<void> => {
     cumulative += Number(row.dailyProfit);
     return {
       date: row.date,
-      profit: Math.round(Number(row.dailyProfit) * 100) / 100,
-      cumulativeProfit: Math.round(cumulative * 100) / 100,
-      bets: Number(row.bets),
+      dailyPnl: Math.round(Number(row.dailyProfit) * 100) / 100,
+      cumulativePnl: Math.round(cumulative * 100) / 100,
+      betCount: Number(row.bets),
     };
   });
 
@@ -169,6 +169,7 @@ router.get("/dashboard/strategy-performance", async (_req, res): Promise<void> =
       totalStaked: Math.round(totalStaked * 100) / 100,
       totalProfit: Math.round(totalProfit * 100) / 100,
       roi: Math.round(roi * 10) / 10,
+      isActive: true,
     };
   });
 

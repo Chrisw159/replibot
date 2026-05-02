@@ -588,6 +588,9 @@ export async function getMarketSettlement(marketId: string): Promise<MarketSettl
     return {
       marketId,
       status,
+      // Require BOTH closed market AND an identified WINNER runner.
+      // This prevents false "all lost" settlements when Betfair closes a market
+      // but hasn't yet posted the result on individual runner statuses.
       settled: closed && !!winner,
       winnerSelectionId: winner?.selectionId,
     };

@@ -631,7 +631,7 @@ async function runSettlementCheck(): Promise<void> {
       .select()
       .from(betsTable)
       .where(
-        sql`${betsTable.status} IN ('MATCHED','PLACED') AND ${betsTable.placedAt} >= ${cutoff}`
+        sql`${betsTable.status} IN ('MATCHED','PLACED','UNMATCHED') AND ${betsTable.placedAt} >= ${cutoff}`
       );
 
     if (unsettledBets.length === 0) return;
@@ -652,6 +652,15 @@ async function runSettlementCheck(): Promise<void> {
       const settledAt = new Date();
 
       for (const bet of bets) {
+        // UNMATCHED bets were never placed — mark as VOID (no P&L impact)
+        if (bet.status === "UNMATCHED") {
+          await db
+            .update(betsTable)
+            .set({ status: "VOID", actualProfit: "0", settledAt })
+            .where(eq(betsTable.id, bet.id));
+          continue;
+        }
+
         const won = bet.selectionId === winnerSelectionId;
         // For the winner: profit = stake * (odds - 1)  — the per-bet P&L
         // Summing across all bets gives the correct Dutch net: stake_w*odds_w - totalStaked
