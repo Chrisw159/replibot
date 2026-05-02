@@ -34,6 +34,11 @@ let settlementInterval: NodeJS.Timeout | null = null;
 let botRunning = false;
 let startedAt: Date | null = null;
 
+// In-memory lock: markets currently being processed this cycle.
+// Prevents two overlapping cycles from placing bets on the same market
+// before the first cycle's DB inserts have completed.
+const processingMarkets = new Set<string>();
+
 export function isBotRunning(): boolean { return botRunning; }
 export function getStartedAt(): Date | null { return startedAt; }
 
@@ -134,7 +139,13 @@ async function runDutchStrategy(
   }
 
   for (const market of candidateMarkets) {
-    // ── Already bet on this market? Skip to avoid double-betting ──
+    // ── In-memory lock: skip if another cycle is currently placing bets on this market ──
+    if (processingMarkets.has(market.marketId)) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — already being processed by another cycle`);
+      continue;
+    }
+
+    // ── DB check: skip if bets already exist for this market ──
     const [existing] = await db
       .select({ id: betsTable.id })
       .from(betsTable)
@@ -144,6 +155,10 @@ async function runDutchStrategy(
       await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — already bet on this market`);
       continue;
     }
+
+    // Claim the lock for this market — released in the finally block below
+    processingMarkets.add(market.marketId);
+    try {
 
     // ── Liquidity filter ──
     if (market.totalMatched < dc.minLiquidity) {
@@ -364,6 +379,11 @@ ${marketContext}
         `[DUTCH] ${aiResponse.stakes.length} live bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}`,
         { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange }
       );
+    }
+
+    } finally {
+      // Always release the in-memory lock so future cycles don't get stuck
+      processingMarkets.delete(market.marketId);
     }
   }
 }

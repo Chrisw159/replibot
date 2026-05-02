@@ -296,6 +296,11 @@ export default function Bets() {
   const showList = !selectedRace;
   const showDetail = !!selectedRace;
 
+  function selectRace(race: RaceSummary) {
+    setSelectedRace(race);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   const raceList = (
     <Card className="border-border/50 bg-card/50">
       <CardHeader className="pb-2">
@@ -323,7 +328,7 @@ export default function Bets() {
                 return (
                   <button
                     key={race.marketId}
-                    onClick={() => setSelectedRace(race)}
+                    onClick={() => selectRace(race)}
                     className={`w-full text-left px-4 py-3 border-b border-border/30 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2 ${isSelected ? "bg-muted/50 border-l-2 border-l-primary" : ""}`}
                   >
                     <div className="min-w-0">
