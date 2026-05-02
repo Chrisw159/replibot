@@ -306,7 +306,7 @@ export default function Bets() {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Races</CardTitle>
       </CardHeader>
-      <CardContent className="p-0 max-h-[75vh] overflow-y-auto">
+      <CardContent className="p-0">
         {isLoading ? (
           <div className="space-y-2 p-4">
             {Array(6).fill(0).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
