@@ -101,6 +101,7 @@ async function runDutchStrategy(
     markets = await listMarkets({
       eventTypeId: strategy.eventTypeId,
       countryCodes: countries,
+      marketType: "WIN",
       limit: 30,
     });
   } catch (err) {
