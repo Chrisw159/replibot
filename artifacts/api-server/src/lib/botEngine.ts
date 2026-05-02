@@ -226,8 +226,56 @@ async function runDutchStrategy(
     );
     if (qualifying.length === 0) continue;
 
+    // ── Greedy exclusion: drop longest-priced runners until book < 100% ──
+    // Sort longest price first so we drop the outsiders that contribute least
+    // to coverage but most to the overround.
+    const selected = [...qualifying].sort((a, b) => (b.bestBackPrice ?? 0) - (a.bestBackPrice ?? 0));
+    let bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+    const dropped: string[] = [];
+    while (bookPct >= 1.0 && selected.length > 1) {
+      const removed = selected.shift()!;          // remove longest price
+      dropped.push(`${removed.runnerName} (${removed.bestBackPrice})`);
+      bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+    }
+    if (bookPct >= 1.0) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — cannot achieve sub-100% book even with 1 runner`);
+      continue;
+    }
+    if (dropped.length > 0) {
+      await logBotActivity("info",
+        `[DUTCH] ${market.eventName} — dropped ${dropped.length} outsider(s) to reach book ${(bookPct * 100).toFixed(1)}%: ${dropped.join(", ")}`
+      );
+    }
+
+    // ── Calculate stakes mathematically (standard Dutch formula) ──
+    // stake_i = (budget / bookPct) / odds_i  →  return_i = budget / bookPct  (same for all)
+    const fullCover = selected.length === activeRunners.length;
+    const budget = fullCover ? totalStake * 2 : totalStake;
+    const targetReturn = budget / bookPct;
+    interface ComputedStake { selectionId: number; runnerName: string; stake: number; odds: number; expectedProfit: number; }
+    const computedStakes: ComputedStake[] = selected.map(r => {
+      const stake = parseFloat((targetReturn / (r.bestBackPrice ?? 1)).toFixed(2));
+      return {
+        selectionId: r.selectionId,
+        runnerName: r.runnerName,
+        stake,
+        odds: r.bestBackPrice ?? 1,
+        expectedProfit: parseFloat((stake * (r.bestBackPrice ?? 1) - budget).toFixed(2)),
+      };
+    });
+    const totalStaked = computedStakes.reduce((s, r) => s + r.stake, 0);
+
+    await logBotActivity("info",
+      `[DUTCH] ${market.eventName} — ${selected.length} runners backed, book ${(bookPct * 100).toFixed(1)}%, ` +
+      `total stake £${totalStaked.toFixed(2)}, guaranteed return £${targetReturn.toFixed(2)} (profit £${(targetReturn - totalStaked).toFixed(2)})`
+    );
+
     // ── Record all runners (included + excluded) for race history ──
-    const qualifyingIds = new Set(qualifying.map(r => r.selectionId));
+    const selectedIds = new Set(selected.map(r => r.selectionId));
+    const droppedIds = new Set(dropped.map(name => {
+      const match = qualifying.find(r => name.startsWith(r.runnerName));
+      return match?.selectionId;
+    }).filter(Boolean));
     const allRunners = marketDetail.runners.map(r => ({
       marketId: market.marketId,
       marketName: market.marketName,
@@ -236,7 +284,7 @@ async function runDutchStrategy(
       runnerName: r.runnerName,
       bestBackPrice: r.bestBackPrice != null ? String(r.bestBackPrice) : null,
       status: r.status ?? "ACTIVE",
-      included: qualifyingIds.has(r.selectionId),
+      included: selectedIds.has(r.selectionId),
       excludeReason: r.status !== "ACTIVE"
         ? "Non-runner / withdrawn"
         : r.bestBackPrice == null
@@ -245,43 +293,30 @@ async function runDutchStrategy(
             ? `Odds too short (${r.bestBackPrice} < ${strategy.minOdds})`
             : (r.bestBackPrice ?? 0) > maxSelOdds
               ? `Odds too big (${r.bestBackPrice} > ${maxSelOdds})`
-              : null,
+              : droppedIds.has(r.selectionId)
+                ? `Dropped to achieve sub-100% book (${r.bestBackPrice})`
+                : null,
     }));
     try {
       await db.insert(raceRunnersTable).values(allRunners).onConflictDoNothing();
     } catch { /* non-fatal */ }
 
-    // ── AI: validate race AND calculate per-runner stakes ──
-    // Full-cover: every active runner qualifies AND the book percentage is below 1.0
-    // (sum of 1/odds < 1 means backing every horse returns more than total staked — a guaranteed profit)
-    const bookPct = qualifying.reduce((sum, r) => sum + 1 / (r.bestBackPrice ?? 999), 0);
-    const fullCover = qualifying.length === activeRunners.length && activeRunners.length > 0 && bookPct < 1.0;
-    const budget = fullCover ? totalStake * 2 : totalStake;
-    if (fullCover) {
-      await logBotActivity("info",
-        `[DUTCH] Full-cover guaranteed profit on ${market.eventName} — book ${(bookPct * 100).toFixed(1)}% (<100%), doubling stake to £${budget.toFixed(2)}`
-      );
-    } else if (qualifying.length === activeRunners.length && bookPct >= 1.0) {
-      await logBotActivity("info",
-        `[DUTCH] All runners qualify on ${market.eventName} but book ${(bookPct * 100).toFixed(1)}% — no guaranteed profit, using standard stake`
-      );
-    }
-
-    const runnerList = qualifying
-      .map(r => `  • selectionId ${r.selectionId} — ${r.runnerName}: ${r.bestBackPrice}`)
+    // ── AI: validate the race only (approve / reject) ──
+    const runnerList = selected
+      .map(r => `  • ${r.runnerName}: ${r.bestBackPrice} (stake £${computedStakes.find(s => s.selectionId === r.selectionId)?.stake.toFixed(2)})`)
       .join("\n");
 
     const marketContext = `
 Dutch Bet Opportunity — Horse Racing
 Race: ${marketDetail.eventName} — ${marketDetail.marketName}
-Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.length}
+Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.length}  |  Backed: ${selected.length}
 Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
 Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
+Book: ${(bookPct * 100).toFixed(1)}%  |  Guaranteed return: £${targetReturn.toFixed(2)} on £${totalStaked.toFixed(2)} staked
+${dropped.length > 0 ? `Dropped (overround): ${dropped.join(", ")}` : "Full field covered"}
 
-Qualifying runners (odds ${strategy.minOdds}–${maxSelOdds}):
+Runners being backed:
 ${runnerList}
-
-Total budget: £${budget.toFixed(2)} (must not be exceeded)${fullCover ? "\n⚡ FULL-COVER RACE: Every runner in the field qualifies — a winning return is mathematically guaranteed if stakes are placed correctly. Budget has been doubled to reflect this certainty." : ""}
     `.trim();
 
     const countryList = countries.join(", ");
@@ -289,35 +324,28 @@ Total budget: £${budget.toFixed(2)} (must not be exceeded)${fullCover ? "\n⚡ 
       `You are a horse racing dutching specialist covering ${countryList} racing. Approve solid opportunities on reputable tracks in any of these countries.`;
 
     const userMessage = `
-You have been given a potential dutch betting opportunity. Your job is to:
+You have been given a potential dutch betting opportunity. The stakes have already been calculated — your ONLY job is to validate the race itself.
 
-1. Validate the race (reputable track in ${countryList}, sensible opportunity${countries.some(c => ["GB","IE"].includes(c)) && countries.every(c => ["GB","IE"].includes(c)) ? ", and reject Novice/Maiden/Bumper/NH Flat race types" : countries.some(c => ["GB","IE"].includes(c)) ? ". For GB/IE races reject Novice/Bumper/NH Flat types, but Maiden is fine for US/AU. Do NOT reject a race simply because it is at a non-British track" : ". Do NOT reject a race simply because it is at a non-British track — US, Australian and Irish tracks are all valid"}).
-2. If approved: calculate the stake for EACH qualifying runner so that if ANY of them wins, the total return exceeds the total amount staked. Profit per winner can vary — it does NOT need to be equal. The sum of all stakes must not exceed £${budget.toFixed(2)}.
-3. Use the standard dutching formula as a starting point: stake_i = (budget / bookPct) / odds_i, where bookPct = sum(1/odds). You may adjust stakes slightly but must ensure every winner returns a profit.
+Approve if: reputable track in ${countryList}${countries.some(c => ["GB","IE"].includes(c)) && countries.every(c => ["GB","IE"].includes(c)) ? ", NOT a Novice/Maiden/Bumper/NH Flat race" : countries.some(c => ["GB","IE"].includes(c)) ? ". For GB/IE races reject Novice/Bumper/NH Flat types only" : ". US, Australian and Irish tracks are all valid"}.
 
-Reply with JSON ONLY — no prose outside the JSON block:
+Reply with JSON ONLY:
 {
   "approved": boolean,
-  "reasoning": string,
-  "stakes": [
-    { "selectionId": number, "runnerName": string, "stake": number, "odds": number, "expectedProfit": number }
-  ]
+  "reasoning": string
 }
-If not approved, return an empty stakes array.
 
 Market data:
 ${marketContext}
     `.trim();
 
-    interface AiStake { selectionId: number; runnerName: string; stake: number; odds: number; expectedProfit: number; }
-    interface AiDutchResponse { approved: boolean; reasoning: string; stakes: AiStake[]; }
+    interface AiDutchResponse { approved: boolean; reasoning: string; }
 
-    let aiResponse: AiDutchResponse = { approved: false, reasoning: "AI not called", stakes: [] };
+    let aiResponse: AiDutchResponse = { approved: false, reasoning: "AI not called" };
     try {
       const aiClient = await getAIClient(strategy.aiModel);
       const response = await aiClient.chat.completions.create({
         model: strategy.aiModel,
-        max_completion_tokens: 600,
+        max_completion_tokens: 200,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
@@ -330,41 +358,22 @@ ${marketContext}
       aiResponse.reasoning = `AI error: ${err instanceof Error ? err.message : "Unknown"}`;
     }
 
-    if (!aiResponse.approved || aiResponse.stakes.length === 0) {
+    if (!aiResponse.approved) {
       await logBotActivity("info", `[DUTCH] AI rejected ${market.eventName}: ${aiResponse.reasoning}`);
-      continue;
-    }
-
-    // ── Sanity-check the AI's stakes ──
-    // Each winner must return more than the total staked
-    const totalStaked = aiResponse.stakes.reduce((s, r) => s + r.stake, 0);
-
-    if (totalStaked > budget * 1.01) { // allow 1p rounding
-      await logBotActivity("warn", `[DUTCH] AI over-budget (£${totalStaked.toFixed(2)} > £${budget}). Skipping.`);
-      continue;
-    }
-
-    const failingRunner = aiResponse.stakes.find(r => r.stake * r.odds <= totalStaked);
-    if (failingRunner) {
-      await logBotActivity("warn",
-        `[DUTCH] AI stake for ${failingRunner.runnerName} (£${failingRunner.stake} @ ${failingRunner.odds}) would not profit. Skipping.`
-      );
       continue;
     }
 
     // ── Place bets ──
     const dutchGroupId = `DUTCH-${market.marketId}-${Date.now()}`;
-    const profitRange = `£${Math.min(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}–£${Math.max(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}`;
+    // All runners have identical expected return (standard Dutch), so profit is uniform
+    const profitPerWinner = `£${(targetReturn - totalStaked).toFixed(2)}`;
 
     if (config.paperTradingMode) {
       let unmatchedCount = 0;
-      for (const r of aiResponse.stakes) {
-        const runner = qualifying.find(q => q.selectionId === r.selectionId);
+      for (const r of computedStakes) {
+        const runner = selected.find(q => q.selectionId === r.selectionId);
         if (!runner) continue;
 
-        // Simulate realistic matching: check available volume at best back price.
-        // On Betfair, your bet only matches if there's enough lay-side volume at that price.
-        // If available size < stake, the bet would be unmatched (or only partially matched).
         const availableSize = runner.bestBackSize ?? 0;
         const wouldMatch = availableSize >= r.stake;
         if (!wouldMatch) {
@@ -394,12 +403,12 @@ ${marketContext}
       }
       const matchNote = unmatchedCount > 0 ? ` (⚠️ ${unmatchedCount} unmatched — insufficient volume)` : "";
       await logBotActivity("info",
-        `[DUTCH][PAPER] ${aiResponse.stakes.length} bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}${matchNote}`,
-        { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange, reasoning: aiResponse.reasoning }
+        `[DUTCH][PAPER] ${computedStakes.length} bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit if any wins ${profitPerWinner}${matchNote}`,
+        { race: market.eventName, selections: computedStakes.length, totalStaked, profitPerWinner, reasoning: aiResponse.reasoning }
       );
     } else {
-      for (const r of aiResponse.stakes) {
-        const runner = qualifying.find(q => q.selectionId === r.selectionId);
+      for (const r of computedStakes) {
+        const runner = selected.find(q => q.selectionId === r.selectionId);
         if (!runner) continue;
         const result = await placeBet({
           marketId: market.marketId,
@@ -429,8 +438,8 @@ ${marketContext}
         }
       }
       await logBotActivity("info",
-        `[DUTCH] ${aiResponse.stakes.length} live bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}`,
-        { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange }
+        `[DUTCH] ${computedStakes.length} live bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit if any wins ${profitPerWinner}`,
+        { race: market.eventName, selections: computedStakes.length, totalStaked, profitPerWinner }
       );
     }
 
