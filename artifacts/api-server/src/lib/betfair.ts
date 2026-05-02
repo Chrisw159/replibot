@@ -454,20 +454,26 @@ export async function getMarketDetail(
 
     if (!book || !catalogue) return null;
 
-    const runnerNames = new Map(
-      (catalogue.runners ?? []).map((r) => [r.selectionId, r.runnerName])
+    // Build a price lookup from the book — keyed by selectionId.
+    // listMarketBook can omit runners with no available offers, so we use
+    // listMarketCatalogue as the authoritative runner list and enrich with prices.
+    const bookBySelection = new Map(
+      (book.runners ?? []).map((r) => [r.selectionId, r])
     );
 
-    const runners: BetfairRunner[] = (book.runners ?? []).map((r) => ({
-      selectionId: r.selectionId,
-      runnerName: runnerNames.get(r.selectionId) ?? `Selection ${r.selectionId}`,
-      status: r.status,
-      lastPriceTraded: r.lastPriceTraded,
-      totalMatched: r.totalMatched,
-      bestBackPrice: r.ex?.availableToBack?.[0]?.price,
-      bestBackSize: r.ex?.availableToBack?.[0]?.size,
-      bestLayPrice: r.ex?.availableToLay?.[0]?.price,
-    }));
+    const runners: BetfairRunner[] = (catalogue.runners ?? []).map((cr) => {
+      const br = bookBySelection.get(cr.selectionId);
+      return {
+        selectionId: cr.selectionId,
+        runnerName: cr.runnerName ?? `Selection ${cr.selectionId}`,
+        status: br?.status ?? "ACTIVE",
+        lastPriceTraded: br?.lastPriceTraded,
+        totalMatched: br?.totalMatched,
+        bestBackPrice: br?.ex?.availableToBack?.[0]?.price,
+        bestBackSize: br?.ex?.availableToBack?.[0]?.size,
+        bestLayPrice: br?.ex?.availableToLay?.[0]?.price,
+      };
+    });
 
     return {
       marketId: book.marketId ?? marketId,
