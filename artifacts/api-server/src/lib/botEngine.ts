@@ -340,9 +340,23 @@ ${marketContext}
     const profitRange = `£${Math.min(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}–£${Math.max(...aiResponse.stakes.map(r => r.expectedProfit)).toFixed(2)}`;
 
     if (config.paperTradingMode) {
+      let unmatchedCount = 0;
       for (const r of aiResponse.stakes) {
         const runner = qualifying.find(q => q.selectionId === r.selectionId);
         if (!runner) continue;
+
+        // Simulate realistic matching: check available volume at best back price.
+        // On Betfair, your bet only matches if there's enough lay-side volume at that price.
+        // If available size < stake, the bet would be unmatched (or only partially matched).
+        const availableSize = runner.bestBackSize ?? 0;
+        const wouldMatch = availableSize >= r.stake;
+        if (!wouldMatch) {
+          unmatchedCount++;
+          await logBotActivity("info",
+            `[DUTCH][PAPER] ${runner.runnerName} — only £${availableSize.toFixed(2)} available at ${r.odds}, stake £${r.stake.toFixed(2)} would NOT fully match`
+          );
+        }
+
         await db.insert(betsTable).values({
           strategyId: strategy.id,
           strategyName: strategy.name,
@@ -356,13 +370,14 @@ ${marketContext}
           matchedOdds: r.odds.toString(),
           stakeAmount: r.stake.toString(),
           potentialProfit: r.expectedProfit.toFixed(2),
-          status: "MATCHED",
-          aiReasoning: `[DUTCH] ${aiResponse.reasoning} | Group: ${dutchGroupId}`,
+          status: wouldMatch ? "MATCHED" : "UNMATCHED",
+          aiReasoning: `[DUTCH] ${aiResponse.reasoning} | Group: ${dutchGroupId}${!wouldMatch ? ` | UNMATCHED — only £${availableSize.toFixed(2)} available at ${r.odds}` : ""}`,
           betId: `${dutchGroupId}-${runner.selectionId}`,
         });
       }
+      const matchNote = unmatchedCount > 0 ? ` (⚠️ ${unmatchedCount} unmatched — insufficient volume)` : "";
       await logBotActivity("info",
-        `[DUTCH][PAPER] ${aiResponse.stakes.length} bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}`,
+        `[DUTCH][PAPER] ${aiResponse.stakes.length} bets on ${marketDetail.eventName} — total £${totalStaked.toFixed(2)}, profit range ${profitRange}${matchNote}`,
         { race: market.eventName, selections: aiResponse.stakes.length, totalStaked, profitRange, reasoning: aiResponse.reasoning }
       );
     } else {

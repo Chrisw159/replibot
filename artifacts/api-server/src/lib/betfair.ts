@@ -179,6 +179,7 @@ export interface BetfairRunner {
   lastPriceTraded?: number;
   totalMatched?: number;
   bestBackPrice?: number;
+  bestBackSize?: number;
   bestLayPrice?: number;
 }
 
@@ -464,6 +465,7 @@ export async function getMarketDetail(
       lastPriceTraded: r.lastPriceTraded,
       totalMatched: r.totalMatched,
       bestBackPrice: r.ex?.availableToBack?.[0]?.price,
+      bestBackSize: r.ex?.availableToBack?.[0]?.size,
       bestLayPrice: r.ex?.availableToLay?.[0]?.price,
     }));
 
