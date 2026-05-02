@@ -186,6 +186,14 @@ async function runDutchStrategy(
       continue;
     }
 
+    // ── Too many big outsiders filter ──
+    // If more than 3 runners are priced above 40/1 (41.0 decimal), skip the race
+    const outsiders = activeRunners.filter(r => (r.bestBackPrice ?? 0) > 41.0);
+    if (outsiders.length > 3) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — ${outsiders.length} runners over 40/1 (max 3 allowed)`);
+      continue;
+    }
+
     // ── Minimum favourite odds filter ──
     const sortedByOdds = [...activeRunners].sort((a, b) => (a.bestBackPrice ?? 999) - (b.bestBackPrice ?? 999));
     const favouriteOdds = sortedByOdds[0].bestBackPrice ?? 0;
