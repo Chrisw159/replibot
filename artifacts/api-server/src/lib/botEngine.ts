@@ -174,10 +174,24 @@ async function runDutchStrategy(
       continue;
     }
 
-    const marketDetail = await getMarketDetail(market.marketId);
+    // Fetch market detail with up to 3 attempts (2s apart) to handle brief
+    // Betfair API glitches where runners temporarily have no available price.
+    let marketDetail = await getMarketDetail(market.marketId);
     if (!marketDetail) continue;
 
-    const activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
+    let activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
+    const totalActiveInField = marketDetail.runners.filter(r => r.status === "ACTIVE").length;
+
+    for (let attempt = 1; attempt < 3 && activeRunners.length < totalActiveInField; attempt++) {
+      const missingPrices = totalActiveInField - activeRunners.length;
+      await logBotActivity("info",
+        `[DUTCH] ${market.eventName} — ${missingPrices} runner(s) have no price, retrying in 2s (attempt ${attempt}/2)...`
+      );
+      await new Promise(r => setTimeout(r, 2000));
+      marketDetail = (await getMarketDetail(market.marketId)) ?? marketDetail;
+      activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
+    }
+
     if (activeRunners.length === 0) continue;
 
     // ── Runner count filter ──
