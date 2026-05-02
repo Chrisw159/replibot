@@ -118,8 +118,10 @@ async function runDutchStrategy(
 
   const now = Date.now();
 
-  // Only races starting within the timing window
+  // Only races starting within the timing window, excluding any market
+  // named "Each Way" (Betfair sometimes returns these as marketType WIN).
   const candidateMarkets = markets.filter(m => {
+    if (/each.?way/i.test(m.marketName)) return false;
     const startMs = new Date(m.marketStartTime).getTime();
     const minsToStart = (startMs - now) / 60_000;
     return minsToStart >= 0 && minsToStart <= dc.minutesBeforeStart;
