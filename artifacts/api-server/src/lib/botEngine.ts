@@ -235,7 +235,13 @@ async function runDutchStrategy(
     } catch { /* non-fatal */ }
 
     // ── AI: validate race AND calculate per-runner stakes ──
-    const budget = totalStake; // max £40 per race
+    // If every active runner qualifies (full-cover dutch = guaranteed return),
+    // double the stake for this race
+    const fullCover = qualifying.length === activeRunners.length && activeRunners.length > 0;
+    const budget = fullCover ? totalStake * 2 : totalStake;
+    if (fullCover) {
+      await logBotActivity("info", `[DUTCH] Full-cover opportunity on ${market.eventName} — doubling stake to £${budget.toFixed(2)}`);
+    }
 
     const runnerList = qualifying
       .map(r => `  • selectionId ${r.selectionId} — ${r.runnerName}: ${r.bestBackPrice}`)
@@ -251,7 +257,7 @@ Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
 Qualifying runners (odds ${strategy.minOdds}–${maxSelOdds}):
 ${runnerList}
 
-Total budget: £${budget.toFixed(2)} (must not be exceeded)
+Total budget: £${budget.toFixed(2)} (must not be exceeded)${fullCover ? "\n⚡ FULL-COVER RACE: Every runner in the field qualifies — a winning return is mathematically guaranteed if stakes are placed correctly. Budget has been doubled to reflect this certainty." : ""}
     `.trim();
 
     const countryList = countries.join(", ");
