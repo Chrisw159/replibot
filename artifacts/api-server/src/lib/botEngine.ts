@@ -235,12 +235,19 @@ async function runDutchStrategy(
     } catch { /* non-fatal */ }
 
     // ── AI: validate race AND calculate per-runner stakes ──
-    // If every active runner qualifies (full-cover dutch = guaranteed return),
-    // double the stake for this race
-    const fullCover = qualifying.length === activeRunners.length && activeRunners.length > 0;
+    // Full-cover: every active runner qualifies AND the book percentage is below 1.0
+    // (sum of 1/odds < 1 means backing every horse returns more than total staked — a guaranteed profit)
+    const bookPct = qualifying.reduce((sum, r) => sum + 1 / (r.bestBackPrice ?? 999), 0);
+    const fullCover = qualifying.length === activeRunners.length && activeRunners.length > 0 && bookPct < 1.0;
     const budget = fullCover ? totalStake * 2 : totalStake;
     if (fullCover) {
-      await logBotActivity("info", `[DUTCH] Full-cover opportunity on ${market.eventName} — doubling stake to £${budget.toFixed(2)}`);
+      await logBotActivity("info",
+        `[DUTCH] Full-cover guaranteed profit on ${market.eventName} — book ${(bookPct * 100).toFixed(1)}% (<100%), doubling stake to £${budget.toFixed(2)}`
+      );
+    } else if (qualifying.length === activeRunners.length && bookPct >= 1.0) {
+      await logBotActivity("info",
+        `[DUTCH] All runners qualify on ${market.eventName} but book ${(bookPct * 100).toFixed(1)}% — no guaranteed profit, using standard stake`
+      );
     }
 
     const runnerList = qualifying
