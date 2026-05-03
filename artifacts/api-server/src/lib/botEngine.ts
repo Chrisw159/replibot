@@ -718,6 +718,68 @@ async function runSettlementCheck(): Promise<void> {
   }
 }
 
+// ── Smart scheduler: sleep until 30 mins before the next unbet race ──────────
+// Instead of polling every 30 s blindly, we look at today's remaining markets
+// and wake up 30 minutes before the first race that hasn't been bet on yet.
+// This avoids hammering the API during quiet periods (e.g. early morning).
+async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect): Promise<number> {
+  const MIN_SLEEP_MS = 30_000;          // never faster than 30 s
+  const MAX_SLEEP_MS = 30 * 60_000;     // never longer than 30 min
+  const WAKE_BEFORE_MS = 30 * 60_000;   // wake up 30 min before first race
+
+  try {
+    const dc = parseDutchConfig(strategy.marketFilter);
+    const countries = dc.countryCodes?.length ? dc.countryCodes : [dc.countryCode];
+    const markets = await listMarkets({
+      eventTypeId: strategy.eventTypeId,
+      countryCodes: countries,
+      marketType: "WIN",
+      limit: 50,
+    });
+
+    // Filter to markets not already bet on
+    const betMarketIds = new Set(
+      (await db.select({ marketId: betsTable.marketId }).from(betsTable)).map(b => b.marketId)
+    );
+
+    const now = Date.now();
+    const futureUnbet = markets
+      .filter(m => !betMarketIds.has(m.marketId) && !/each.?way/i.test(m.marketName))
+      .map(m => new Date(m.marketStartTime).getTime())
+      .filter(t => t > now)
+      .sort((a, b) => a - b);
+
+    if (futureUnbet.length === 0) {
+      await logBotActivity("info", "[SCHEDULER] No upcoming unbet races today — sleeping 5 min");
+      return 5 * 60_000;
+    }
+
+    const firstRace = futureUnbet[0];
+    const sleepUntil = firstRace - WAKE_BEFORE_MS;
+    const sleepMs = Math.max(MIN_SLEEP_MS, Math.min(MAX_SLEEP_MS, sleepUntil - now));
+    const wakeAt = new Date(now + sleepMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const raceAt = new Date(firstRace).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    await logBotActivity("info",
+      `[SCHEDULER] Next unbet race at ${raceAt} — sleeping ${(sleepMs / 60_000).toFixed(1)} min, waking at ${wakeAt}`
+    );
+    return sleepMs;
+  } catch {
+    return MIN_SLEEP_MS;
+  }
+}
+
+async function scheduleBotCycle(strategy: typeof strategiesTable.$inferSelect): Promise<void> {
+  if (!botRunning) return;
+  try {
+    await runBotCycle();
+  } catch (err) {
+    logger.error({ err }, "Bot cycle error");
+  }
+  if (!botRunning) return;
+  const sleepMs = await computeNextSleepMs(strategy);
+  botInterval = setTimeout(() => void scheduleBotCycle(strategy), sleepMs) as unknown as NodeJS.Timeout;
+}
+
 export async function startBot(): Promise<void> {
   if (botRunning) return;
   const config = await getBotConfig();
@@ -725,15 +787,24 @@ export async function startBot(): Promise<void> {
   botRunning = true;
   startedAt = new Date();
   await logBotActivity("info", "Bot started");
-  botInterval = setInterval(() => void runBotCycle(), config.checkIntervalSeconds * 1000);
-  // Settlement check runs every 2 minutes independently of main cycle
+
+  // Load the first DUTCH strategy to drive the smart scheduler
+  const [strategy] = await db.select().from(strategiesTable).where(eq(strategiesTable.isActive, true)).limit(1);
+
+  // Settlement check runs every 2 minutes independently
   settlementInterval = setInterval(() => void runSettlementCheck(), 2 * 60 * 1000);
-  void runBotCycle();
+
+  if (strategy) {
+    void scheduleBotCycle(strategy);
+  } else {
+    // Fallback to fixed interval if no strategy configured yet
+    botInterval = setInterval(() => void runBotCycle(), config.checkIntervalSeconds * 1000) as unknown as NodeJS.Timeout;
+  }
   void runSettlementCheck();
 }
 
 export async function stopBot(): Promise<void> {
-  if (botInterval) { clearInterval(botInterval); botInterval = null; }
+  if (botInterval) { clearTimeout(botInterval); botInterval = null; }
   if (settlementInterval) { clearInterval(settlementInterval); settlementInterval = null; }
   botRunning = false;
   startedAt = null;

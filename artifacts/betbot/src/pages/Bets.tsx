@@ -4,7 +4,7 @@ import { formatCurrency, formatNumber } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Trophy, TrendingDown, Clock, ChevronRight, ArrowLeft } from "lucide-react";
+import { Trophy, TrendingDown, Clock, ChevronRight, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 
 interface RaceSummary {
   marketId: string;
@@ -43,16 +43,42 @@ interface Runner {
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-function groupByDate(races: RaceSummary[]) {
-  const groups: Record<string, RaceSummary[]> = {};
-  races.forEach((r) => {
-    const day = new Date(r.placedAt).toLocaleDateString("en-GB", {
-      weekday: "long", day: "numeric", month: "long"
-    });
-    if (!groups[day]) groups[day] = [];
-    groups[day].push(r);
+function isToday(dateStr: string): boolean {
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+}
+
+function formatDayLabel(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en-GB", {
+    weekday: "long", day: "numeric", month: "long"
   });
-  return groups;
+}
+
+function groupByDate(races: RaceSummary[]) {
+  const today: RaceSummary[] = [];
+  const past: Record<string, RaceSummary[]> = {};
+
+  races.forEach((r) => {
+    if (isToday(r.placedAt)) {
+      today.push(r);
+    } else {
+      const day = formatDayLabel(r.placedAt);
+      if (!past[day]) past[day] = [];
+      past[day].push(r);
+    }
+  });
+
+  return { today, past };
+}
+
+function dayPnl(races: RaceSummary[]) {
+  const settled = races.filter(r => r.settled);
+  const total = settled.reduce((s, r) => s + (r.totalProfit ?? 0), 0);
+  const pending = races.filter(r => !r.settled).length;
+  return { total, settled: settled.length, pending };
 }
 
 function getStatusColor(status: string) {
@@ -84,7 +110,6 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
 
   const excludedRunners = runners?.filter(r => !r.included) ?? [];
 
-  // Deduplicate bets by selectionId — keep latest bet per horse, sum stakes
   const uniqueBets = bets ? Object.values(
     bets.reduce<Record<number, Bet>>((acc, b) => {
       if (!acc[b.selectionId] || b.placedAt > acc[b.selectionId].placedAt) {
@@ -100,9 +125,7 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
   const totalProfit = uniqueBets.reduce((s, b) => s + (b.actualProfit ?? 0), 0);
   const settled = uniqueBets.length > 0 && uniqueBets.every(b => b.status === "WON" || b.status === "LOST" || b.status === "SETTLED");
   const winner = uniqueBets.find(b => b.status === "WON");
-  const minPotentialProfit = uniqueBets.length > 0
-    ? Math.min(...uniqueBets.map(b => b.potentialProfit))
-    : 0;
+  const minPotentialProfit = uniqueBets.length > 0 ? Math.min(...uniqueBets.map(b => b.potentialProfit)) : 0;
   const hasRunnerData = runners !== undefined && runners.length > 0;
   const totalRunnersInRace = hasRunnerData ? runners!.length : null;
   const backedCount = uniqueBets.length;
@@ -160,9 +183,7 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Runners Backed</p>
             <p className="text-lg font-bold">
-              {totalRunnersInRace
-                ? `${backedCount} of ${totalRunnersInRace}`
-                : backedCount}
+              {totalRunnersInRace ? `${backedCount} of ${totalRunnersInRace}` : backedCount}
             </p>
           </CardContent>
         </Card>
@@ -277,6 +298,97 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
   );
 }
 
+function RaceRow({ race, isSelected, onClick }: { race: RaceSummary; isSelected: boolean; onClick: () => void }) {
+  const profit = race.totalProfit ?? 0;
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-4 py-3 border-b border-border/30 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2 ${isSelected ? "bg-muted/50 border-l-2 border-l-primary" : ""}`}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="font-medium text-sm truncate">{race.eventName}</p>
+          <span className="text-xs font-mono font-semibold text-primary shrink-0 bg-primary/10 px-1.5 py-0.5 rounded">
+            {race.marketName}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {race.betCount} runners · Staked {formatCurrency(race.totalStaked)} ·{" "}
+          {new Date(race.placedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+        </p>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {race.settled ? (
+          profit >= 0 ? (
+            <span className="text-chart-1 font-mono text-sm font-semibold flex items-center gap-1">
+              <Trophy className="h-3 w-3" />+{formatCurrency(profit)}
+            </span>
+          ) : (
+            <span className="text-chart-4 font-mono text-sm font-semibold flex items-center gap-1">
+              <TrendingDown className="h-3 w-3" />{formatCurrency(profit)}
+            </span>
+          )
+        ) : (
+          <span className="text-xs text-muted-foreground">Pending</span>
+        )}
+        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+      </div>
+    </button>
+  );
+}
+
+function CollapsibleDaySection({
+  day,
+  races,
+  selectedRace,
+  onSelect,
+}: {
+  day: string;
+  races: RaceSummary[];
+  selectedRace: RaceSummary | null;
+  onSelect: (r: RaceSummary) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { total, settled, pending } = dayPnl(races);
+
+  return (
+    <div className="border-b border-border/30 last:border-b-0">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          <div className="text-left">
+            <p className="text-sm font-semibold">{day}</p>
+            <p className="text-xs text-muted-foreground">
+              {races.length} race{races.length !== 1 ? "s" : ""}
+              {pending > 0 ? ` · ${pending} pending` : ""}
+            </p>
+          </div>
+        </div>
+        {settled > 0 && (
+          <span className={`font-mono text-sm font-semibold ${total >= 0 ? "text-chart-1" : "text-chart-4"}`}>
+            {total >= 0 ? "+" : ""}{formatCurrency(total)}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-border/20">
+          {races.map(race => (
+            <RaceRow
+              key={race.marketId}
+              race={race}
+              isSelected={selectedRace?.marketId === race.marketId}
+              onClick={() => onSelect(race)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Bets() {
   const [selectedRace, setSelectedRace] = useState<RaceSummary | null>(null);
 
@@ -289,12 +401,9 @@ export default function Bets() {
     refetchInterval: 30000,
   });
 
-  const grouped = races ? groupByDate(races) : {};
+  const { today, past } = races ? groupByDate(races) : { today: [], past: {} };
   const hasRaces = races && races.length > 0;
-
-  // On mobile, show only the detail view when a race is selected
-  const showList = !selectedRace;
-  const showDetail = !!selectedRace;
+  const todayStats = dayPnl(today);
 
   function selectRace(race: RaceSummary) {
     setSelectedRace(race);
@@ -302,70 +411,72 @@ export default function Bets() {
   }
 
   const raceList = (
-    <Card className="border-border/50 bg-card/50">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Races</CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        {isLoading ? (
-          <div className="space-y-2 p-4">
-            {Array(6).fill(0).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
-          </div>
-        ) : !hasRaces ? (
-          <div className="text-center py-12 text-muted-foreground text-sm px-4">
-            <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
-            No races yet — they'll appear here once the bot places bets
-          </div>
-        ) : (
-          Object.entries(grouped).map(([day, dayRaces]) => (
-            <div key={day}>
-              <div className="px-4 py-2 bg-muted/40 border-y border-border/30">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{day}</p>
-              </div>
-              {dayRaces.map((race) => {
-                const isSelected = selectedRace?.marketId === race.marketId;
-                const profit = race.totalProfit ?? 0;
-                return (
-                  <button
-                    key={race.marketId}
-                    onClick={() => selectRace(race)}
-                    className={`w-full text-left px-4 py-3 border-b border-border/30 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2 ${isSelected ? "bg-muted/50 border-l-2 border-l-primary" : ""}`}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-sm truncate">{race.eventName}</p>
-                        <span className="text-xs font-mono font-semibold text-primary shrink-0 bg-primary/10 px-1.5 py-0.5 rounded">
-                          {race.marketName}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {race.betCount} runners · Staked {formatCurrency(race.totalStaked)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {race.settled ? (
-                        profit >= 0 ? (
-                          <span className="text-chart-1 font-mono text-sm font-semibold flex items-center gap-1">
-                            <Trophy className="h-3 w-3" />+{formatCurrency(profit)}
-                          </span>
-                        ) : (
-                          <span className="text-chart-4 font-mono text-sm font-semibold flex items-center gap-1">
-                            <TrendingDown className="h-3 w-3" />{formatCurrency(profit)}
-                          </span>
-                        )
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Pending</span>
-                      )}
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  </button>
-                );
-              })}
+    <div className="space-y-4">
+      {/* Today's races */}
+      <Card className="border-border/50 bg-card/50">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between">
+          <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Today</CardTitle>
+          {todayStats.settled > 0 && (
+            <span className={`font-mono text-sm font-bold ${todayStats.total >= 0 ? "text-chart-1" : "text-chart-4"}`}>
+              {todayStats.total >= 0 ? "+" : ""}{formatCurrency(todayStats.total)}
+              {todayStats.pending > 0 && (
+                <span className="text-xs text-muted-foreground font-normal ml-1">+ {todayStats.pending} pending</span>
+              )}
+            </span>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="space-y-2 p-4">
+              {Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
             </div>
-          ))
-        )}
-      </CardContent>
-    </Card>
+          ) : today.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground text-sm px-4">
+              <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
+              No races today yet — they'll appear here once the bot places bets
+            </div>
+          ) : (
+            <div>
+              {today.map(race => (
+                <RaceRow
+                  key={race.marketId}
+                  race={race}
+                  isSelected={selectedRace?.marketId === race.marketId}
+                  onClick={() => selectRace(race)}
+                />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Previous days — collapsible */}
+      {!isLoading && Object.keys(past).length > 0 && (
+        <Card className="border-border/50 bg-card/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Previous Days</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {Object.entries(past).map(([day, dayRaces]) => (
+              <CollapsibleDaySection
+                key={day}
+                day={day}
+                races={dayRaces}
+                selectedRace={selectedRace}
+                onSelect={selectRace}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {!isLoading && !hasRaces && (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
+          No races yet — they'll appear here once the bot places bets
+        </div>
+      )}
+    </div>
   );
 
   return (
@@ -374,8 +485,8 @@ export default function Bets() {
 
       {/* Mobile: show list or detail, not both */}
       <div className="lg:hidden">
-        {showList && raceList}
-        {showDetail && (
+        {!selectedRace && raceList}
+        {selectedRace && (
           <RaceDetail
             marketId={selectedRace.marketId}
             race={selectedRace}
@@ -385,7 +496,7 @@ export default function Bets() {
       </div>
 
       {/* Desktop: side-by-side */}
-      <div className="hidden lg:grid lg:grid-cols-[320px_1fr] gap-6 items-start">
+      <div className="hidden lg:grid lg:grid-cols-[340px_1fr] gap-6 items-start">
         {raceList}
         <div>
           {selectedRace ? (
@@ -397,7 +508,7 @@ export default function Bets() {
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
               <ChevronRight className="h-10 w-10 mb-3 opacity-20" />
-              <p className="text-sm">Select a race from the left to see the full breakdown</p>
+              <p className="text-sm">Select a race to see the full breakdown</p>
             </div>
           )}
         </div>
