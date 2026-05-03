@@ -179,7 +179,7 @@ async function runDutchStrategy(
       continue;
     }
 
-    // Fetch market detail with up to 3 attempts (2s apart) to handle brief
+    // Fetch market detail with up to 5 attempts (3s apart) to handle brief
     // Betfair API glitches where runners temporarily have no available price.
     let marketDetail = await getMarketDetail(market.marketId);
     if (!marketDetail) continue;
@@ -187,17 +187,26 @@ async function runDutchStrategy(
     let activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
     const totalActiveInField = marketDetail.runners.filter(r => r.status === "ACTIVE").length;
 
-    for (let attempt = 1; attempt < 3 && activeRunners.length < totalActiveInField; attempt++) {
+    for (let attempt = 1; attempt < 5 && activeRunners.length < totalActiveInField; attempt++) {
       const missingPrices = totalActiveInField - activeRunners.length;
       await logBotActivity("info",
-        `[DUTCH] ${market.eventName} — ${missingPrices} runner(s) have no price, retrying in 2s (attempt ${attempt}/2)...`
+        `[DUTCH] ${market.eventName} — ${missingPrices} runner(s) have no price, retrying in 3s (attempt ${attempt}/4)...`
       );
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 3000));
       marketDetail = (await getMarketDetail(market.marketId)) ?? marketDetail;
       activeRunners = marketDetail.runners.filter(r => r.status === "ACTIVE" && r.bestBackPrice != null);
     }
 
     if (activeRunners.length === 0) continue;
+
+    // ── Warn if we still have runners with no price after all retries ──
+    if (activeRunners.length < totalActiveInField) {
+      const missing = totalActiveInField - activeRunners.length;
+      await logBotActivity("info",
+        `[DUTCH] ⚠️ WARNING: ${market.eventName} — ${missing} runner(s) still have no back price after 4 retries. ` +
+        `Proceeding with ${activeRunners.length}/${totalActiveInField} runners — missed runner(s) could win.`
+      );
+    }
 
     // ── Runner count filter ──
     if (activeRunners.length > dc.maxRunners) {
