@@ -781,9 +781,12 @@ async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect)
       ? `${sleepHours.toFixed(1)} h`
       : `${(sleepMs / 60_000).toFixed(1)} min`;
 
-    await logBotActivity("info",
-      `[SCHEDULER] Next unbet race at ${raceLabel} — sleeping ${sleepDesc}, waking at ${wakeLabel}`
-    );
+    // Only log scheduler sleep if it's meaningful (> 30 min) — short sleeps are just active polling
+    if (sleepMs > 30 * 60_000) {
+      await logBotActivity("info",
+        `[SCHEDULER] Next unbet race at ${raceLabel} — sleeping ${sleepDesc}, waking at ${wakeLabel}`
+      );
+    }
     return sleepMs;
   } catch {
     return MIN_SLEEP_MS;
