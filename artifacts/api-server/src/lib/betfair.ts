@@ -126,16 +126,25 @@ async function apiRequest<T>(
 
   const body = JSON.stringify([{ jsonrpc: "2.0", method, params, id: 1 }]);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Application": currentSession.appKey,
-      "X-Authentication": currentSession.token,
-      Accept: "application/json",
-    },
-    body,
-  });
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 15_000); // 15 s hard timeout
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      signal: abort.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Application": currentSession.appKey,
+        "X-Authentication": currentSession.token,
+        Accept: "application/json",
+      },
+      body,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     throw new Error(`Betfair API error: ${response.status} ${response.statusText}`);

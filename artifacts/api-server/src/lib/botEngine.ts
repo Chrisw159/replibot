@@ -798,7 +798,12 @@ async function scheduleBotCycle(strategy: typeof strategiesTable.$inferSelect): 
     logger.error({ err }, "Bot cycle error");
   }
   if (!botRunning) return;
-  const sleepMs = await computeNextSleepMs(strategy);
+  let sleepMs = 30_000;
+  try {
+    sleepMs = await computeNextSleepMs(strategy);
+  } catch (err) {
+    logger.error({ err }, "[SCHEDULER] computeNextSleepMs threw unexpectedly — falling back to 30 s");
+  }
   botInterval = setTimeout(() => void scheduleBotCycle(strategy), sleepMs) as unknown as NodeJS.Timeout;
 }
 
