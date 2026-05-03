@@ -73,7 +73,22 @@ function parseCountryCodes(marketFilter: string | null | undefined): { ireland: 
   }
 }
 
-function buildMarketFilter(existing: string | null | undefined, ireland: boolean, usa: boolean, australia: boolean): string {
+function parseStakingMode(marketFilter: string | null | undefined): "equal" | "weighted" {
+  try {
+    const parsed = JSON.parse(marketFilter ?? "{}") as { stakingMode?: string };
+    return parsed.stakingMode === "weighted" ? "weighted" : "equal";
+  } catch {
+    return "equal";
+  }
+}
+
+function buildMarketFilter(
+  existing: string | null | undefined,
+  ireland: boolean,
+  usa: boolean,
+  australia: boolean,
+  stakingMode: "equal" | "weighted",
+): string {
   let parsed: Record<string, unknown> = {};
   try { parsed = JSON.parse(existing ?? "{}") as Record<string, unknown>; } catch { /* ignore */ }
   const codes = ["GB"];
@@ -81,6 +96,7 @@ function buildMarketFilter(existing: string | null | undefined, ireland: boolean
   if (usa) codes.push("US");
   if (australia) codes.push("AU");
   parsed.countryCodes = codes;
+  parsed.stakingMode = stakingMode;
   return JSON.stringify(parsed);
 }
 
@@ -100,6 +116,7 @@ const BLANK_DEFAULTS = {
   includeIreland: true,
   includeUSA: false,
   includeAustralia: false,
+  stakingMode: "equal" as "equal" | "weighted",
   isActive: true,
 };
 
@@ -119,6 +136,7 @@ const formSchema = z
     includeIreland: z.boolean(),
     includeUSA: z.boolean(),
     includeAustralia: z.boolean(),
+    stakingMode: z.enum(["equal", "weighted"]),
     isActive: z.boolean(),
   })
   .refine((d) => d.maxOdds > d.minOdds, {
@@ -172,6 +190,7 @@ export function StrategyDialog({
         includeIreland: cc.ireland,
         includeUSA: cc.usa,
         includeAustralia: cc.australia,
+        stakingMode: parseStakingMode(strategy.marketFilter),
         isActive: strategy.isActive,
       });
     } else if (open && !strategy) {
@@ -184,7 +203,7 @@ export function StrategyDialog({
       ...values,
       description: values.description || null,
       aiPrompt: values.aiPrompt || null,
-      marketFilter: buildMarketFilter(values.marketFilter, values.includeIreland, values.includeUSA, values.includeAustralia),
+      marketFilter: buildMarketFilter(values.marketFilter, values.includeIreland, values.includeUSA, values.includeAustralia, values.stakingMode),
     };
 
     if (isEditing && strategy) {
@@ -375,68 +394,97 @@ export function StrategyDialog({
             {/* Odds & Stakes */}
             <div>
               <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Odds & Stakes</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="minOdds"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Min Odds</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min="1.01" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="minOdds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Min Odds</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min="1.01" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <FormField
-                  control={form.control}
-                  name="maxOdds"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Max Odds</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min="1.01" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  <FormField
+                    control={form.control}
+                    name="maxOdds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Max Odds</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min="1.01" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <FormField
-                  control={form.control}
-                  name="stakeAmount"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        {form.watch("betType") === "DUTCH" ? "Total Dutch Stake (£)" : "Stake Per Bet (£)"}
-                      </FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min="0.01" {...field} />
-                      </FormControl>
-                      {form.watch("betType") === "DUTCH" && (
-                        <FormDescription>Total stake spread across all qualifying runners to guarantee equal profit whichever wins.</FormDescription>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  <FormField
+                    control={form.control}
+                    name="stakeAmount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {form.watch("betType") === "DUTCH" ? "Total Dutch Stake (£)" : "Stake Per Bet (£)"}
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min="0.01" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <FormField
-                  control={form.control}
-                  name="maxStakeAmount"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Max Stake (£)</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" min="0.01" {...field} />
-                      </FormControl>
-                      <FormDescription>Daily cap per strategy</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  <FormField
+                    control={form.control}
+                    name="maxStakeAmount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Max Stake (£)</FormLabel>
+                        <FormControl>
+                          <Input type="number" step="0.01" min="0.01" {...field} />
+                        </FormControl>
+                        <FormDescription>Daily cap per strategy</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Staking mode — DUTCH only */}
+                {form.watch("betType") === "DUTCH" && (
+                  <FormField
+                    control={form.control}
+                    name="stakingMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Dutch Staking Mode</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="equal">Equal return — same profit whichever runner wins</SelectItem>
+                            <SelectItem value="weighted">Favourite-weighted — bigger profit on short prices, small loss on big outsiders</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {form.watch("stakingMode") === "weighted"
+                            ? "Stakes proportional to implied probability² — the favourite gets the most stake, so if it wins you profit most. If a big outsider wins, you lose a small amount."
+                            : "All backed runners return the same amount — guaranteed equal profit no matter who wins."}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
             </div>
 

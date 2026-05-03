@@ -65,6 +65,7 @@ interface DutchConfig {
   countryCode: string;
   countryCodes: string[];
   excludeRaceTypes: string[];
+  stakingMode: "equal" | "weighted";
 }
 
 function parseDutchConfig(marketFilter: string | null): DutchConfig {
@@ -75,6 +76,7 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
     countryCode: "GB",
     countryCodes: ["GB", "IE"],
     excludeRaceTypes: [],
+    stakingMode: "equal",
   };
   try {
     return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
@@ -253,27 +255,60 @@ async function runDutchStrategy(
       );
     }
 
-    // ── Calculate stakes mathematically (standard Dutch formula) ──
-    // stake_i = (budget / bookPct) / odds_i  →  return_i = budget / bookPct  (same for all)
+    // ── Calculate stakes ──────────────────────────────────────────────────────
+    // equal:    standard Dutch — every runner returns the same amount
+    //           stake_i = (budget / bookPct) / odds_i
+    // weighted: probability-weighted Dutch — heavier stakes on favourites
+    //           stake_i = K / odds_i²  where K = budget / Σ(1/odds_j²)
+    //           → favourite wins: bigger profit; outsider wins: smaller loss
     const fullCover = selected.length === activeRunners.length;
     const budget = fullCover ? totalStake * 2 : totalStake;
-    const targetReturn = budget / bookPct;
+
     interface ComputedStake { selectionId: number; runnerName: string; stake: number; odds: number; expectedProfit: number; }
-    const computedStakes: ComputedStake[] = selected.map(r => {
-      const stake = parseFloat((targetReturn / (r.bestBackPrice ?? 1)).toFixed(2));
-      return {
-        selectionId: r.selectionId,
-        runnerName: r.runnerName,
-        stake,
-        odds: r.bestBackPrice ?? 1,
-        expectedProfit: parseFloat((stake * (r.bestBackPrice ?? 1) - budget).toFixed(2)),
-      };
-    });
+    let computedStakes: ComputedStake[];
+
+    if (dc.stakingMode === "weighted") {
+      const sumInvOdds2 = selected.reduce((s, r) => s + 1 / Math.pow(r.bestBackPrice ?? 1, 2), 0);
+      const K = budget / sumInvOdds2;
+      computedStakes = selected.map(r => {
+        const odds = r.bestBackPrice ?? 1;
+        const stake = parseFloat((K / Math.pow(odds, 2)).toFixed(2));
+        const returnIfWin = parseFloat((stake * odds).toFixed(2));
+        return {
+          selectionId: r.selectionId,
+          runnerName: r.runnerName,
+          stake,
+          odds,
+          expectedProfit: parseFloat((returnIfWin - budget).toFixed(2)),
+        };
+      });
+    } else {
+      // equal-return (standard Dutch)
+      const targetReturn = budget / bookPct;
+      computedStakes = selected.map(r => {
+        const odds = r.bestBackPrice ?? 1;
+        const stake = parseFloat((targetReturn / odds).toFixed(2));
+        return {
+          selectionId: r.selectionId,
+          runnerName: r.runnerName,
+          stake,
+          odds,
+          expectedProfit: parseFloat((stake * odds - budget).toFixed(2)),
+        };
+      });
+    }
+
     const totalStaked = computedStakes.reduce((s, r) => s + r.stake, 0);
+    const minReturn = Math.min(...computedStakes.map(r => r.stake * r.odds));
+    const maxReturn = Math.max(...computedStakes.map(r => r.stake * r.odds));
+
+    const returnDesc = dc.stakingMode === "weighted"
+      ? `returns £${minReturn.toFixed(2)}–£${maxReturn.toFixed(2)} (profit £${(minReturn - totalStaked).toFixed(2)} to £${(maxReturn - totalStaked).toFixed(2)})`
+      : `guaranteed return £${minReturn.toFixed(2)} (profit £${(minReturn - totalStaked).toFixed(2)})`;
 
     await logBotActivity("info",
-      `[DUTCH] ${market.eventName} — ${selected.length} runners backed, book ${(bookPct * 100).toFixed(1)}%, ` +
-      `total stake £${totalStaked.toFixed(2)}, guaranteed return £${targetReturn.toFixed(2)} (profit £${(targetReturn - totalStaked).toFixed(2)})`
+      `[DUTCH${dc.stakingMode === "weighted" ? "/WEIGHTED" : ""}] ${market.eventName} — ${selected.length} runners backed, book ${(bookPct * 100).toFixed(1)}%, ` +
+      `total stake £${totalStaked.toFixed(2)}, ${returnDesc}`
     );
 
     // ── Record all runners (included + excluded) for race history ──
@@ -318,7 +353,7 @@ Race: ${marketDetail.eventName} — ${marketDetail.marketName}
 Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.length}  |  Backed: ${selected.length}
 Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
 Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
-Book: ${(bookPct * 100).toFixed(1)}%  |  Guaranteed return: £${targetReturn.toFixed(2)} on £${totalStaked.toFixed(2)} staked
+Book: ${(bookPct * 100).toFixed(1)}%  |  Staking: ${dc.stakingMode === "weighted" ? `weighted (£${minReturn.toFixed(2)}–£${maxReturn.toFixed(2)} return range)` : `equal return £${minReturn.toFixed(2)}`} on £${totalStaked.toFixed(2)} staked
 ${dropped.length > 0 ? `Dropped (overround): ${dropped.join(", ")}` : "Full field covered"}
 
 Runners being backed:
