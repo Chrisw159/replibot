@@ -723,18 +723,20 @@ async function runSettlementCheck(): Promise<void> {
 // and wake up 30 minutes before the first race that hasn't been bet on yet.
 // This avoids hammering the API during quiet periods (e.g. early morning).
 async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect): Promise<number> {
-  const MIN_SLEEP_MS = 30_000;          // never faster than 30 s
-  const MAX_SLEEP_MS = 30 * 60_000;     // never longer than 30 min
-  const WAKE_BEFORE_MS = 30 * 60_000;   // wake up 30 min before first race
+  const MIN_SLEEP_MS = 30_000;        // never faster than 30 s
+  const WAKE_BEFORE_MS = 30 * 60_000; // wake up 30 min before first race
 
   try {
     const dc = parseDutchConfig(strategy.marketFilter);
     const countries = dc.countryCodes?.length ? dc.countryCodes : [dc.countryCode];
+
+    // Look 36 hours ahead so we always catch tomorrow's card if today is done
     const markets = await listMarkets({
       eventTypeId: strategy.eventTypeId,
       countryCodes: countries,
       marketType: "WIN",
-      limit: 50,
+      limit: 100,
+      hoursAhead: 36,
     });
 
     // Filter to markets not already bet on
@@ -750,17 +752,37 @@ async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect)
       .sort((a, b) => a - b);
 
     if (futureUnbet.length === 0) {
-      await logBotActivity("info", "[SCHEDULER] No upcoming unbet races today — sleeping 5 min");
-      return 5 * 60_000;
+      // No races visible yet — check again in 1 hour
+      await logBotActivity("info", "[SCHEDULER] No upcoming unbet races in the next 36 h — sleeping 1 hour");
+      return 60 * 60_000;
     }
 
     const firstRace = futureUnbet[0];
     const sleepUntil = firstRace - WAKE_BEFORE_MS;
-    const sleepMs = Math.max(MIN_SLEEP_MS, Math.min(MAX_SLEEP_MS, sleepUntil - now));
-    const wakeAt = new Date(now + sleepMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    const raceAt = new Date(firstRace).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    // Sleep until 30 min before the race, with a 30 s floor (race may already be close)
+    const sleepMs = Math.max(MIN_SLEEP_MS, sleepUntil - now);
+
+    const firstRaceDate = new Date(firstRace);
+    const wakeDate = new Date(now + sleepMs);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isNextDay = firstRaceDate.getDate() !== new Date(now).getDate();
+
+    const raceLabel = firstRaceDate.toLocaleString("en-GB", {
+      weekday: "short", hour: "2-digit", minute: "2-digit",
+      ...(isNextDay ? { day: "numeric", month: "short" } : {}),
+    });
+    const wakeLabel = wakeDate.toLocaleString("en-GB", {
+      hour: "2-digit", minute: "2-digit",
+      ...(isNextDay ? { weekday: "short", day: "numeric", month: "short" } : {}),
+    });
+    const sleepHours = sleepMs / 3_600_000;
+    const sleepDesc = sleepHours >= 1
+      ? `${sleepHours.toFixed(1)} h`
+      : `${(sleepMs / 60_000).toFixed(1)} min`;
+
     await logBotActivity("info",
-      `[SCHEDULER] Next unbet race at ${raceAt} — sleeping ${(sleepMs / 60_000).toFixed(1)} min, waking at ${wakeAt}`
+      `[SCHEDULER] Next unbet race at ${raceLabel} — sleeping ${sleepDesc}, waking at ${wakeLabel}`
     );
     return sleepMs;
   } catch {
