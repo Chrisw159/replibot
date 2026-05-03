@@ -477,7 +477,7 @@ export function StrategyDialog({
                         </Select>
                         <FormDescription>
                           {form.watch("stakingMode") === "weighted"
-                            ? "Stakes proportional to implied probability² — the favourite gets the most stake, so if it wins you profit most. If a big outsider wins, you lose a small amount."
+                            ? "Stakes are calibrated so you profit on anything 12/1 or shorter, and only lose if a 13/1+ runner wins. The exponent is solved per race to pin the break-even exactly at 12/1."
                             : "All backed runners return the same amount — guaranteed equal profit no matter who wins."}
                         </FormDescription>
                         <FormMessage />

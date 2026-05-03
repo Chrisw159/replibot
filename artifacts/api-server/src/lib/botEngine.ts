@@ -258,9 +258,12 @@ async function runDutchStrategy(
     // ── Calculate stakes ──────────────────────────────────────────────────────
     // equal:    standard Dutch — every runner returns the same amount
     //           stake_i = (budget / bookPct) / odds_i
-    // weighted: probability-weighted Dutch — heavier stakes on favourites
-    //           stake_i = K / odds_i²  where K = budget / Σ(1/odds_j²)
-    //           → favourite wins: bigger profit; outsider wins: smaller loss
+    // weighted: break-even-anchored Dutch — profit on any runner ≤ 12/1, loss on longer
+    //           Uses stake_i = K / odds_i^n where n is solved so that the
+    //           return exactly equals budget when odds_i = BREAK_EVEN_ODDS (13.0)
+    //           Binary-search: f(n) = Σ(1/odds^n) − 13^(1−n) = 0
+    const BREAK_EVEN_ODDS = 13.0; // 12/1 decimal
+
     const fullCover = selected.length === activeRunners.length;
     const budget = fullCover ? totalStake * 2 : totalStake;
 
@@ -268,11 +271,30 @@ async function runDutchStrategy(
     let computedStakes: ComputedStake[];
 
     if (dc.stakingMode === "weighted") {
-      const sumInvOdds2 = selected.reduce((s, r) => s + 1 / Math.pow(r.bestBackPrice ?? 1, 2), 0);
-      const K = budget / sumInvOdds2;
-      computedStakes = selected.map(r => {
-        const odds = r.bestBackPrice ?? 1;
-        const stake = parseFloat((K / Math.pow(odds, 2)).toFixed(2));
+      const oddsArr = selected.map(r => r.bestBackPrice ?? 1);
+      const minOddsInField = Math.min(...oddsArr);
+
+      // Solve for exponent n via binary search
+      // f(n) = Σ(odds_j^−n) − breakEven^(1−n)
+      // f(1) = bookPct − 1 < 0 (guaranteed for sub-100% Dutch)
+      // f(n→∞) → +∞ when favourite < breakEven (guaranteed since minOdds ≥ minFavOdds ≥ 3.0 < 13.0)
+      let n = 2.0; // fallback
+      if (minOddsInField < BREAK_EVEN_ODDS) {
+        const f = (exp: number): number =>
+          oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(BREAK_EVEN_ODDS, 1 - exp);
+        let lo = 1.0, hi = 30.0;
+        for (let iter = 0; iter < 60; iter++) {
+          const mid = (lo + hi) / 2;
+          if (f(mid) < 0) lo = mid; else hi = mid;
+        }
+        n = (lo + hi) / 2;
+      }
+
+      const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
+      const K = budget / sumInvOddsN;
+      computedStakes = selected.map((r, i) => {
+        const odds = oddsArr[i];
+        const stake = parseFloat((K * Math.pow(odds, -n)).toFixed(2));
         const returnIfWin = parseFloat((stake * odds).toFixed(2));
         return {
           selectionId: r.selectionId,
