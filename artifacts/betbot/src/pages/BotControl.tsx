@@ -201,9 +201,9 @@ export default function BotControl() {
                     <div key={log.id} className="flex gap-3">
                       <span className="text-gray-500 flex-shrink-0">[{formatDate(log.createdAt).split(', ')[1]}]</span>
                       <span className={`font-bold flex-shrink-0 w-12 ${
-                        log.level === 'ERROR' ? 'text-red-500' : 
-                        log.level === 'WARN' ? 'text-yellow-500' : 
-                        log.level === 'INFO' ? 'text-blue-400' : 'text-gray-400'
+                        log.level.toUpperCase() === 'ERROR' ? 'text-red-500' : 
+                        log.level.toUpperCase() === 'WARN' ? 'text-yellow-500' : 
+                        log.level.toUpperCase() === 'INFO' ? 'text-blue-400' : 'text-gray-400'
                       }`}>
                         {log.level}
                       </span>

@@ -150,6 +150,8 @@ router.get("/bot/logs", async (req, res): Promise<void> => {
     return;
   }
 
+  res.setHeader("Cache-Control", "no-store");
+
   const logs = await db
     .select()
     .from(botLogsTable)
