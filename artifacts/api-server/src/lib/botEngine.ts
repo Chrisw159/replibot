@@ -228,31 +228,44 @@ async function runDutchStrategy(
     );
     if (qualifying.length === 0) continue;
 
-    // ── Greedy exclusion: drop longest-priced runners until book < 100% ──
-    // Sort longest price first so we drop the outsiders that contribute least
-    // to coverage but most to the overround.
-    // Minimum coverage: must back at least 80% of the active field
-    const minCoverageCount = Math.ceil(activeRunners.length * 0.8);
-    const selected = [...qualifying].sort((a, b) => (b.bestBackPrice ?? 0) - (a.bestBackPrice ?? 0));
-    let bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+    // ── Runner selection ──────────────────────────────────────────────────────
+    // weighted: back every qualifying runner — the formula naturally assigns
+    //           tiny stakes to outsiders, so no overround trimming is needed.
+    // equal:    greedy exclusion — drop longest-priced runners until book < 100%
+    //           so the equal-return target is profitable on every winner.
+    let selected: BetfairRunner[];
+    let bookPct: number;
     const dropped: string[] = [];
-    while (bookPct >= 1.0 && selected.length > minCoverageCount) {
-      const removed = selected.shift()!;          // remove longest price
-      dropped.push(`${removed.runnerName} (${removed.bestBackPrice})`);
+
+    if (dc.stakingMode === "weighted") {
+      // Use all qualifying runners sorted shortest → longest price
+      selected = [...qualifying].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
       bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
-    }
-    if (bookPct >= 1.0) {
-      await logBotActivity("info",
-        `[DUTCH] Skipping ${market.eventName} — cannot get below 100% book while covering ≥80% of field ` +
-        `(${selected.length}/${activeRunners.length} runners, book ${(bookPct * 100).toFixed(1)}%)`
-      );
-      continue;
-    }
-    if (dropped.length > 0) {
-      await logBotActivity("info",
-        `[DUTCH] ${market.eventName} — dropped ${dropped.length} outsider(s) to reach book ${(bookPct * 100).toFixed(1)}% ` +
-        `(covering ${selected.length}/${activeRunners.length} = ${((selected.length / activeRunners.length) * 100).toFixed(0)}% of field): ${dropped.join(", ")}`
-      );
+    } else {
+      // Equal-return mode: trim outsiders until book is sub-100%
+      const minCoverageCount = Math.ceil(activeRunners.length * 0.8);
+      selected = [...qualifying].sort((a, b) => (b.bestBackPrice ?? 0) - (a.bestBackPrice ?? 0));
+      bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+      while (bookPct >= 1.0 && selected.length > minCoverageCount) {
+        const removed = selected.shift()!;
+        dropped.push(`${removed.runnerName} (${removed.bestBackPrice})`);
+        bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+      }
+      if (bookPct >= 1.0) {
+        await logBotActivity("info",
+          `[DUTCH] Skipping ${market.eventName} — cannot get below 100% book while covering ≥80% of field ` +
+          `(${selected.length}/${activeRunners.length} runners, book ${(bookPct * 100).toFixed(1)}%)`
+        );
+        continue;
+      }
+      if (dropped.length > 0) {
+        await logBotActivity("info",
+          `[DUTCH] ${market.eventName} — dropped ${dropped.length} outsider(s) to reach book ${(bookPct * 100).toFixed(1)}% ` +
+          `(covering ${selected.length}/${activeRunners.length} = ${((selected.length / activeRunners.length) * 100).toFixed(0)}% of field): ${dropped.join(", ")}`
+        );
+      }
+      // Sort selected shortest → longest for consistent downstream ordering
+      selected.sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
     }
 
     // ── Calculate stakes ──────────────────────────────────────────────────────
