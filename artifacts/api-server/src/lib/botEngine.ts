@@ -252,34 +252,10 @@ async function runDutchStrategy(
     const dropped: string[] = [];
 
     if (dc.stakingMode === "weighted") {
-      // Sort longest → shortest so we can trim outsiders from the front if overround
-      selected = [...qualifying].sort((a, b) => (b.bestBackPrice ?? 0) - (a.bestBackPrice ?? 0));
+      // Cover ALL qualifying runners — never drop any.
+      // Sort shortest → longest price.
+      selected = [...qualifying].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
       bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
-
-      // Drop longest-priced runners until book is sub-100%.
-      // A book >= 100% guarantees a loss on every possible winner regardless of
-      // staking method — the binary-search solver also assumes sub-100% input.
-      const minCoverageWeighted = Math.max(2, Math.floor(selected.length * 0.5));
-      while (bookPct >= 1.0 && selected.length > minCoverageWeighted) {
-        const removed = selected.shift()!;
-        dropped.push(`${removed.runnerName} (${removed.bestBackPrice})`);
-        bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
-      }
-      if (bookPct >= 1.0) {
-        await logBotActivity("info",
-          `[DUTCH] Skipping ${market.eventName} — overround market (${(bookPct * 100).toFixed(1)}%), ` +
-          `cannot achieve sub-100% book even covering only ${selected.length} runners`
-        );
-        continue;
-      }
-      if (dropped.length > 0) {
-        await logBotActivity("info",
-          `[DUTCH] ${market.eventName} — trimmed ${dropped.length} outsider(s) to reach book ${(bookPct * 100).toFixed(1)}% ` +
-          `(${selected.length} runners covered): ${dropped.join(", ")}`
-        );
-      }
-      // Re-sort shortest → longest for consistent downstream ordering
-      selected.sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
     } else {
       // Equal-return mode: trim outsiders until book is sub-100%
       const minCoverageCount = Math.ceil(activeRunners.length * 0.8);
@@ -310,11 +286,15 @@ async function runDutchStrategy(
     // ── Calculate stakes ──────────────────────────────────────────────────────
     // equal:    standard Dutch — every runner returns the same amount
     //           stake_i = (budget / bookPct) / odds_i
-    // weighted: break-even-anchored Dutch — profit on any runner ≤ 12/1, loss on longer
-    //           Uses stake_i = K / odds_i^n where n is solved so that the
-    //           return exactly equals budget when odds_i = BREAK_EVEN_ODDS (13.0)
-    //           Binary-search: f(n) = Σ(1/odds^n) − 13^(1−n) = 0
-    const BREAK_EVEN_ODDS = 13.0; // 12/1 decimal
+    // weighted: "profit-on-favourite" Dutch
+    //   Step 1 — Allocate enough stake on the favourite to return (budget + FAV_PROFIT_PCT × budget)
+    //            if it wins. This guarantees a profit whenever the shortest-priced runner wins.
+    //   Step 2 — Distribute the remaining budget across all other runners proportional to 1/odds.
+    //            This is equal-return Dutch for the outsiders, so every non-favourite winner
+    //            produces the same known loss (predictable, symmetric downside).
+    //   Result — No runners ever dropped. Overround markets are handled naturally: the favourite
+    //            winning always profits; outsiders winning produce a small, fixed, equal loss.
+    const FAV_PROFIT_PCT = 0.08; // target 8 % profit on total budget when favourite wins
 
     const fullCover = selected.length === activeRunners.length;
     const budget = fullCover ? totalStake * 2 : totalStake;
@@ -324,36 +304,28 @@ async function runDutchStrategy(
 
     if (dc.stakingMode === "weighted") {
       const oddsArr = selected.map(r => r.bestBackPrice ?? 1);
-      const minOddsInField = Math.min(...oddsArr);
+      const favOdds  = Math.min(...oddsArr);           // shortest price = favourite
+      const favIndex = oddsArr.indexOf(favOdds);
 
-      // Solve for exponent n via binary search
-      // f(n) = Σ(odds_j^−n) − breakEven^(1−n)
-      // f(1) = bookPct − 1 < 0 (guaranteed for sub-100% Dutch)
-      // f(n→∞) → +∞ when favourite < breakEven (guaranteed since minOdds ≥ minFavOdds ≥ 3.0 < 13.0)
-      let n = 2.0; // fallback
-      if (minOddsInField < BREAK_EVEN_ODDS) {
-        const f = (exp: number): number =>
-          oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(BREAK_EVEN_ODDS, 1 - exp);
-        let lo = 1.0, hi = 30.0;
-        for (let iter = 0; iter < 60; iter++) {
-          const mid = (lo + hi) / 2;
-          if (f(mid) < 0) lo = mid; else hi = mid;
-        }
-        n = (lo + hi) / 2;
-      }
+      // Stake on favourite sized to return budget × (1 + FAV_PROFIT_PCT)
+      const favStake = (budget * (1 + FAV_PROFIT_PCT)) / favOdds;
 
-      const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
-      const K = budget / sumInvOddsN;
+      // Remaining budget split equal-return across all other runners
+      const remainingBudget = budget - favStake;
+      const outsiderInvSum  = oddsArr.reduce((s, o, i) => i === favIndex ? s : s + 1 / o, 0);
+
       computedStakes = selected.map((r, i) => {
-        const odds = oddsArr[i];
-        const stake = parseFloat((K * Math.pow(odds, -n)).toFixed(2));
-        const returnIfWin = parseFloat((stake * odds).toFixed(2));
+        const odds = oddsArr[i]!;
+        const stake = i === favIndex
+          ? parseFloat(favStake.toFixed(2))
+          : parseFloat((remainingBudget * (1 / odds) / outsiderInvSum).toFixed(2));
         return {
           selectionId: r.selectionId,
           runnerName: r.runnerName,
           stake,
           odds,
-          expectedProfit: parseFloat((returnIfWin - budget).toFixed(2)),
+          // Positive = profit when this runner wins; negative = loss
+          expectedProfit: parseFloat((stake * odds - budget).toFixed(2)),
         };
       });
     } else {
