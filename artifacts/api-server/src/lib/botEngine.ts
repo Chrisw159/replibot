@@ -120,10 +120,15 @@ async function runDutchStrategy(
 
   const now = Date.now();
 
-  // Only races starting within the timing window, excluding any market
-  // named "Each Way" (Betfair sometimes returns these as marketType WIN).
+  // Only races starting within the timing window. Betfair sometimes returns
+  // specialty markets (Forecast, TBP, Each Way, Match Bet, etc.) with
+  // marketType WIN — exclude them all so we only bet on the main win market.
+  // We check BOTH eventName and marketName since Betfair puts the descriptor
+  // in different fields depending on the market type.
+  const NON_WIN_PATTERN = /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
   const candidateMarkets = markets.filter(m => {
-    if (/each.?way/i.test(m.marketName)) return false;
+    const fullName = `${m.eventName} ${m.marketName}`;
+    if (NON_WIN_PATTERN.test(fullName)) return false;
     const startMs = new Date(m.marketStartTime).getTime();
     const minsToStart = (startMs - now) / 60_000;
     return minsToStart >= 0 && minsToStart <= dc.minutesBeforeStart;
