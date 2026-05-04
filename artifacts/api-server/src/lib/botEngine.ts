@@ -286,15 +286,21 @@ async function runDutchStrategy(
     // ── Calculate stakes ──────────────────────────────────────────────────────
     // equal:    standard Dutch — every runner returns the same amount
     //           stake_i = (budget / bookPct) / odds_i
-    // weighted: "profit-on-favourite" Dutch
-    //   Step 1 — Allocate enough stake on the favourite to return (budget + FAV_PROFIT_PCT × budget)
-    //            if it wins. This guarantees a profit whenever the shortest-priced runner wins.
-    //   Step 2 — Distribute the remaining budget across all other runners proportional to 1/odds.
-    //            This is equal-return Dutch for the outsiders, so every non-favourite winner
-    //            produces the same known loss (predictable, symmetric downside).
-    //   Result — No runners ever dropped. Overround markets are handled naturally: the favourite
-    //            winning always profits; outsiders winning produce a small, fixed, equal loss.
-    const FAV_PROFIT_PCT = 0.08; // target 8 % profit on total budget when favourite wins
+    // weighted: true gradient Dutch — maximum profit on favourite, works down to loss on outsiders
+    //
+    //   stake_i = K / odds_i^n   where K = budget / Σ(odds_j^-n)
+    //
+    //   n is solved so the favourite returns exactly budget × (1 + FAV_PROFIT_PCT):
+    //     g(n) = favOdds^(1−n) − (1+FAV_PROFIT_PCT) × Σ(odds_j^−n) = 0
+    //
+    //   For near-100% or overround markets: g(1) < 0, g(∞) → 0⁺ → root exists in (1,∞)
+    //   For very sub-100% markets:          g(1) ≥ 0 → fav already profits at n=1, use n=1
+    //
+    //   Result: favourite → max profit (+FAV_PROFIT_PCT × budget)
+    //           second fav → smaller profit or near break-even
+    //           mid-field  → small loss
+    //           outsiders  → larger % loss but on a small absolute stake
+    const FAV_PROFIT_PCT = 0.10; // 10 % profit on total budget when favourite wins
 
     const fullCover = selected.length === activeRunners.length;
     const budget = fullCover ? totalStake * 2 : totalStake;
@@ -304,27 +310,39 @@ async function runDutchStrategy(
 
     if (dc.stakingMode === "weighted") {
       const oddsArr = selected.map(r => r.bestBackPrice ?? 1);
-      const favOdds  = Math.min(...oddsArr);           // shortest price = favourite
-      const favIndex = oddsArr.indexOf(favOdds);
+      const favOdds = Math.min(...oddsArr);
 
-      // Stake on favourite sized to return budget × (1 + FAV_PROFIT_PCT)
-      const favStake = (budget * (1 + FAV_PROFIT_PCT)) / favOdds;
+      // g(n) = favOdds^(1-n) - (1+FAV_PROFIT_PCT) * Σ(odds^-n)
+      // Root gives the exponent where the favourite returns budget*(1+FAV_PROFIT_PCT)
+      const g = (exp: number): number =>
+        Math.pow(favOdds, 1 - exp) -
+        (1 + FAV_PROFIT_PCT) * oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0);
 
-      // Remaining budget split equal-return across all other runners
-      const remainingBudget = budget - favStake;
-      const outsiderInvSum  = oddsArr.reduce((s, o, i) => i === favIndex ? s : s + 1 / o, 0);
+      let n: number;
+      if (g(1.0) >= 0) {
+        // Very sub-100% market: fav already profits at n=1 (proportional staking)
+        n = 1.0;
+      } else {
+        // g(1) < 0, g(∞) → 0⁺ — root exists in (1, ∞)
+        let lo = 1.0, hi = 50.0;
+        for (let iter = 0; iter < 80; iter++) {
+          const mid = (lo + hi) / 2;
+          if (g(mid) < 0) lo = mid; else hi = mid;
+        }
+        n = (lo + hi) / 2;
+      }
 
-      computedStakes = selected.map((r, i) => {
-        const odds = oddsArr[i]!;
-        const stake = i === favIndex
-          ? parseFloat(favStake.toFixed(2))
-          : parseFloat((remainingBudget * (1 / odds) / outsiderInvSum).toFixed(2));
+      const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
+      const K = budget / sumInvOddsN;
+
+      computedStakes = selected.map(r => {
+        const odds = r.bestBackPrice ?? 1;
+        const stake = parseFloat((K * Math.pow(odds, -n)).toFixed(2));
         return {
           selectionId: r.selectionId,
           runnerName: r.runnerName,
           stake,
           odds,
-          // Positive = profit when this runner wins; negative = loss
           expectedProfit: parseFloat((stake * odds - budget).toFixed(2)),
         };
       });
