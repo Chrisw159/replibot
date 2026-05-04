@@ -310,54 +310,74 @@ async function runDutchStrategy(
     if (dc.stakingMode === "weighted") {
       const BREAK_EVEN = dc.breakEvenOdds; // e.g. 13.0 = 12/1
 
-      // Only back runners at or below the break-even price
-      const covered = selected.filter(r => (r.bestBackPrice ?? 0) <= BREAK_EVEN);
-      const coveredRunners = covered.length >= 2 ? covered : selected; // fallback: use all if too few qualify
+      // Start with runners at or below break-even, sorted shortest → longest odds
+      let coveredRunners = selected
+        .filter(r => (r.bestBackPrice ?? 0) <= BREAK_EVEN)
+        .sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
 
-      const fullCoverW = coveredRunners.length === activeRunners.length;
-      const budget = fullCoverW ? totalStake * 2 : totalStake;
+      // Need at least 2 to Dutch — fall back to all selected if too few qualify
+      if (coveredRunners.length < 2) {
+        coveredRunners = [...selected].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
+      }
+
+      // Auto-trim: if covered book > 100%, drop the longest-priced runner one by
+      // one until we get a profitable sub-100% book. Keep at least 2 runners.
+      const autoTrimmed: string[] = [];
+      while (coveredRunners.length > 2) {
+        const book = coveredRunners.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 1), 0);
+        if (book < 1) break;
+        const removed = coveredRunners.pop()!;
+        autoTrimmed.push(`${removed.runnerName} @ ${removed.bestBackPrice}`);
+      }
 
       const oddsArr = coveredRunners.map(r => r.bestBackPrice ?? 1);
       const covBookPct = oddsArr.reduce((s, o) => s + 1 / o, 0);
 
-      // f(n) = Σ(odds^-n) - BREAK_EVEN^(1-n)
-      // f(1) = covBookPct - 1  (negative when sub-100%)
-      // f(∞) → 0⁺ when BREAK_EVEN > min(odds)
-      const f = (exp: number): number =>
-        oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(BREAK_EVEN, 1 - exp);
-
-      let n: number;
-      if (covBookPct < 1 && f(50.0) > 0) {
-        // Normal case: sub-100% covered book, binary search works
-        let lo = 1.0, hi = 50.0;
-        for (let iter = 0; iter < 80; iter++) {
-          const mid = (lo + hi) / 2;
-          if (f(mid) < 0) lo = mid; else hi = mid;
-        }
-        n = (lo + hi) / 2;
-      } else if (covBookPct >= 1) {
-        // Covered book still overround (very many runners below break-even).
-        // Fall back: target 10% fav profit via g(n) equation.
-        const favOdds = Math.min(...oddsArr);
-        const FAV_PROFIT_PCT = 0.10;
-        const g = (exp: number): number =>
-          Math.pow(favOdds, 1 - exp) -
-          (1 + FAV_PROFIT_PCT) * oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0);
-        let lo = 1.0, hi = 50.0;
-        for (let iter = 0; iter < 80; iter++) {
-          const mid = (lo + hi) / 2;
-          if (g(mid) < 0) lo = mid; else hi = mid;
-        }
-        n = g(1.0) >= 0 ? 1.0 : (lo + hi) / 2;
-      } else {
-        n = 1.0;
+      // If even 2 runners can't get below 100% (both under evens) — skip
+      if (covBookPct >= 1) {
+        await logBotActivity("info",
+          `[DUTCH] Skipping ${market.eventName} — overround even with 2 shortest runners (${(covBookPct * 100).toFixed(1)}%), cannot guarantee profit`
+        );
+        continue;
       }
+
+      if (autoTrimmed.length > 0) {
+        await logBotActivity("info",
+          `[DUTCH] ${market.eventName} — auto-trimmed ${autoTrimmed.length} runner(s) to achieve sub-100% book: ${autoTrimmed.join(", ")}`
+        );
+      }
+
+      const fullCoverW = coveredRunners.length === activeRunners.length;
+      const budget = fullCoverW ? totalStake * 2 : totalStake;
+
+      // Use the longest-priced runner in the covered set as the effective break-even
+      // (guarantees that runner breaks even; all shorter-priced runners profit)
+      const effectiveBreakEven = Math.max(...oddsArr);
+
+      // f(n) = Σ(odds^-n) - effectiveBreakEven^(1-n) = 0
+      // Always has a unique root in (1, ∞) for a sub-100% book
+      const f = (exp: number): number =>
+        oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(effectiveBreakEven, 1 - exp);
+
+      let lo = 1.0, hi = 50.0;
+      for (let iter = 0; iter < 80; iter++) {
+        const mid = (lo + hi) / 2;
+        if (f(mid) < 0) lo = mid; else hi = mid;
+      }
+      const n = f(50.0) > 0 ? (lo + hi) / 2 : 1.0;
 
       const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
       const K = budget / sumInvOddsN;
 
       logger.info(
-        { n: n.toFixed(4), covered: coveredRunners.length, total: activeRunners.length, breakEven: BREAK_EVEN, covBookPct: covBookPct.toFixed(3) },
+        {
+          n: n.toFixed(4),
+          covered: coveredRunners.length,
+          trimmed: autoTrimmed.length,
+          total: activeRunners.length,
+          effectiveBreakEven,
+          covBookPct: covBookPct.toFixed(3),
+        },
         '[DUTCH] Weighted exponent solved'
       );
 
