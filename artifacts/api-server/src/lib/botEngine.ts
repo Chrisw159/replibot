@@ -450,8 +450,9 @@ ${marketContext}
 
     // ── Place bets ──
     const dutchGroupId = `DUTCH-${market.marketId}-${Date.now()}`;
-    // All runners have identical expected return (standard Dutch), so profit is uniform
-    const profitPerWinner = `£${(targetReturn - totalStaked).toFixed(2)}`;
+    const profitPerWinner = dc.stakingMode === "weighted"
+      ? `£${(minReturn - totalStaked).toFixed(2)}–£${(maxReturn - totalStaked).toFixed(2)}`
+      : `£${(minReturn - totalStaked).toFixed(2)}`;
 
     if (config.paperTradingMode) {
       let unmatchedCount = 0;
