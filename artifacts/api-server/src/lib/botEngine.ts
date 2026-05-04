@@ -252,9 +252,34 @@ async function runDutchStrategy(
     const dropped: string[] = [];
 
     if (dc.stakingMode === "weighted") {
-      // Use all qualifying runners sorted shortest → longest price
-      selected = [...qualifying].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
+      // Sort longest → shortest so we can trim outsiders from the front if overround
+      selected = [...qualifying].sort((a, b) => (b.bestBackPrice ?? 0) - (a.bestBackPrice ?? 0));
       bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+
+      // Drop longest-priced runners until book is sub-100%.
+      // A book >= 100% guarantees a loss on every possible winner regardless of
+      // staking method — the binary-search solver also assumes sub-100% input.
+      const minCoverageWeighted = Math.max(2, Math.floor(selected.length * 0.5));
+      while (bookPct >= 1.0 && selected.length > minCoverageWeighted) {
+        const removed = selected.shift()!;
+        dropped.push(`${removed.runnerName} (${removed.bestBackPrice})`);
+        bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+      }
+      if (bookPct >= 1.0) {
+        await logBotActivity("info",
+          `[DUTCH] Skipping ${market.eventName} — overround market (${(bookPct * 100).toFixed(1)}%), ` +
+          `cannot achieve sub-100% book even covering only ${selected.length} runners`
+        );
+        continue;
+      }
+      if (dropped.length > 0) {
+        await logBotActivity("info",
+          `[DUTCH] ${market.eventName} — trimmed ${dropped.length} outsider(s) to reach book ${(bookPct * 100).toFixed(1)}% ` +
+          `(${selected.length} runners covered): ${dropped.join(", ")}`
+        );
+      }
+      // Re-sort shortest → longest for consistent downstream ordering
+      selected.sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
     } else {
       // Equal-return mode: trim outsiders until book is sub-100%
       const minCoverageCount = Math.ceil(activeRunners.length * 0.8);
