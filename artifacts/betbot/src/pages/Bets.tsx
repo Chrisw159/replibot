@@ -41,7 +41,6 @@ interface Runner {
   excludeReason: string | null;
 }
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function isToday(dateStr: string): boolean {
   const d = new Date(dateStr);
@@ -95,7 +94,7 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
   const { data: bets, isLoading } = useQuery<Bet[]>({
     queryKey: ["race-bets", marketId],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/bets/race/${encodeURIComponent(marketId)}`);
+      const res = await fetch(`/api/bets/race/${encodeURIComponent(marketId)}`);
       return res.json();
     },
   });
@@ -103,7 +102,7 @@ function RaceDetail({ marketId, race, onBack }: { marketId: string; race: RaceSu
   const { data: runners } = useQuery<Runner[]>({
     queryKey: ["race-runners", marketId],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/bets/race/${encodeURIComponent(marketId)}/runners`);
+      const res = await fetch(`/api/bets/race/${encodeURIComponent(marketId)}/runners`);
       return res.json();
     },
   });
@@ -395,7 +394,7 @@ export default function Bets() {
   const { data: races, isLoading } = useQuery<RaceSummary[]>({
     queryKey: ["races"],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/bets/races`);
+      const res = await fetch(`/api/bets/races`);
       return res.json();
     },
     refetchInterval: 30000,
