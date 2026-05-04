@@ -66,6 +66,7 @@ interface DutchConfig {
   countryCodes: string[];
   excludeRaceTypes: string[];
   stakingMode: "equal" | "weighted";
+  breakEvenOdds: number; // weighted mode: runners at this price break even; shorter = profit, longer = not covered
 }
 
 function parseDutchConfig(marketFilter: string | null): DutchConfig {
@@ -77,6 +78,7 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
     countryCodes: ["GB", "IE"],
     excludeRaceTypes: [],
     stakingMode: "equal",
+    breakEvenOdds: 13.0, // default 12/1
   };
   try {
     return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
@@ -283,59 +285,83 @@ async function runDutchStrategy(
       selected.sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
     }
 
-    // ── Calculate stakes ──────────────────────────────────────────────────────
-    // equal:    standard Dutch — every runner returns the same amount
-    //           stake_i = (budget / bookPct) / odds_i
-    // weighted: true gradient Dutch — maximum profit on favourite, works down to loss on outsiders
+    // ── Staking modes ────────────────────────────────────────────────────────
     //
+    // weighted — true gradient Dutch with a configurable break-even price
     //   stake_i = K / odds_i^n   where K = budget / Σ(odds_j^-n)
     //
-    //   n is solved so the favourite returns exactly budget × (1 + FAV_PROFIT_PCT):
-    //     g(n) = favOdds^(1−n) − (1+FAV_PROFIT_PCT) × Σ(odds_j^−n) = 0
+    //   Only runners with odds ≤ BREAK_EVEN are covered.
+    //   n is solved so a runner at exactly BREAK_EVEN returns the full budget:
+    //     f(n) = Σ(covered_odds^-n) - BREAK_EVEN^(1-n) = 0
     //
-    //   For near-100% or overround markets: g(1) < 0, g(∞) → 0⁺ → root exists in (1,∞)
-    //   For very sub-100% markets:          g(1) ≥ 0 → fav already profits at n=1, use n=1
+    //   For the covered subset (sub-100% book):
+    //     f(1) < 0  and  f(∞) → 0⁺  →  unique root in (1, ∞)
     //
-    //   Result: favourite → max profit (+FAV_PROFIT_PCT × budget)
-    //           second fav → smaller profit or near break-even
-    //           mid-field  → small loss
-    //           outsiders  → larger % loss but on a small absolute stake
-    const FAV_PROFIT_PCT = 0.10; // 10 % profit on total budget when favourite wins
-
-    const fullCover = selected.length === activeRunners.length;
-    const budget = fullCover ? totalStake * 2 : totalStake;
+    //   Result: all covered runners (≤ BREAK_EVEN) profit when they win,
+    //           with maximum profit on the favourite and decreasing profit
+    //           down to break-even at BREAK_EVEN odds.
+    //           Runners longer than BREAK_EVEN are not backed.
+    //
+    // equal — standard Dutch: every covered runner returns the same amount.
 
     interface ComputedStake { selectionId: number; runnerName: string; stake: number; odds: number; expectedProfit: number; }
     let computedStakes: ComputedStake[];
 
     if (dc.stakingMode === "weighted") {
-      const oddsArr = selected.map(r => r.bestBackPrice ?? 1);
-      const favOdds = Math.min(...oddsArr);
+      const BREAK_EVEN = dc.breakEvenOdds; // e.g. 13.0 = 12/1
 
-      // g(n) = favOdds^(1-n) - (1+FAV_PROFIT_PCT) * Σ(odds^-n)
-      // Root gives the exponent where the favourite returns budget*(1+FAV_PROFIT_PCT)
-      const g = (exp: number): number =>
-        Math.pow(favOdds, 1 - exp) -
-        (1 + FAV_PROFIT_PCT) * oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0);
+      // Only back runners at or below the break-even price
+      const covered = selected.filter(r => (r.bestBackPrice ?? 0) <= BREAK_EVEN);
+      const coveredRunners = covered.length >= 2 ? covered : selected; // fallback: use all if too few qualify
+
+      const fullCoverW = coveredRunners.length === activeRunners.length;
+      const budget = fullCoverW ? totalStake * 2 : totalStake;
+
+      const oddsArr = coveredRunners.map(r => r.bestBackPrice ?? 1);
+      const covBookPct = oddsArr.reduce((s, o) => s + 1 / o, 0);
+
+      // f(n) = Σ(odds^-n) - BREAK_EVEN^(1-n)
+      // f(1) = covBookPct - 1  (negative when sub-100%)
+      // f(∞) → 0⁺ when BREAK_EVEN > min(odds)
+      const f = (exp: number): number =>
+        oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(BREAK_EVEN, 1 - exp);
 
       let n: number;
-      if (g(1.0) >= 0) {
-        // Very sub-100% market: fav already profits at n=1 (proportional staking)
-        n = 1.0;
-      } else {
-        // g(1) < 0, g(∞) → 0⁺ — root exists in (1, ∞)
+      if (covBookPct < 1 && f(50.0) > 0) {
+        // Normal case: sub-100% covered book, binary search works
+        let lo = 1.0, hi = 50.0;
+        for (let iter = 0; iter < 80; iter++) {
+          const mid = (lo + hi) / 2;
+          if (f(mid) < 0) lo = mid; else hi = mid;
+        }
+        n = (lo + hi) / 2;
+      } else if (covBookPct >= 1) {
+        // Covered book still overround (very many runners below break-even).
+        // Fall back: target 10% fav profit via g(n) equation.
+        const favOdds = Math.min(...oddsArr);
+        const FAV_PROFIT_PCT = 0.10;
+        const g = (exp: number): number =>
+          Math.pow(favOdds, 1 - exp) -
+          (1 + FAV_PROFIT_PCT) * oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0);
         let lo = 1.0, hi = 50.0;
         for (let iter = 0; iter < 80; iter++) {
           const mid = (lo + hi) / 2;
           if (g(mid) < 0) lo = mid; else hi = mid;
         }
-        n = (lo + hi) / 2;
+        n = g(1.0) >= 0 ? 1.0 : (lo + hi) / 2;
+      } else {
+        n = 1.0;
       }
 
       const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
       const K = budget / sumInvOddsN;
 
-      computedStakes = selected.map(r => {
+      logger.info(
+        { n: n.toFixed(4), covered: coveredRunners.length, total: activeRunners.length, breakEven: BREAK_EVEN, covBookPct: covBookPct.toFixed(3) },
+        '[DUTCH] Weighted exponent solved'
+      );
+
+      computedStakes = coveredRunners.map(r => {
         const odds = r.bestBackPrice ?? 1;
         const stake = parseFloat((K * Math.pow(odds, -n)).toFixed(2));
         return {
@@ -348,6 +374,8 @@ async function runDutchStrategy(
       });
     } else {
       // equal-return (standard Dutch)
+      const fullCover = selected.length === activeRunners.length;
+      const budget = fullCover ? totalStake * 2 : totalStake;
       const targetReturn = budget / bookPct;
       computedStakes = selected.map(r => {
         const odds = r.bestBackPrice ?? 1;

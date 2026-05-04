@@ -82,12 +82,22 @@ function parseStakingMode(marketFilter: string | null | undefined): "equal" | "w
   }
 }
 
+function parseBreakEvenOdds(marketFilter: string | null | undefined): number {
+  try {
+    const parsed = JSON.parse(marketFilter ?? "{}") as { breakEvenOdds?: number };
+    return typeof parsed.breakEvenOdds === "number" ? parsed.breakEvenOdds : 13.0;
+  } catch {
+    return 13.0;
+  }
+}
+
 function buildMarketFilter(
   existing: string | null | undefined,
   ireland: boolean,
   usa: boolean,
   australia: boolean,
   stakingMode: "equal" | "weighted",
+  breakEvenOdds: number,
 ): string {
   let parsed: Record<string, unknown> = {};
   try { parsed = JSON.parse(existing ?? "{}") as Record<string, unknown>; } catch { /* ignore */ }
@@ -97,6 +107,7 @@ function buildMarketFilter(
   if (australia) codes.push("AU");
   parsed.countryCodes = codes;
   parsed.stakingMode = stakingMode;
+  parsed.breakEvenOdds = breakEvenOdds;
   return JSON.stringify(parsed);
 }
 
@@ -117,6 +128,7 @@ const BLANK_DEFAULTS = {
   includeUSA: false,
   includeAustralia: false,
   stakingMode: "equal" as "equal" | "weighted",
+  breakEvenOdds: 13.0,
   isActive: true,
 };
 
@@ -137,6 +149,7 @@ const formSchema = z
     includeUSA: z.boolean(),
     includeAustralia: z.boolean(),
     stakingMode: z.enum(["equal", "weighted"]),
+    breakEvenOdds: z.coerce.number().min(1.5, "Must be ≥ 1.5").max(100, "Must be ≤ 100"),
     isActive: z.boolean(),
   })
   .refine((d) => d.maxOdds > d.minOdds, {
@@ -191,6 +204,7 @@ export function StrategyDialog({
         includeUSA: cc.usa,
         includeAustralia: cc.australia,
         stakingMode: parseStakingMode(strategy.marketFilter),
+        breakEvenOdds: parseBreakEvenOdds(strategy.marketFilter),
         isActive: strategy.isActive,
       });
     } else if (open && !strategy) {
@@ -203,7 +217,7 @@ export function StrategyDialog({
       ...values,
       description: values.description || null,
       aiPrompt: values.aiPrompt || null,
-      marketFilter: buildMarketFilter(values.marketFilter, values.includeIreland, values.includeUSA, values.includeAustralia, values.stakingMode),
+      marketFilter: buildMarketFilter(values.marketFilter, values.includeIreland, values.includeUSA, values.includeAustralia, values.stakingMode, values.breakEvenOdds),
     };
 
     if (isEditing && strategy) {
@@ -458,32 +472,54 @@ export function StrategyDialog({
 
                 {/* Staking mode — DUTCH only */}
                 {form.watch("betType") === "DUTCH" && (
-                  <FormField
-                    control={form.control}
-                    name="stakingMode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Dutch Staking Mode</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="equal">Equal return — same profit whichever runner wins</SelectItem>
-                            <SelectItem value="weighted">Favourite-weighted — bigger profit on short prices, small loss on big outsiders</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          {form.watch("stakingMode") === "weighted"
-                            ? "Stakes are calibrated so you profit on anything 12/1 or shorter, and only lose if a 13/1+ runner wins. The exponent is solved per race to pin the break-even exactly at 12/1."
-                            : "All backed runners return the same amount — guaranteed equal profit no matter who wins."}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="stakingMode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Dutch Staking Mode</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="equal">Equal return — same profit whichever runner wins</SelectItem>
+                              <SelectItem value="weighted">Gradient — maximum profit on favourite, decreasing to break-even at your chosen price</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {form.watch("stakingMode") === "weighted"
+                              ? "Stakes follow odds^-n weighting. Every covered runner profits when it wins, with the favourite earning the most. Runners longer than the break-even price are not backed."
+                              : "All backed runners return the same amount — guaranteed equal profit no matter who wins."}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {form.watch("stakingMode") === "weighted" && (
+                      <FormField
+                        control={form.control}
+                        name="breakEvenOdds"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Break-even Price (decimal odds)</FormLabel>
+                            <FormControl>
+                              <Input type="number" step="0.5" min="1.5" max="100" {...field} />
+                            </FormControl>
+                            <FormDescription>
+                              Runners at this price break even; shorter prices profit (favourite most), longer prices are not covered.
+                              12/1 = 13.0 · 10/1 = 11.0 · 8/1 = 9.0 · 16/1 = 17.0
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     )}
-                  />
+                  </>
                 )}
               </div>
             </div>
