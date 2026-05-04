@@ -1,5 +1,5 @@
 import { logger } from "./logger";
-import { db, strategiesTable, betsTable, botConfigTable, botLogsTable, raceRunnersTable } from "@workspace/db";
+import { db, strategiesTable, betsTable, botConfigTable, botLogsTable, raceRunnersTable, aiInsightsTable } from "@workspace/db";
 import { eq, gte, sql, desc } from "drizzle-orm";
 import {
   getSession,
@@ -811,8 +811,10 @@ async function runSettlementCheck(): Promise<void> {
   }
 }
 
-// ── AI Strategy Advisor ───────────────────────────────────────────────────────
-// After enough races settle, Grok reviews results and nudges strategy params.
+// ── AI Knowledge Base Strategy Advisor ───────────────────────────────────────
+// After each race settles, the AI writes an observation to ai_insights (stored
+// permanently in the DB). On the next review it reads ALL previous observations
+// plus full historical aggregates, building genuine cumulative knowledge.
 
 let lastStrategyReviewAt: Date | null = null;
 const STRATEGY_REVIEW_COOLDOWN_MS = 30 * 60 * 1000; // at most once per 30 min
@@ -825,74 +827,152 @@ async function runAIStrategyReview(
     Date.now() - lastStrategyReviewAt.getTime() < STRATEGY_REVIEW_COOLDOWN_MS
   ) return;
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
-  const settledToday = await db
+  // ── Pull ALL settled bets (full history, not just today) ──────────────────
+  const allSettled = await db
     .select()
     .from(betsTable)
-    .where(sql`${betsTable.status} IN ('WON','LOST') AND ${betsTable.placedAt} >= ${todayStart}`)
+    .where(sql`${betsTable.status} IN ('WON','LOST')`)
     .orderBy(desc(betsTable.settledAt));
 
-  // Group by market to get race-level view
-  const byMarket = new Map<string, typeof settledToday>();
-  for (const bet of settledToday) {
+  const byMarket = new Map<string, typeof allSettled>();
+  for (const bet of allSettled) {
     const list = byMarket.get(bet.marketId) ?? [];
     list.push(bet);
     byMarket.set(bet.marketId, list);
   }
-  const settledRaces = [...byMarket.values()];
-  if (settledRaces.length < 3) return; // need data before advising
+  const allRaces = [...byMarket.values()];
+  if (allRaces.length < 3) return;
 
-  lastStrategyReviewAt = new Date(); // set cooldown now to prevent concurrent reviews
+  lastStrategyReviewAt = new Date();
 
   const dc = parseDutchConfig(strategy.marketFilter);
-  const todayNetProfit = settledToday.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
 
-  const raceSummaries = settledRaces.slice(0, 5).map(bets => {
+  // ── Aggregate stats across ALL races ─────────────────────────────────────
+  let totalNetProfit = 0;
+  let racesWon = 0;
+  const oddsRangeBuckets: Record<string, { races: number; won: number; profit: number }> = {
+    "3-7":   { races: 0, won: 0, profit: 0 },
+    "7-15":  { races: 0, won: 0, profit: 0 },
+    "15-30": { races: 0, won: 0, profit: 0 },
+    "30+":   { races: 0, won: 0, profit: 0 },
+  };
+  const countryBuckets: Record<string, { races: number; profit: number }> = {};
+  const runnerCountBuckets: Record<string, { races: number; profit: number }> = {};
+
+  for (const bets of allRaces) {
     const winner = bets.find(b => b.status === "WON");
-    const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
+    const netProfit = bets.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
+    totalNetProfit += netProfit;
+
+    const shortestOdds = Math.min(...bets.map(b => Number(b.requestedOdds)));
+    const bucket = shortestOdds < 7 ? "3-7" : shortestOdds < 15 ? "7-15" : shortestOdds < 30 ? "15-30" : "30+";
+    oddsRangeBuckets[bucket]!.races++;
+    oddsRangeBuckets[bucket]!.profit += netProfit;
+
+    if (winner) {
+      racesWon++;
+      const wo = Number(winner.matchedOdds ?? winner.requestedOdds);
+      const wb = wo < 7 ? "3-7" : wo < 15 ? "7-15" : wo < 30 ? "15-30" : "30+";
+      oddsRangeBuckets[wb]!.won++;
+    }
+
+    const eventName = bets[0]?.eventName ?? "";
+    const country = /\(AUS\)/i.test(eventName) ? "AU"
+      : /\(USA\)/i.test(eventName) ? "US"
+      : /(curragh|leopardstown|naas|punchestown|galway|cork|fairyhouse|down royal)/i.test(eventName) ? "IE"
+      : "GB";
+    countryBuckets[country] = countryBuckets[country] ?? { races: 0, profit: 0 };
+    countryBuckets[country]!.races++;
+    countryBuckets[country]!.profit += netProfit;
+
+    const rc = bets.length <= 6 ? "5-6" : bets.length <= 9 ? "7-9" : "10+";
+    runnerCountBuckets[rc] = runnerCountBuckets[rc] ?? { races: 0, profit: 0 };
+    runnerCountBuckets[rc]!.races++;
+    runnerCountBuckets[rc]!.profit += netProfit;
+  }
+
+  const winRate = ((racesWon / allRaces.length) * 100).toFixed(1);
+  const avgProfit = (totalNetProfit / allRaces.length).toFixed(2);
+
+  const bucketLines = Object.entries(oddsRangeBuckets)
+    .filter(([, v]) => v.races > 0)
+    .map(([range, v]) =>
+      `  fav odds ${range}: ${v.races} races, ${v.won} won (${((v.won/v.races)*100).toFixed(0)}%), P&L £${v.profit.toFixed(2)}`
+    ).join("\n");
+
+  const countryLines = Object.entries(countryBuckets)
+    .filter(([, v]) => v.races > 0)
+    .map(([c, v]) => `  ${c}: ${v.races} races, P&L £${v.profit.toFixed(2)}`)
+    .join("\n");
+
+  const runnerLines = Object.entries(runnerCountBuckets)
+    .filter(([, v]) => v.races > 0)
+    .map(([r, v]) => `  ${r} runners backed: ${v.races} races, P&L £${v.profit.toFixed(2)}`)
+    .join("\n");
+
+  const recentRaces = allRaces.slice(0, 5).map(bets => {
+    const winner = bets.find(b => b.status === "WON");
     const netProfit = bets.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
     const winnerOdds = winner ? Number(winner.matchedOdds ?? winner.requestedOdds) : null;
-    return {
-      race: bets[0]?.eventName ?? "Unknown",
-      runnersBack: bets.length,
-      winnerBacked: !!winner,
-      winnerOdds,
-      netProfit: netProfit.toFixed(2),
-      totalStaked: totalStaked.toFixed(2),
-    };
-  });
+    return `  ${bets[0]?.eventName ?? "?"}: ${bets.length} runners, winner ${winner ? `backed @ ${winnerOdds}` : "NOT backed"}, P&L £${netProfit.toFixed(2)}`;
+  }).join("\n");
 
-  const prompt = `You are a horse racing Dutch betting strategy optimizer. Review recent results and suggest small parameter adjustments to improve profitability.
+  // ── Load all previous AI observations ────────────────────────────────────
+  const existingInsights = await db
+    .select()
+    .from(aiInsightsTable)
+    .orderBy(desc(aiInsightsTable.createdAt))
+    .limit(30);
 
-CURRENT STRATEGY PARAMETERS:
-- minOdds: ${strategy.minOdds} (minimum favourite odds — races where the favourite is shorter than this are skipped)
-- maxOdds: ${strategy.maxOdds} (longest-priced runner included in the Dutch)
-- maxRunners: ${dc.maxRunners} (maximum runners to Dutch in one race)
-- minLiquidity: ${dc.minLiquidity} (minimum £ matched on market before betting)
+  const insightsText = existingInsights.length > 0
+    ? existingInsights.map(i =>
+        `[${new Date(i.createdAt).toLocaleDateString("en-GB")} after ${i.racesProcessed} races | P&L £${i.runningNetProfit ?? "?"}] ${i.content}`
+      ).join("\n")
+    : "No previous observations yet — this is the first review.";
 
-LAST ${raceSummaries.length} SETTLED RACES (most recent first):
-${raceSummaries.map((r, i) =>
-  `${i + 1}. ${r.race}: backed ${r.runnersBack} runners, winner ${r.winnerBacked ? `WAS backed @ ${r.winnerOdds}` : "was NOT backed"}, net P&L £${r.netProfit} (staked £${r.totalStaked})`
-).join("\n")}
+  // ── Build prompt ──────────────────────────────────────────────────────────
+  const prompt = `You are an adaptive horse racing Dutch betting strategy optimizer with persistent memory. You have access to your full history of observations. Study them carefully — your job is to build understanding over time, not react to single races.
 
-TODAY'S TOTAL NET P&L: £${todayNetProfit.toFixed(2)}
+═══ CURRENT PARAMETERS ═══
+minOdds: ${strategy.minOdds}  |  maxOdds: ${strategy.maxOdds}  |  maxRunners: ${dc.maxRunners}  |  minLiquidity: £${dc.minLiquidity}
 
-Adjust to improve results. Rules:
-- Max change per review: ±0.5 for odds, ±2 for maxRunners, ±100 for minLiquidity
-- If winners are consistently NOT backed, maxOdds is too low or selection is too narrow
-- If short-priced favourites keep winning, raise minOdds to avoid those races
-- If P&L is positive, avoid making large changes — "if it ain't broke don't fix it"
-- Keep minOdds between 2.0 and 6.0, maxOdds between 15.0 and 51.0, maxRunners between 5 and 16, minLiquidity between 200 and 2000
+═══ ALL-TIME PERFORMANCE (${allRaces.length} races total) ═══
+Win rate (we backed the winner): ${winRate}%
+Average P&L per race: £${avgProfit}
+Total net P&L: £${totalNetProfit.toFixed(2)}
 
-Respond with ONLY valid JSON — no explanation outside the JSON:
+By favourite odds range:
+${bucketLines}
+
+By country:
+${countryLines}
+
+By runners backed per race:
+${runnerLines}
+
+═══ 5 MOST RECENT RACES ═══
+${recentRaces}
+
+═══ YOUR KNOWLEDGE BASE (all previous observations, oldest last) ═══
+${insightsText}
+
+═══ INSTRUCTIONS ═══
+1. Write ONE observation (2-4 sentences) summarising what you now believe about this strategy's performance. Reference specific patterns you see in the data. This will be added permanently to your knowledge base and shown to you in every future review.
+2. If the aggregate data (not just recent races) shows a clear, consistent opportunity to improve, suggest ONE parameter adjustment. Otherwise leave parameters unchanged.
+
+Guardrails:
+- Max ±0.5 per review for minOdds/maxOdds | max ±2 for maxRunners | max ±100 for minLiquidity
+- Bounds: minOdds 2.0-6.0 | maxOdds 15.0-51.0 | maxRunners 5-16 | minLiquidity 200-2000
+- Positive overall P&L = strong signal NOT to change things
+
+Respond ONLY with valid JSON:
 {
+  "observation": "<your 2-4 sentence knowledge base entry>",
   "minOdds": <number>,
   "maxOdds": <number>,
   "maxRunners": <integer>,
   "minLiquidity": <number>,
-  "reasoning": "<one sentence explaining the key change, or 'No changes — strategy performing well' if unchanged>"
+  "adjustmentReason": "<one sentence on what changed and why, or 'No adjustment — evidence does not support changes yet'>"
 }`;
 
   try {
@@ -906,59 +986,82 @@ Respond with ONLY valid JSON — no explanation outside the JSON:
     const content = response.choices[0]?.message?.content ?? "";
     const match = content.match(/\{[\s\S]*\}/);
     if (!match) {
-      await logBotActivity("warn", "[AI-STRATEGY] Could not parse review response — skipping");
+      await logBotActivity("warn", "[AI-KNOWLEDGE] Could not parse AI response — skipping");
       return;
     }
 
     const adj = JSON.parse(match[0]) as {
-      minOdds: number; maxOdds: number; maxRunners: number; minLiquidity: number; reasoning: string;
+      observation: string;
+      minOdds: number; maxOdds: number; maxRunners: number; minLiquidity: number;
+      adjustmentReason: string;
     };
 
-    const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
-    const newMinOdds  = parseFloat(clamp(Number(adj.minOdds),    2.0,   6.0).toFixed(2));
-    const newMaxOdds  = parseFloat(clamp(Number(adj.maxOdds),   15.0,  51.0).toFixed(2));
-    const newMaxRunners  = Math.round(clamp(Number(adj.maxRunners),    5,    16));
-    const newMinLiquidity = Math.round(clamp(Number(adj.minLiquidity), 200, 2000));
+    // ── Store the new observation permanently ─────────────────────────────
+    await db.insert(aiInsightsTable).values({
+      category: "race_observation",
+      content: adj.observation,
+      racesProcessed: allRaces.length,
+      runningNetProfit: totalNetProfit.toFixed(2),
+      metadata: {
+        winRate,
+        avgProfit,
+        paramsAtTime: {
+          minOdds: Number(strategy.minOdds),
+          maxOdds: Number(strategy.maxOdds),
+          maxRunners: dc.maxRunners,
+          minLiquidity: dc.minLiquidity,
+        },
+      },
+    });
 
-    // Enforce max-change-per-review guardrails
+    // ── Apply parameter adjustments with guardrails ───────────────────────
+    const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
     const capChange = (next: number, curr: number, maxDelta: number) =>
       Math.min(Math.max(next, curr - maxDelta), curr + maxDelta);
 
-    const safeMinOdds   = parseFloat(capChange(newMinOdds,  Number(strategy.minOdds), 0.5).toFixed(2));
-    const safeMaxOdds   = parseFloat(capChange(newMaxOdds,  Number(strategy.maxOdds), 0.5).toFixed(2));
-    const safeMaxRunners   = Math.round(capChange(newMaxRunners,   dc.maxRunners,   2));
-    const safeMinLiquidity = Math.round(capChange(newMinLiquidity, dc.minLiquidity, 100));
+    const safeMinOdds      = parseFloat(capChange(clamp(Number(adj.minOdds),  2.0,   6.0), Number(strategy.minOdds), 0.5).toFixed(2));
+    const safeMaxOdds      = parseFloat(capChange(clamp(Number(adj.maxOdds), 15.0,  51.0), Number(strategy.maxOdds), 0.5).toFixed(2));
+    const safeMaxRunners   = Math.round(capChange(clamp(Number(adj.maxRunners),    5,   16), dc.maxRunners,   2));
+    const safeMinLiquidity = Math.round(capChange(clamp(Number(adj.minLiquidity), 200, 2000), dc.minLiquidity, 100));
 
     const changes: string[] = [];
-    if (safeMinOdds   !== Number(strategy.minOdds))  changes.push(`minOdds ${Number(strategy.minOdds).toFixed(2)}→${safeMinOdds}`);
-    if (safeMaxOdds   !== Number(strategy.maxOdds))  changes.push(`maxOdds ${Number(strategy.maxOdds).toFixed(2)}→${safeMaxOdds}`);
-    if (safeMaxRunners   !== dc.maxRunners)           changes.push(`maxRunners ${dc.maxRunners}→${safeMaxRunners}`);
-    if (safeMinLiquidity !== dc.minLiquidity)         changes.push(`minLiquidity £${dc.minLiquidity}→£${safeMinLiquidity}`);
+    if (safeMinOdds      !== Number(strategy.minOdds))  changes.push(`minOdds ${Number(strategy.minOdds).toFixed(2)}→${safeMinOdds}`);
+    if (safeMaxOdds      !== Number(strategy.maxOdds))  changes.push(`maxOdds ${Number(strategy.maxOdds).toFixed(2)}→${safeMaxOdds}`);
+    if (safeMaxRunners   !== dc.maxRunners)              changes.push(`maxRunners ${dc.maxRunners}→${safeMaxRunners}`);
+    if (safeMinLiquidity !== dc.minLiquidity)            changes.push(`minLiquidity £${dc.minLiquidity}→£${safeMinLiquidity}`);
 
-    if (changes.length === 0) {
-      await logBotActivity("info", `[AI-STRATEGY] Reviewed ${settledRaces.length} races — no changes. ${adj.reasoning}`);
-      return;
+    if (changes.length > 0) {
+      const newMarketFilter = JSON.stringify({
+        ...JSON.parse(strategy.marketFilter ?? "{}"),
+        maxRunners: safeMaxRunners,
+        minLiquidity: safeMinLiquidity,
+      });
+      await db.update(strategiesTable).set({
+        minOdds: safeMinOdds.toString(),
+        maxOdds: safeMaxOdds.toString(),
+        marketFilter: newMarketFilter,
+        updatedAt: new Date(),
+      }).where(eq(strategiesTable.id, strategy.id));
+
+      await db.insert(aiInsightsTable).values({
+        category: "adjustment",
+        content: `Adjusted: ${changes.join(", ")}. ${adj.adjustmentReason}`,
+        racesProcessed: allRaces.length,
+        runningNetProfit: totalNetProfit.toFixed(2),
+        metadata: { changes, newParams: { minOdds: safeMinOdds, maxOdds: safeMaxOdds, maxRunners: safeMaxRunners, minLiquidity: safeMinLiquidity } },
+      });
+
+      await logBotActivity("info",
+        `[AI-KNOWLEDGE] ${allRaces.length} races in DB — adjusted: ${changes.join(", ")} | ${adj.adjustmentReason}`
+      );
+    } else {
+      await logBotActivity("info",
+        `[AI-KNOWLEDGE] ${allRaces.length} races in DB — no change. ${adj.adjustmentReason} | Insight: ${adj.observation}`
+      );
     }
-
-    const newMarketFilter = JSON.stringify({
-      ...JSON.parse(strategy.marketFilter ?? "{}"),
-      maxRunners: safeMaxRunners,
-      minLiquidity: safeMinLiquidity,
-    });
-
-    await db.update(strategiesTable).set({
-      minOdds: safeMinOdds.toString(),
-      maxOdds: safeMaxOdds.toString(),
-      marketFilter: newMarketFilter,
-      updatedAt: new Date(),
-    }).where(eq(strategiesTable.id, strategy.id));
-
-    await logBotActivity("info",
-      `[AI-STRATEGY] Auto-adjusted after ${settledRaces.length} races: ${changes.join(", ")} — ${adj.reasoning}`
-    );
   } catch (err) {
-    logger.error({ err }, "AI strategy review error");
-    await logBotActivity("warn", `[AI-STRATEGY] Review error: ${err instanceof Error ? err.message : "Unknown"}`);
+    logger.error({ err }, "AI knowledge base review error");
+    await logBotActivity("warn", `[AI-KNOWLEDGE] Review error: ${err instanceof Error ? err.message : "Unknown"}`);
   }
 }
 
