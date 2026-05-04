@@ -1,6 +1,6 @@
 import { logger } from "./logger";
 import { db, strategiesTable, betsTable, botConfigTable, botLogsTable, raceRunnersTable } from "@workspace/db";
-import { eq, gte, sql } from "drizzle-orm";
+import { eq, gte, sql, desc } from "drizzle-orm";
 import {
   getSession,
   listMarkets,
@@ -797,9 +797,168 @@ async function runSettlementCheck(): Promise<void> {
           { marketId }
         );
       }
+
+      // After each settlement, give the AI a chance to review and tweak the strategy
+      const [activeStrategy] = await db
+        .select()
+        .from(strategiesTable)
+        .where(eq(strategiesTable.isActive, true))
+        .limit(1);
+      if (activeStrategy) void runAIStrategyReview(activeStrategy);
     }
   } catch (err) {
     logger.error({ err }, "Settlement check error");
+  }
+}
+
+// ── AI Strategy Advisor ───────────────────────────────────────────────────────
+// After enough races settle, Grok reviews results and nudges strategy params.
+
+let lastStrategyReviewAt: Date | null = null;
+const STRATEGY_REVIEW_COOLDOWN_MS = 30 * 60 * 1000; // at most once per 30 min
+
+async function runAIStrategyReview(
+  strategy: typeof strategiesTable.$inferSelect
+): Promise<void> {
+  if (
+    lastStrategyReviewAt &&
+    Date.now() - lastStrategyReviewAt.getTime() < STRATEGY_REVIEW_COOLDOWN_MS
+  ) return;
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const settledToday = await db
+    .select()
+    .from(betsTable)
+    .where(sql`${betsTable.status} IN ('WON','LOST') AND ${betsTable.placedAt} >= ${todayStart}`)
+    .orderBy(desc(betsTable.settledAt));
+
+  // Group by market to get race-level view
+  const byMarket = new Map<string, typeof settledToday>();
+  for (const bet of settledToday) {
+    const list = byMarket.get(bet.marketId) ?? [];
+    list.push(bet);
+    byMarket.set(bet.marketId, list);
+  }
+  const settledRaces = [...byMarket.values()];
+  if (settledRaces.length < 3) return; // need data before advising
+
+  lastStrategyReviewAt = new Date(); // set cooldown now to prevent concurrent reviews
+
+  const dc = parseDutchConfig(strategy.marketFilter);
+  const todayNetProfit = settledToday.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
+
+  const raceSummaries = settledRaces.slice(0, 5).map(bets => {
+    const winner = bets.find(b => b.status === "WON");
+    const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
+    const netProfit = bets.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
+    const winnerOdds = winner ? Number(winner.matchedOdds ?? winner.requestedOdds) : null;
+    return {
+      race: bets[0]?.eventName ?? "Unknown",
+      runnersBack: bets.length,
+      winnerBacked: !!winner,
+      winnerOdds,
+      netProfit: netProfit.toFixed(2),
+      totalStaked: totalStaked.toFixed(2),
+    };
+  });
+
+  const prompt = `You are a horse racing Dutch betting strategy optimizer. Review recent results and suggest small parameter adjustments to improve profitability.
+
+CURRENT STRATEGY PARAMETERS:
+- minOdds: ${strategy.minOdds} (minimum favourite odds — races where the favourite is shorter than this are skipped)
+- maxOdds: ${strategy.maxOdds} (longest-priced runner included in the Dutch)
+- maxRunners: ${dc.maxRunners} (maximum runners to Dutch in one race)
+- minLiquidity: ${dc.minLiquidity} (minimum £ matched on market before betting)
+
+LAST ${raceSummaries.length} SETTLED RACES (most recent first):
+${raceSummaries.map((r, i) =>
+  `${i + 1}. ${r.race}: backed ${r.runnersBack} runners, winner ${r.winnerBacked ? `WAS backed @ ${r.winnerOdds}` : "was NOT backed"}, net P&L £${r.netProfit} (staked £${r.totalStaked})`
+).join("\n")}
+
+TODAY'S TOTAL NET P&L: £${todayNetProfit.toFixed(2)}
+
+Adjust to improve results. Rules:
+- Max change per review: ±0.5 for odds, ±2 for maxRunners, ±100 for minLiquidity
+- If winners are consistently NOT backed, maxOdds is too low or selection is too narrow
+- If short-priced favourites keep winning, raise minOdds to avoid those races
+- If P&L is positive, avoid making large changes — "if it ain't broke don't fix it"
+- Keep minOdds between 2.0 and 6.0, maxOdds between 15.0 and 51.0, maxRunners between 5 and 16, minLiquidity between 200 and 2000
+
+Respond with ONLY valid JSON — no explanation outside the JSON:
+{
+  "minOdds": <number>,
+  "maxOdds": <number>,
+  "maxRunners": <integer>,
+  "minLiquidity": <number>,
+  "reasoning": "<one sentence explaining the key change, or 'No changes — strategy performing well' if unchanged>"
+}`;
+
+  try {
+    const ai = await getAIClient("grok-3-mini");
+    const response = await ai.chat.completions.create({
+      model: "grok-3-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+    });
+
+    const content = response.choices[0]?.message?.content ?? "";
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) {
+      await logBotActivity("warn", "[AI-STRATEGY] Could not parse review response — skipping");
+      return;
+    }
+
+    const adj = JSON.parse(match[0]) as {
+      minOdds: number; maxOdds: number; maxRunners: number; minLiquidity: number; reasoning: string;
+    };
+
+    const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+    const newMinOdds  = parseFloat(clamp(Number(adj.minOdds),    2.0,   6.0).toFixed(2));
+    const newMaxOdds  = parseFloat(clamp(Number(adj.maxOdds),   15.0,  51.0).toFixed(2));
+    const newMaxRunners  = Math.round(clamp(Number(adj.maxRunners),    5,    16));
+    const newMinLiquidity = Math.round(clamp(Number(adj.minLiquidity), 200, 2000));
+
+    // Enforce max-change-per-review guardrails
+    const capChange = (next: number, curr: number, maxDelta: number) =>
+      Math.min(Math.max(next, curr - maxDelta), curr + maxDelta);
+
+    const safeMinOdds   = parseFloat(capChange(newMinOdds,  Number(strategy.minOdds), 0.5).toFixed(2));
+    const safeMaxOdds   = parseFloat(capChange(newMaxOdds,  Number(strategy.maxOdds), 0.5).toFixed(2));
+    const safeMaxRunners   = Math.round(capChange(newMaxRunners,   dc.maxRunners,   2));
+    const safeMinLiquidity = Math.round(capChange(newMinLiquidity, dc.minLiquidity, 100));
+
+    const changes: string[] = [];
+    if (safeMinOdds   !== Number(strategy.minOdds))  changes.push(`minOdds ${Number(strategy.minOdds).toFixed(2)}→${safeMinOdds}`);
+    if (safeMaxOdds   !== Number(strategy.maxOdds))  changes.push(`maxOdds ${Number(strategy.maxOdds).toFixed(2)}→${safeMaxOdds}`);
+    if (safeMaxRunners   !== dc.maxRunners)           changes.push(`maxRunners ${dc.maxRunners}→${safeMaxRunners}`);
+    if (safeMinLiquidity !== dc.minLiquidity)         changes.push(`minLiquidity £${dc.minLiquidity}→£${safeMinLiquidity}`);
+
+    if (changes.length === 0) {
+      await logBotActivity("info", `[AI-STRATEGY] Reviewed ${settledRaces.length} races — no changes. ${adj.reasoning}`);
+      return;
+    }
+
+    const newMarketFilter = JSON.stringify({
+      ...JSON.parse(strategy.marketFilter ?? "{}"),
+      maxRunners: safeMaxRunners,
+      minLiquidity: safeMinLiquidity,
+    });
+
+    await db.update(strategiesTable).set({
+      minOdds: safeMinOdds.toString(),
+      maxOdds: safeMaxOdds.toString(),
+      marketFilter: newMarketFilter,
+      updatedAt: new Date(),
+    }).where(eq(strategiesTable.id, strategy.id));
+
+    await logBotActivity("info",
+      `[AI-STRATEGY] Auto-adjusted after ${settledRaces.length} races: ${changes.join(", ")} — ${adj.reasoning}`
+    );
+  } catch (err) {
+    logger.error({ err }, "AI strategy review error");
+    await logBotActivity("warn", `[AI-STRATEGY] Review error: ${err instanceof Error ? err.message : "Unknown"}`);
   }
 }
 
