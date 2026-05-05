@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface BookieStatus {
   isRunning: boolean;
@@ -53,7 +52,7 @@ interface BookieRaceBet {
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}/api${path}`, {
+  const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
