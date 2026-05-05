@@ -10,6 +10,7 @@ import {
   Power,
   PowerOff,
   Zap,
+  Scale,
 } from "lucide-react";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/bets", label: "Bets", icon: List },
     { href: "/bot", label: "Bot Control", icon: TrendingUp },
     { href: "/goalbot", label: "Goal Bot", icon: Zap },
+    { href: "/bookiebot", label: "Bookie Bot", icon: Scale },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

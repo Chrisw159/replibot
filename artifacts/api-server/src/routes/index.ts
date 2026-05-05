@@ -8,6 +8,7 @@ import botRouter from "./bot";
 import dashboardRouter from "./dashboard";
 import settingsRouter from "./settings";
 import goalbotRouter from "./goalbot";
+import bookieRouter from "./bookie";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(botRouter);
 router.use(dashboardRouter);
 router.use(settingsRouter);
 router.use(goalbotRouter);
+router.use(bookieRouter);
 
 export default router;

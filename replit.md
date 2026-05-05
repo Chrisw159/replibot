@@ -53,6 +53,7 @@ Tables (all in `lib/db/src/schema/`):
 - `/strategies` — AI strategy CRUD (min/max odds, stake, bet type, AI prompt)
 - `/bets` — Paginated bet history with status color coding
 - `/bot` — Bot control panel (start/stop, paper trading, config, system console)
+- `/bookiebot` — Bookie Bot (proportional lay strategy, independent start/stop, race history)
 - `/settings` — Betfair exchange connection (username/password/app key form)
 
 ## Key Files

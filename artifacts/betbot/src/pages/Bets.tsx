@@ -19,6 +19,7 @@ interface RaceSummary {
 
 interface Bet {
   id: number;
+  selectionId: number;
   selectionName: string;
   betType: string;
   requestedOdds: number;

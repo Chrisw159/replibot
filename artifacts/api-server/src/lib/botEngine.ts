@@ -866,18 +866,21 @@ async function runSettlementCheck(): Promise<void> {
           continue;
         }
 
-        const won = bet.selectionId === winnerSelectionId;
-        // For the winner: profit = stake * (odds - 1)  — the per-bet P&L
-        // Summing across all bets gives the correct Dutch net: stake_w*odds_w - totalStaked
+        const selectionWon = bet.selectionId === winnerSelectionId;
+        const isLay = bet.betType === "LAY";
         const odds = Number(bet.matchedOdds ?? bet.requestedOdds);
-        const actualProfit = won
-          ? Number(bet.stakeAmount) * (odds - 1)
-          : -Number(bet.stakeAmount);
+        const stake = Number(bet.stakeAmount);
+        // LAY bet: selection wins → we pay out (lose), selection loses → we collect stake (win)
+        // BACK bet: selection wins → we profit, selection loses → we lose stake
+        const actualProfit = isLay
+          ? (selectionWon ? -(stake * (odds - 1)) : stake)
+          : (selectionWon ? stake * (odds - 1) : -stake);
+        const betWon = isLay ? !selectionWon : selectionWon;
 
         await db
           .update(betsTable)
           .set({
-            status: won ? "WON" : "LOST",
+            status: betWon ? "WON" : "LOST",
             actualProfit: actualProfit.toFixed(2),
             settledAt,
           })
@@ -886,7 +889,15 @@ async function runSettlementCheck(): Promise<void> {
 
       const winnerBet = bets.find(b => b.selectionId === winnerSelectionId);
       const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
-      if (winnerBet) {
+      const hasLayBets = bets.some(b => b.betType === "LAY");
+
+      if (hasLayBets) {
+        const netProfit = bets.reduce((s, b) => s + Number(b.actualProfit ?? 0), 0);
+        await logBotActivity("info",
+          `[SETTLED][BOOKIE] ${bets[0]?.eventName} — WINNER: ${winnerBet?.selectionName ?? "Unknown"} | Net: ${netProfit >= 0 ? "+" : ""}£${netProfit.toFixed(2)}`,
+          { marketId, netProfit: netProfit.toFixed(2) }
+        );
+      } else if (winnerBet) {
         const winOdds = Number(winnerBet.matchedOdds ?? winnerBet.requestedOdds);
         const winnerStake = Number(winnerBet.stakeAmount);
         const netProfit = winnerStake * (winOdds - 1) - (totalStaked - winnerStake);
