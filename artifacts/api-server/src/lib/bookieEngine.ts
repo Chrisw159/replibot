@@ -12,8 +12,14 @@ import {
 const BOOKIE_STRATEGY_NAME = "Bookie Bot";
 const COUNTRIES = ["GB", "IE"];
 const MIN_LIQUIDITY = 2000;
-const MIN_RUNNER_MATCHED = 500;
-const MINUTES_BEFORE_START = 5;
+// Runners with less than this share of the total pool are skipped.
+// Scales with market size: 2% of £5k = £100, 2% of £100k = £2k.
+const MIN_RUNNER_SHARE = 0.02;
+// Only bet on races starting in this window (minutes before the off).
+// 1–4 min ensures the money distribution is mature (~90% of pre-race
+// volume is already in) while still leaving time for lays to be matched.
+const MIN_MINS_BEFORE_START = 1;
+const MAX_MINS_BEFORE_START = 4;
 const MIN_ODDS = 1.5;
 const MAX_ODDS = 50;
 
@@ -85,10 +91,10 @@ async function runBookieCycle(): Promise<void> {
       if (NON_WIN_PATTERN.test(fullName)) return false;
       const startMs = new Date(m.marketStartTime).getTime();
       const minsToStart = (startMs - now) / 60_000;
-      return minsToStart >= 0 && minsToStart <= MINUTES_BEFORE_START;
+      return minsToStart >= MIN_MINS_BEFORE_START && minsToStart <= MAX_MINS_BEFORE_START;
     });
 
-    await log("info", `Cycle — ${markets.length} markets fetched, ${candidates.length} in ${MINUTES_BEFORE_START}-min window`);
+    await log("info", `Cycle — ${markets.length} markets fetched, ${candidates.length} in ${MIN_MINS_BEFORE_START}–${MAX_MINS_BEFORE_START}-min window`);
 
     for (const market of candidates) {
       if (!bookieBotRunning) break;
@@ -131,27 +137,42 @@ async function runBookieMarket(
   const marketDetail = await getMarketDetail(marketId);
   if (!marketDetail) return;
 
-  const eligible = marketDetail.runners.filter(r => {
+  // Pass 1: filter by status and odds only
+  const priceEligible = marketDetail.runners.filter(r => {
     if (r.status !== "ACTIVE") return false;
     const odds = r.bestLayPrice ?? r.bestBackPrice;
     if (!odds || odds < MIN_ODDS || odds > MAX_ODDS) return false;
-    if ((r.totalMatched ?? 0) < MIN_RUNNER_MATCHED) return false;
     return true;
   });
 
+  const totalMatchedSum = priceEligible.reduce((s, r) => s + (r.totalMatched ?? 0), 0);
+  if (totalMatchedSum === 0) return;
+
+  // Pass 2: drop runners with less than MIN_RUNNER_SHARE of the pool.
+  // This scales with market size (2% of £5k = £100, 2% of £100k = £2k).
+  const minMatchedForRunner = totalMatchedSum * MIN_RUNNER_SHARE;
+  const eligible = priceEligible.filter(r => (r.totalMatched ?? 0) >= minMatchedForRunner);
+
+  const dropped = priceEligible.length - eligible.length;
+  if (dropped > 0) {
+    await log("info",
+      `${eventName} — dropped ${dropped} runner(s) with < ${(MIN_RUNNER_SHARE * 100).toFixed(0)}% of pool (< £${minMatchedForRunner.toFixed(0)})`,
+    );
+  }
+
   if (eligible.length < 2) {
-    await log("info", `Skipping ${eventName} — only ${eligible.length} eligible runner(s)`);
+    await log("info", `Skipping ${eventName} — only ${eligible.length} eligible runner(s) after share filter`);
     return;
   }
 
-  const totalMatchedSum = eligible.reduce((s, r) => s + (r.totalMatched ?? 0), 0);
-  if (totalMatchedSum === 0) return;
-
   const { maxRaceNetLoss, maxRunnerLiability } = bookieConfig;
+
+  // Recompute sum from eligible runners only so shares sum to ~1 for the formula.
+  const eligibleMatchedSum = eligible.reduce((s, r) => s + (r.totalMatched ?? 0), 0);
 
   const computations = eligible.map(r => {
     const odds = r.bestLayPrice ?? r.bestBackPrice ?? 2.0;
-    const share = (r.totalMatched ?? 0) / totalMatchedSum;
+    const share = (r.totalMatched ?? 0) / eligibleMatchedSum;
     const netLossCoeff = share * odds - 1;
     const liabilityCoeff = share * (odds - 1);
     return { runner: r, odds, share, netLossCoeff, liabilityCoeff };
