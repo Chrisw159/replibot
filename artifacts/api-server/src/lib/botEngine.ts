@@ -58,6 +58,8 @@ async function getBotConfig() {
 
 // ─── Dutch Betting ──────────────────────────────────────────────────────────
 
+const VIRTUAL_VENUES = /portman park|sprintvalley|steepledowns|millersfield|virtual/i;
+
 interface DutchConfig {
   maxRunners: number;
   minLiquidity: number;
@@ -67,6 +69,8 @@ interface DutchConfig {
   excludeRaceTypes: string[];
   stakingMode: "equal" | "weighted";
   maxOdds: number; // hard cap — nothing longer than this is backed (default 36.0 = 35/1)
+  includeVirtual: boolean; // also scan Betfair virtual horse racing
+  virtualMinLiquidity: number; // lower threshold for virtual markets (less liquid)
 }
 
 function parseDutchConfig(marketFilter: string | null): DutchConfig {
@@ -79,6 +83,8 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
     excludeRaceTypes: [],
     stakingMode: "equal",
     maxOdds: 36.0, // 35/1 decimal
+    includeVirtual: true,
+    virtualMinLiquidity: 300,
   };
   try {
     return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
@@ -98,7 +104,7 @@ async function runDutchStrategy(
   const totalStake = Number(strategy.stakeAmount);
 
   const countries = dc.countryCodes?.length ? dc.countryCodes : [dc.countryCode];
-  await logBotActivity("info", `[DUTCH] Cycle start — scanning horse racing (countries: ${countries.join(",")}), window: ±${dc.minutesBeforeStart} min`);
+  await logBotActivity("info", `[DUTCH] Cycle start — scanning horse racing (countries: ${countries.join(",")})${dc.includeVirtual ? " + virtual" : ""}, window: ±${dc.minutesBeforeStart} min`);
 
   let markets: Awaited<ReturnType<typeof listMarkets>> = [];
   try {
@@ -113,7 +119,34 @@ async function runDutchStrategy(
     return;
   }
 
-  await logBotActivity("info", `[DUTCH] Betfair returned ${markets.length} markets (next 4h, countries: ${countries.join(",")})`);
+  // ── Virtual horse racing scan ─────────────────────────────────────────────
+  // Virtual markets have no country code so we fetch without filter and
+  // select only the known Betfair virtual venues.
+  const virtualMarketIds = new Set<string>();
+  if (dc.includeVirtual) {
+    try {
+      const rawAll = await listMarkets({
+        eventTypeId: strategy.eventTypeId,
+        marketType: "WIN",
+        limit: 50,
+      });
+      const virtOnly = rawAll.filter(
+        m => VIRTUAL_VENUES.test(`${m.eventName} ${m.marketName}`) &&
+             !markets.some(r => r.marketId === m.marketId)
+      );
+      if (virtOnly.length > 0) {
+        virtOnly.forEach(m => virtualMarketIds.add(m.marketId));
+        markets.push(...virtOnly);
+        await logBotActivity("info", `[DUTCH] Virtual scan: ${virtOnly.length} virtual market(s) added (${virtOnly.map(m => m.eventName).join(", ")})`);
+      }
+      // Note: virtual markets returning 0 typically means the API key is a delayed/free tier.
+      // Betfair virtual horse racing requires a live-data (premium) API subscription.
+    } catch (err) {
+      await logBotActivity("warn", `[DUTCH] Virtual market scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  await logBotActivity("info", `[DUTCH] Betfair returned ${markets.length} markets total (${markets.length - virtualMarketIds.size} real + ${virtualMarketIds.size} virtual)`);
 
   if (markets.length === 0) {
     await logBotActivity("info", `[DUTCH] No horse racing markets found — check Betfair connection and that races are scheduled`);
@@ -173,8 +206,10 @@ async function runDutchStrategy(
     try {
 
     // ── Liquidity filter ──
-    if (market.totalMatched < dc.minLiquidity) {
-      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${dc.minLiquidity}`);
+    const isVirtualMarket = virtualMarketIds.has(market.marketId);
+    const effectiveMinLiquidity = isVirtualMarket ? dc.virtualMinLiquidity : dc.minLiquidity;
+    if (market.totalMatched < effectiveMinLiquidity) {
+      await logBotActivity("info", `[DUTCH] Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${effectiveMinLiquidity}${isVirtualMarket ? " (virtual)" : ""}`);
       continue;
     }
 
@@ -450,9 +485,9 @@ async function runDutchStrategy(
       .join("\n");
 
     const marketContext = `
-Dutch Bet Opportunity — Horse Racing
+Dutch Bet Opportunity — ${isVirtualMarket ? "VIRTUAL Horse Racing" : "Horse Racing"}
 Race: ${marketDetail.eventName} — ${marketDetail.marketName}
-Country: ${market.countryCode ?? "Unknown"}  |  Total Runners: ${activeRunners.length}  |  Backed: ${selected.length}
+${isVirtualMarket ? "Venue: VIRTUAL (computer-generated race)" : `Country: ${market.countryCode ?? "Unknown"}`}  |  Total Runners: ${activeRunners.length}  |  Backed: ${selected.length}
 Liquidity: £${marketDetail.totalMatched.toFixed(0)}  |  Starts in: ${((new Date(market.marketStartTime).getTime() - now) / 60_000).toFixed(1)} min
 Favourite odds: ${favouriteOdds} (${sortedByOdds[0].runnerName})
 Book: ${(bookPct * 100).toFixed(1)}%  |  Staking: ${dc.stakingMode === "weighted" ? `weighted (£${minReturn.toFixed(2)}–£${maxReturn.toFixed(2)} return range)` : `equal return £${minReturn.toFixed(2)}`} on £${totalStaked.toFixed(2)} staked
@@ -464,9 +499,24 @@ ${runnerList}
 
     const countryList = countries.join(", ");
     const systemPrompt = strategy.aiPrompt ??
-      `You are a horse racing dutching specialist covering ${countryList} racing. Approve solid opportunities on reputable tracks in any of these countries.`;
+      `You are a horse racing dutching specialist covering ${countryList} racing and Betfair virtual horse racing. Approve solid opportunities on reputable tracks in any of these countries, and always approve virtual racing markets.`;
 
-    const userMessage = `
+    const userMessage = isVirtualMarket
+      ? `
+You have been given a VIRTUAL horse racing dutch betting opportunity. Virtual racing is computer-generated and runs 24/7 on Betfair at venues: Portman Park, Sprintvalley, Steepledowns, Millersfield.
+
+ALWAYS approve virtual racing — there is no form, going, or race type to evaluate. The dutch staking has already been validated.
+
+Reply with JSON ONLY:
+{
+  "approved": true,
+  "reasoning": "Virtual racing — auto-approved"
+}
+
+Market data:
+${marketContext}
+      `.trim()
+      : `
 You have been given a potential dutch betting opportunity. The stakes have already been calculated — your ONLY job is to validate the race itself.
 
 Approve if: reputable track in ${countryList}${countries.some(c => ["GB","IE"].includes(c)) && countries.every(c => ["GB","IE"].includes(c)) ? ", NOT a Novice/Maiden/Bumper/NH Flat race" : countries.some(c => ["GB","IE"].includes(c)) ? ". For GB/IE races reject Novice/Bumper/NH Flat types only" : ". US, Australian and Irish tracks are all valid"}.
@@ -479,7 +529,7 @@ Reply with JSON ONLY:
 
 Market data:
 ${marketContext}
-    `.trim();
+      `.trim();
 
     interface AiDutchResponse { approved: boolean; reasoning: string; }
 
@@ -1131,13 +1181,33 @@ async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect)
     const countries = dc.countryCodes?.length ? dc.countryCodes : [dc.countryCode];
 
     // Look 36 hours ahead so we always catch tomorrow's card if today is done
-    const markets = await listMarkets({
+    const realMarkets = await listMarkets({
       eventTypeId: strategy.eventTypeId,
       countryCodes: countries,
       marketType: "WIN",
       limit: 100,
       hoursAhead: 36,
     });
+
+    // Virtual markets run 24/7 — always include them in the wake-up calculation
+    let markets = realMarkets;
+    if (dc.includeVirtual) {
+      try {
+        const rawAll = await listMarkets({
+          eventTypeId: strategy.eventTypeId,
+          marketType: "WIN",
+          limit: 50,
+          hoursAhead: 36,
+        });
+        const virtOnly = rawAll.filter(
+          m => VIRTUAL_VENUES.test(`${m.eventName} ${m.marketName}`) &&
+               !realMarkets.some(r => r.marketId === m.marketId)
+        );
+        markets = [...realMarkets, ...virtOnly];
+      } catch {
+        // non-fatal — fall back to real markets only
+      }
+    }
 
     // Filter to markets not already bet on
     const betMarketIds = new Set(
