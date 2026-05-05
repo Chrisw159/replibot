@@ -26,19 +26,21 @@ export function formatPercent(num: number | null | undefined): string {
 
 export function formatDate(dateString: string | null | undefined): string {
   if (!dateString) return "-";
-  return new Date(dateString).toLocaleString("en-US", {
+  return new Date(dateString).toLocaleString("en-GB", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    timeZone: "Europe/London",
   });
 }
 
 export function formatShortDate(dateString: string | null | undefined): string {
   if (!dateString) return "-";
-  return new Date(dateString).toLocaleDateString("en-US", {
+  return new Date(dateString).toLocaleDateString("en-GB", {
     month: "short",
     day: "numeric",
+    timeZone: "Europe/London",
   });
 }

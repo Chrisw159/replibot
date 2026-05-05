@@ -1162,11 +1162,11 @@ async function computeNextSleepMs(strategy: typeof strategiesTable.$inferSelect)
     const isNextDay = firstRaceDate.getDate() !== new Date(now).getDate();
 
     const raceLabel = firstRaceDate.toLocaleString("en-GB", {
-      weekday: "short", hour: "2-digit", minute: "2-digit",
+      weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
       ...(isNextDay ? { day: "numeric", month: "short" } : {}),
     });
     const wakeLabel = wakeDate.toLocaleString("en-GB", {
-      hour: "2-digit", minute: "2-digit",
+      hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
       ...(isNextDay ? { weekday: "short", day: "numeric", month: "short" } : {}),
     });
     const sleepHours = sleepMs / 3_600_000;
