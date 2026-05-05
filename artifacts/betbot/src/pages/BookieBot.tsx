@@ -1,12 +1,20 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Scale, Power, PowerOff, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Clock } from "lucide-react";
+import { Scale, Power, PowerOff, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Clock, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+
+interface BotLog {
+  id: number;
+  level: string;
+  message: string;
+  metadata: string | null;
+  createdAt: string;
+}
 
 interface BookieStatus {
   isRunning: boolean;
@@ -173,6 +181,19 @@ export default function BookieBot() {
     queryFn: () => apiFetch("/bookie/races"),
     refetchInterval: 10000,
   });
+
+  const { data: logs } = useQuery<BotLog[]>({
+    queryKey: ["bookie-logs"],
+    queryFn: () => apiFetch("/bookie/logs?limit=100"),
+    refetchInterval: 5000,
+  });
+
+  const consoleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  }, [logs]);
 
   const startMutation = useMutation({
     mutationFn: () => apiFetch<BookieStatus>("/bookie/start", { method: "POST" }),
@@ -472,6 +493,44 @@ export default function BookieBot() {
               When the most-backed horse wins → worst case, capped at £{cfg?.maxRaceNetLoss ?? 100}.
               The formula scales stakes so both constraints are satisfied simultaneously.
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 bg-card/50">
+        <CardHeader className="pb-3 border-b border-border/50">
+          <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+            <Terminal className="w-4 h-4" />
+            Bookie Bot Console
+            {logs && logs.length > 0 && (
+              <span className="ml-auto text-xs text-muted-foreground/60">{logs.length} entries</span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div
+            ref={consoleRef}
+            className="h-72 overflow-y-auto p-4 font-mono text-xs space-y-1.5 bg-[#0A0D14] text-gray-300 rounded-b-lg"
+          >
+            {!logs || logs.length === 0 ? (
+              <div className="text-gray-600">No Bookie Bot logs yet — start the bot to see activity here.</div>
+            ) : (
+              [...logs].reverse().map(log => (
+                <div key={log.id} className="flex gap-3 leading-relaxed">
+                  <span className="text-gray-600 flex-shrink-0 tabular-nums">
+                    {new Date(log.createdAt).toLocaleTimeString()}
+                  </span>
+                  <span className={`font-bold flex-shrink-0 w-10 ${
+                    log.level.toUpperCase() === "ERROR" ? "text-red-500" :
+                    log.level.toUpperCase() === "WARN"  ? "text-yellow-500" :
+                    log.level.toUpperCase() === "INFO"  ? "text-blue-400" : "text-gray-500"
+                  }`}>
+                    {log.level.toUpperCase().slice(0, 4)}
+                  </span>
+                  <span className="break-words">{log.message}</span>
+                </div>
+              ))
+            )}
           </div>
         </CardContent>
       </Card>

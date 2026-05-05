@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { sql, desc } from "drizzle-orm";
-import { db, betsTable, botConfigTable } from "@workspace/db";
+import { db, betsTable, botConfigTable, botLogsTable } from "@workspace/db";
 import {
   startBookieBot,
   stopBookieBot,
@@ -113,6 +113,26 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
 
   setBookieConfig({ maxRaceNetLoss, maxRunnerLiability, minLiquidity, countryCodes });
   res.json({ bookieConfig: getBookieConfig() });
+});
+
+router.get("/bookie/logs", async (req, res): Promise<void> => {
+  const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 500);
+  res.setHeader("Cache-Control", "no-store");
+  const logs = await db
+    .select()
+    .from(botLogsTable)
+    .where(sql`${botLogsTable.message} LIKE '[BOOKIE]%'`)
+    .orderBy(desc(botLogsTable.createdAt))
+    .limit(limit);
+  res.json(
+    logs.map(l => ({
+      id: l.id,
+      level: l.level,
+      message: l.message.replace(/^\[BOOKIE\] /, ""),
+      metadata: l.metadata ?? null,
+      createdAt: l.createdAt.toISOString(),
+    }))
+  );
 });
 
 router.get("/bookie/races", async (_req, res): Promise<void> => {

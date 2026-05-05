@@ -155,6 +155,7 @@ router.get("/bot/logs", async (req, res): Promise<void> => {
   const logs = await db
     .select()
     .from(botLogsTable)
+    .where(sql`${botLogsTable.message} NOT LIKE '[BOOKIE]%'`)
     .orderBy(desc(botLogsTable.createdAt))
     .limit(parsed.data.limit ?? 100);
 
