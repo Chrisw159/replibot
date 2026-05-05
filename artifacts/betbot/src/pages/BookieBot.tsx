@@ -13,7 +13,12 @@ interface BookieStatus {
   isRunning: boolean;
   startedAt: string | null;
   paperTradingMode: boolean;
-  bookieConfig: { maxRaceNetLoss: number; maxRunnerLiability: number };
+  bookieConfig: {
+    maxRaceNetLoss: number;
+    maxRunnerLiability: number;
+    countryCodes: string[];
+    minLiquidity: number;
+  };
   racesToday: number;
   betsToday: number;
   profitToday: number;
@@ -182,14 +187,19 @@ export default function BookieBot() {
 
   const [maxLoss, setMaxLoss] = useState<string>("");
   const [maxLiab, setMaxLiab] = useState<string>("");
+  const [minLiq, setMinLiq] = useState<string>("");
+  const [countryInput, setCountryInput] = useState<string>("");
 
   const configMutation = useMutation({
-    mutationFn: (body: { maxRaceNetLoss?: number; maxRunnerLiability?: number }) =>
-      apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
+    mutationFn: (body: {
+      maxRaceNetLoss?: number;
+      maxRunnerLiability?: number;
+      minLiquidity?: number;
+      countryCodes?: string[];
+    }) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookie-status"] });
-      setMaxLoss("");
-      setMaxLiab("");
+      setMaxLoss(""); setMaxLiab(""); setMinLiq(""); setCountryInput("");
     },
   });
 
@@ -198,10 +208,18 @@ export default function BookieBot() {
   const cfg = status?.bookieConfig;
 
   const handleSaveConfig = () => {
-    const patch: { maxRaceNetLoss?: number; maxRunnerLiability?: number } = {};
+    const patch: Parameters<typeof configMutation.mutate>[0] = {};
     if (maxLoss !== "") patch.maxRaceNetLoss = parseFloat(maxLoss);
     if (maxLiab !== "") patch.maxRunnerLiability = parseFloat(maxLiab);
+    if (minLiq !== "") patch.minLiquidity = parseFloat(minLiq);
+    if (countryInput.trim() !== "") {
+      patch.countryCodes = countryInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
+    }
     if (Object.keys(patch).length > 0) configMutation.mutate(patch);
+  };
+
+  const applyPreset = (codes: string[]) => {
+    configMutation.mutate({ countryCodes: codes });
   };
 
   const profitToday = status?.profitToday ?? 0;
@@ -221,7 +239,8 @@ export default function BookieBot() {
             )}
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Lays every runner proportional to real Betfair crowd money — GB/IE races only
+            Lays every runner proportional to real Betfair crowd money
+            {cfg?.countryCodes?.length ? ` — ${cfg.countryCodes.join(", ")} races` : ""}
           </p>
         </div>
 
@@ -240,7 +259,7 @@ export default function BookieBot() {
       {isRunning && (
         <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
           <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Bookie Bot is running{isPaper ? " in paper trading mode" : ""} — scanning GB/IE races every 60 seconds</span>
+          <span>Bookie Bot is running{isPaper ? " in paper trading mode" : ""} — scanning {cfg?.countryCodes?.join(", ") ?? "GB, IE"} races every 60 seconds</span>
           {status?.startedAt && (
             <span className="ml-auto text-muted-foreground flex items-center gap-1">
               <Clock className="w-3 h-3" />
@@ -285,6 +304,44 @@ export default function BookieBot() {
               <p className="text-muted-foreground text-xs mt-2">Worst case: if the most-backed horse wins, net loss is capped at your max race loss. If an outsider wins, you profit.</p>
             </div>
 
+            {/* Country codes */}
+            <div className="space-y-2">
+              <Label>Country Codes</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: "GB + IE", codes: ["GB", "IE"] },
+                  { label: "AU", codes: ["AU"] },
+                  { label: "US", codes: ["US"] },
+                  { label: "GB + IE + AU", codes: ["GB", "IE", "AU"] },
+                  { label: "All", codes: ["GB", "IE", "AU", "US", "ZA", "FR"] },
+                ].map(p => (
+                  <Button
+                    key={p.label}
+                    size="sm"
+                    variant={
+                      cfg?.countryCodes?.join(",") === p.codes.join(",")
+                        ? "default"
+                        : "outline"
+                    }
+                    className="h-7 text-xs"
+                    disabled={configMutation.isPending}
+                    onClick={() => applyPreset(p.codes)}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder={`Current: ${cfg?.countryCodes?.join(", ") ?? "GB, IE"}`}
+                  value={countryInput}
+                  onChange={e => setCountryInput(e.target.value)}
+                  className="text-sm"
+                />
+                <p className="text-xs text-muted-foreground self-center whitespace-nowrap">comma-separated</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="maxLoss">Max Net Loss / Race (£)</Label>
@@ -314,16 +371,30 @@ export default function BookieBot() {
               </div>
             </div>
 
-            <div className="text-xs text-muted-foreground space-y-0.5">
+            <div className="space-y-1.5">
+              <Label htmlFor="minLiq">Min Market Liquidity (£)</Label>
+              <Input
+                id="minLiq"
+                type="number"
+                placeholder={String(cfg?.minLiquidity ?? 10000)}
+                value={minLiq}
+                onChange={e => setMinLiq(e.target.value)}
+                min={0}
+                max={500000}
+                step={1000}
+              />
+              <p className="text-xs text-muted-foreground">Skip races with less totalMatched than this — lower for US/AU markets</p>
+            </div>
+
+            <div className="text-xs text-muted-foreground space-y-0.5 border-t pt-3">
               <div className="font-medium">Fixed parameters:</div>
-              <div>Countries: GB, IE · Race type: WIN markets only</div>
-              <div>Timing: 0–5 minutes before start · Min market liquidity: £2,000</div>
-              <div>Min runner matched: £500 · Odds range: 1.5 – 50</div>
+              <div>Race type: WIN markets · Timing: 1–4 min before start · Odds: 1.5–50</div>
+              <div>Min runner pool share: 2% · Min stake: £2</div>
             </div>
 
             <Button
               onClick={handleSaveConfig}
-              disabled={configMutation.isPending || (maxLoss === "" && maxLiab === "")}
+              disabled={configMutation.isPending || (maxLoss === "" && maxLiab === "" && minLiq === "" && countryInput.trim() === "")}
               className="w-full"
             >
               Save Config

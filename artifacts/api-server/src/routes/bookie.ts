@@ -88,6 +88,11 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
     typeof body.maxRaceNetLoss === "number" ? body.maxRaceNetLoss : undefined;
   const maxRunnerLiability =
     typeof body.maxRunnerLiability === "number" ? body.maxRunnerLiability : undefined;
+  const minLiquidity =
+    typeof body.minLiquidity === "number" ? body.minLiquidity : undefined;
+  const countryCodes = Array.isArray(body.countryCodes)
+    ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
+    : undefined;
 
   if (maxRaceNetLoss !== undefined && (maxRaceNetLoss <= 0 || maxRaceNetLoss > 1000)) {
     res.status(400).json({ error: "maxRaceNetLoss must be between 1 and 1000" });
@@ -97,8 +102,16 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
     res.status(400).json({ error: "maxRunnerLiability must be between 1 and 5000" });
     return;
   }
+  if (minLiquidity !== undefined && (minLiquidity < 0 || minLiquidity > 500000)) {
+    res.status(400).json({ error: "minLiquidity must be between 0 and 500000" });
+    return;
+  }
+  if (countryCodes !== undefined && countryCodes.length === 0) {
+    res.status(400).json({ error: "At least one country code is required" });
+    return;
+  }
 
-  setBookieConfig({ maxRaceNetLoss, maxRunnerLiability });
+  setBookieConfig({ maxRaceNetLoss, maxRunnerLiability, minLiquidity, countryCodes });
   res.json({ bookieConfig: getBookieConfig() });
 });
 

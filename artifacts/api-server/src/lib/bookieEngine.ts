@@ -10,18 +10,8 @@ import {
 } from "./betfair";
 
 const BOOKIE_STRATEGY_NAME = "Bookie Bot";
-const COUNTRIES = ["GB", "IE"];
-// Minimum market totalMatched before we consider a race.
-// Raised to £10k for two reasons:
-//   1. Higher liquidity = more punters active = lays more likely to be matched
-//   2. Larger pool = distribution reflects crowd consensus, not one big punter
-const MIN_LIQUIDITY = 10000;
-// Runners with less than this share of the total pool are skipped.
-// Scales with market size: 2% of £10k = £200, 2% of £100k = £2k.
+// Fixed parameters — not user-configurable
 const MIN_RUNNER_SHARE = 0.02;
-// Only bet on races starting in this window (minutes before the off).
-// 1–4 min ensures the money distribution is mature (~90% of pre-race
-// volume is already in) while still leaving time for lays to be matched.
 const MIN_MINS_BEFORE_START = 1;
 const MAX_MINS_BEFORE_START = 4;
 const MIN_ODDS = 1.5;
@@ -33,6 +23,11 @@ const NON_WIN_PATTERN =
 interface BookieConfig {
   maxRaceNetLoss: number;
   maxRunnerLiability: number;
+  // Countries to scan. Common codes: GB, IE, US, AU, ZA, FR
+  countryCodes: string[];
+  // Minimum market totalMatched. Higher = more representative crowd data
+  // and more chance your lays find matches.
+  minLiquidity: number;
 }
 
 let bookieBotRunning = false;
@@ -44,6 +39,8 @@ const processingMarkets = new Set<string>();
 let bookieConfig: BookieConfig = {
   maxRaceNetLoss: 100,
   maxRunnerLiability: 300,
+  countryCodes: ["GB", "IE"],
+  minLiquidity: 10000,
 };
 
 export function isBookieBotRunning(): boolean { return bookieBotRunning; }
@@ -76,11 +73,12 @@ async function runBookieCycle(): Promise<void> {
     const [config] = await db.select().from(botConfigTable).limit(1);
     const paperTrading = config?.paperTradingMode ?? true;
 
+    const { countryCodes, minLiquidity } = bookieConfig;
     let markets: Awaited<ReturnType<typeof listMarkets>> = [];
     try {
       markets = await listMarkets({
         eventTypeId: "1",
-        countryCodes: COUNTRIES,
+        countryCodes,
         marketType: "WIN",
         limit: 30,
       });
@@ -114,8 +112,8 @@ async function runBookieCycle(): Promise<void> {
         .limit(1);
       if (existing) continue;
 
-      if (market.totalMatched < MIN_LIQUIDITY) {
-        await log("info", `Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${MIN_LIQUIDITY}`);
+      if (market.totalMatched < minLiquidity) {
+        await log("info", `Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${minLiquidity}`);
         continue;
       }
 
