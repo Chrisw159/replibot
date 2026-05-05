@@ -11,9 +11,13 @@ import {
 
 const BOOKIE_STRATEGY_NAME = "Bookie Bot";
 const COUNTRIES = ["GB", "IE"];
-const MIN_LIQUIDITY = 2000;
+// Minimum market totalMatched before we consider a race.
+// Raised to £10k for two reasons:
+//   1. Higher liquidity = more punters active = lays more likely to be matched
+//   2. Larger pool = distribution reflects crowd consensus, not one big punter
+const MIN_LIQUIDITY = 10000;
 // Runners with less than this share of the total pool are skipped.
-// Scales with market size: 2% of £5k = £100, 2% of £100k = £2k.
+// Scales with market size: 2% of £10k = £200, 2% of £100k = £2k.
 const MIN_RUNNER_SHARE = 0.02;
 // Only bet on races starting in this window (minutes before the off).
 // 1–4 min ensures the money distribution is mature (~90% of pre-race
