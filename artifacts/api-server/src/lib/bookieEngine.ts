@@ -48,6 +48,13 @@ export function getBookieStartedAt(): Date | null { return bookieStartedAt; }
 export function getBookieConfig(): BookieConfig { return { ...bookieConfig }; }
 export function setBookieConfig(patch: Partial<BookieConfig>): void {
   bookieConfig = { ...bookieConfig, ...patch };
+  // If country codes changed while the bot is sleeping, cancel the timer and
+  // reschedule immediately so the new countries take effect without a restart.
+  if (patch.countryCodes && bookieBotRunning && bookieBotInterval) {
+    clearTimeout(bookieBotInterval);
+    bookieBotInterval = null;
+    void scheduleBookieCycle();
+  }
 }
 
 async function log(level: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
