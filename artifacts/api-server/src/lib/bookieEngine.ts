@@ -205,7 +205,7 @@ async function runBookieMarket(
       liability: Math.round(K * c.liabilityCoeff * 100) / 100,
       netLossIfWins: Math.round(K * c.netLossCoeff * 100) / 100,
     }))
-    .filter(s => s.stake >= 0.10);
+    .filter(s => s.stake >= 2.00); // Betfair minimum lay stake is £2
 
   if (stakes.length === 0) return;
 
