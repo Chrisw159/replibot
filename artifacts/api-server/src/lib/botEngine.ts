@@ -308,14 +308,15 @@ async function runDutchStrategy(
     let computedStakes: ComputedStake[];
 
     if (dc.stakingMode === "weighted") {
-      const BREAK_EVEN = dc.breakEvenOdds; // e.g. 13.0 = 12/1
-
-      // Only back runners at or below the break-even price, sorted shortest → longest
-      const covered = selected
-        .filter(r => (r.bestBackPrice ?? 0) <= BREAK_EVEN)
-        .sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
-      const coveredRunners = covered.length >= 2 ? covered :
-        [...selected].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
+      // Back ALL selected runners sorted shortest → longest odds.
+      // breakEvenOdds is NOT a hard cutoff — it is only the mathematical point
+      // in the gradient formula where a runner breaks even.
+      // Runners shorter than the break-even → profit.
+      // Runners longer than the break-even → partial return (smaller loss, not
+      // a complete loss). This is correct weighted Dutch behaviour.
+      const coveredRunners = [...selected].sort(
+        (a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0)
+      );
 
       const fullCoverW = coveredRunners.length === activeRunners.length;
       const budget = fullCoverW ? totalStake * 2 : totalStake;
@@ -323,12 +324,9 @@ async function runDutchStrategy(
       const oddsArr = coveredRunners.map(r => r.bestBackPrice ?? 1);
       const nCovered = coveredRunners.length;
 
-      // Target: at least 75% of covered runners return a profit.
-      // Set the effective break-even at the 75th-percentile runner's odds.
-      // The formula f(n)=0 then places a break-even on exactly that runner;
-      // all shorter-priced runners profit, the bottom 25% may return a small loss.
-      // Walk downward from the 75th percentile until the sub-book is sub-100%
-      // (required for the binary search to converge — extremely rare to adjust).
+      // Target: at least 75% of runners profit (the top 25% by odds return
+      // a partial amount — still better than nothing).
+      // Walk downward from the 75th percentile until the sub-book is sub-100%.
       let beIdx = Math.ceil(0.75 * nCovered) - 1; // 0-indexed
       while (beIdx > 0) {
         const subBook = oddsArr.slice(0, beIdx + 1).reduce((s, o) => s + 1 / o, 0);
