@@ -31,7 +31,7 @@ interface BookieConfig {
 }
 
 let bookieBotRunning = false;
-let bookieBotInterval: ReturnType<typeof setInterval> | null = null;
+let bookieBotInterval: ReturnType<typeof setTimeout> | null = null;
 let bookieSettlementInterval: ReturnType<typeof setInterval> | null = null;
 let bookieStartedAt: Date | null = null;
 const processingMarkets = new Set<string>();
@@ -59,14 +59,15 @@ async function log(level: string, message: string, metadata?: Record<string, unk
   logger.info({ level, metadata }, `[BOOKIE] ${message}`);
 }
 
-async function runBookieCycle(): Promise<void> {
-  if (!bookieBotRunning) return;
+// Returns the number of candidates acted on (used by scheduler)
+async function runBookieCycle(): Promise<number> {
+  if (!bookieBotRunning) return 0;
   try {
     if (!getSession()) {
       const r = await loginWithEnvCredentials();
       if (!r.success) {
         await log("warn", `Auto-connect failed: ${r.error}`);
-        return;
+        return 0;
       }
     }
 
@@ -84,7 +85,7 @@ async function runBookieCycle(): Promise<void> {
       });
     } catch (err) {
       await log("error", `API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
-      return;
+      return 0;
     }
 
     const now = Date.now();
@@ -98,6 +99,7 @@ async function runBookieCycle(): Promise<void> {
 
     await log("info", `Cycle — ${markets.length} markets fetched, ${candidates.length} in ${MIN_MINS_BEFORE_START}–${MAX_MINS_BEFORE_START}-min window`);
 
+    let acted = 0;
     for (const market of candidates) {
       if (!bookieBotRunning) break;
       if (processingMarkets.has(market.marketId)) continue;
@@ -118,16 +120,107 @@ async function runBookieCycle(): Promise<void> {
       }
 
       processingMarkets.add(market.marketId);
+      acted++;
       try {
         await runBookieMarket(market.marketId, market.eventName, market.marketName, paperTrading);
       } finally {
         processingMarkets.delete(market.marketId);
       }
     }
+    return acted;
   } catch (err) {
     logger.error({ err }, "[BOOKIE] Cycle error");
     await log("error", `Cycle error: ${err instanceof Error ? err.message : "Unknown"}`);
+    return 0;
   }
+}
+
+// ── Smart scheduler ───────────────────────────────────────────────────────────
+// Wake up 5 min before the next unbet race in the configured countries.
+// Falls back to 60 s polling when a race is imminent or 1 h when nothing is
+// visible on the card (e.g. early morning or between cards).
+const WAKE_BEFORE_MS   = 5 * 60_000;   // wake 5 min before the race
+const MIN_SLEEP_MS     = 30_000;        // never faster than 30 s
+const MAX_LOOK_AHEAD_H = 36;            // look up to 36 h ahead
+
+async function computeBookieSleepMs(): Promise<number> {
+  try {
+    const { countryCodes } = bookieConfig;
+    const markets = await listMarkets({
+      eventTypeId: "1",
+      countryCodes,
+      marketType: "WIN",
+      limit: 100,
+      hoursAhead: MAX_LOOK_AHEAD_H,
+    });
+
+    // Markets already bet on by Bookie Bot
+    const betMarketIds = new Set(
+      (await db
+        .select({ marketId: betsTable.marketId })
+        .from(betsTable)
+        .where(sql`${betsTable.strategyName} = ${BOOKIE_STRATEGY_NAME}`)
+      ).map(b => b.marketId)
+    );
+
+    const now = Date.now();
+    const futureUnbet = markets
+      .filter(m => {
+        const fullName = `${m.eventName} ${m.marketName}`;
+        return !NON_WIN_PATTERN.test(fullName) && !betMarketIds.has(m.marketId);
+      })
+      .map(m => new Date(m.marketStartTime).getTime())
+      .filter(t => t > now + MAX_MINS_BEFORE_START * 60_000) // skip ones already in the window
+      .sort((a, b) => a - b);
+
+    if (futureUnbet.length === 0) {
+      await log("info", "[SCHEDULER] No upcoming races in the next 36 h — sleeping 1 hour");
+      return 60 * 60_000;
+    }
+
+    const firstRace = futureUnbet[0];
+    const sleepUntil = firstRace - WAKE_BEFORE_MS;
+    const sleepMs = Math.max(MIN_SLEEP_MS, sleepUntil - now);
+
+    const firstRaceDate = new Date(firstRace);
+    const wakeDate = new Date(now + sleepMs);
+    const isNextDay = firstRaceDate.getDate() !== new Date(now).getDate();
+    const raceLabel = firstRaceDate.toLocaleString("en-GB", {
+      weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+      ...(isNextDay ? { day: "numeric", month: "short" } : {}),
+    });
+    const wakeLabel = wakeDate.toLocaleString("en-GB", {
+      hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+      ...(isNextDay ? { weekday: "short", day: "numeric", month: "short" } : {}),
+    });
+    const sleepHours = sleepMs / 3_600_000;
+    const sleepDesc = sleepHours >= 1
+      ? `${sleepHours.toFixed(1)} h`
+      : `${(sleepMs / 60_000).toFixed(1)} min`;
+
+    if (sleepMs > 30 * 60_000) {
+      await log("info",
+        `[SCHEDULER] Next race at ${raceLabel} — sleeping ${sleepDesc}, waking at ${wakeLabel}`
+      );
+    }
+    return sleepMs;
+  } catch {
+    return MIN_SLEEP_MS;
+  }
+}
+
+async function scheduleBookieCycle(): Promise<void> {
+  if (!bookieBotRunning) return;
+  await runBookieCycle();
+  if (!bookieBotRunning) return;
+
+  let sleepMs = MIN_SLEEP_MS;
+  try {
+    sleepMs = await computeBookieSleepMs();
+  } catch (err) {
+    logger.error({ err }, "[BOOKIE] computeBookieSleepMs threw — falling back to 30 s");
+  }
+  bookieBotInterval = setTimeout(() => void scheduleBookieCycle(), sleepMs);
 }
 
 async function runBookieMarket(
@@ -275,8 +368,7 @@ export async function startBookieBot(): Promise<void> {
   bookieBotRunning = true;
   bookieStartedAt = new Date();
   await log("info", "Bookie Bot started");
-  void runBookieCycle();
-  bookieBotInterval = setInterval(() => { void runBookieCycle(); }, 60_000);
+  void scheduleBookieCycle();
   bookieSettlementInterval = setInterval(() => { void runBookieSettlement(); }, 2 * 60_000);
 }
 
@@ -284,7 +376,7 @@ export async function stopBookieBot(): Promise<void> {
   if (!bookieBotRunning) return;
   bookieBotRunning = false;
   bookieStartedAt = null;
-  if (bookieBotInterval) { clearInterval(bookieBotInterval); bookieBotInterval = null; }
+  if (bookieBotInterval) { clearTimeout(bookieBotInterval); bookieBotInterval = null; }
   if (bookieSettlementInterval) { clearInterval(bookieSettlementInterval); bookieSettlementInterval = null; }
   await log("info", "Bookie Bot stopped");
 }
