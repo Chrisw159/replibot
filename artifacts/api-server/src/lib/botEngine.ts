@@ -66,7 +66,7 @@ interface DutchConfig {
   countryCodes: string[];
   excludeRaceTypes: string[];
   stakingMode: "equal" | "weighted";
-  breakEvenOdds: number; // weighted mode: runners at this price break even; shorter = profit, longer = not covered
+  maxOdds: number; // hard cap — nothing longer than this is backed (default 36.0 = 35/1)
 }
 
 function parseDutchConfig(marketFilter: string | null): DutchConfig {
@@ -78,7 +78,7 @@ function parseDutchConfig(marketFilter: string | null): DutchConfig {
     countryCodes: ["GB", "IE"],
     excludeRaceTypes: [],
     stakingMode: "equal",
-    breakEvenOdds: 13.0, // default 12/1
+    maxOdds: 36.0, // 35/1 decimal
   };
   try {
     return { ...defaults, ...(JSON.parse(marketFilter ?? "{}") as Partial<DutchConfig>) };
@@ -254,10 +254,23 @@ async function runDutchStrategy(
     const dropped: string[] = [];
 
     if (dc.stakingMode === "weighted") {
-      // Cover ALL qualifying runners — never drop any.
-      // Sort shortest → longest price.
-      selected = [...qualifying].sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
+      // 1. Hard cap: exclude runners longer than maxOdds (35/1 = 36.0)
+      selected = [...qualifying]
+        .filter(r => (r.bestBackPrice ?? 0) <= dc.maxOdds)
+        .sort((a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0));
+
+      // 2. Check implied book. The profit-on-shorts formula requires book < 100%.
+      //    If the field is still over-round after the 35/1 cap, skip the race —
+      //    we will NOT trim runners just to hit sub-100%, because trimming drops
+      //    runners we want covered and turns a missed winner into a full loss.
       bookPct = selected.reduce((s, r) => s + 1 / (r.bestBackPrice ?? 999), 0);
+      if (bookPct >= 1.0) {
+        await logBotActivity("info",
+          `[DUTCH] Skipping ${market.eventName} — book ${(bookPct * 100).toFixed(1)}% still over 100% after ` +
+          `35/1 cap (${selected.length} runners). Too competitive for weighted Dutch.`
+        );
+        continue;
+      }
     } else {
       // Equal-return mode: trim outsiders until book is sub-100%
       const minCoverageCount = Math.ceil(activeRunners.length * 0.8);
@@ -308,15 +321,8 @@ async function runDutchStrategy(
     let computedStakes: ComputedStake[];
 
     if (dc.stakingMode === "weighted") {
-      // Back ALL selected runners sorted shortest → longest odds.
-      // breakEvenOdds is NOT a hard cutoff — it is only the mathematical point
-      // in the gradient formula where a runner breaks even.
-      // Runners shorter than the break-even → profit.
-      // Runners longer than the break-even → partial return (smaller loss, not
-      // a complete loss). This is correct weighted Dutch behaviour.
-      const coveredRunners = [...selected].sort(
-        (a, b) => (a.bestBackPrice ?? 0) - (b.bestBackPrice ?? 0)
-      );
+      // selected is already sorted shortest → longest and trimmed to sub-100% book.
+      const coveredRunners = [...selected];
 
       const fullCoverW = coveredRunners.length === activeRunners.length;
       const budget = fullCoverW ? totalStake * 2 : totalStake;
@@ -324,19 +330,22 @@ async function runDutchStrategy(
       const oddsArr = coveredRunners.map(r => r.bestBackPrice ?? 1);
       const nCovered = coveredRunners.length;
 
-      // Target: at least 75% of runners profit (the top 25% by odds return
-      // a partial amount — still better than nothing).
-      // Walk downward from the 75th percentile until the sub-book is sub-100%.
-      let beIdx = Math.ceil(0.75 * nCovered) - 1; // 0-indexed
-      while (beIdx > 0) {
-        const subBook = oddsArr.slice(0, beIdx + 1).reduce((s, o) => s + 1 / o, 0);
-        if (subBook < 1) break;
-        beIdx--;
-      }
+      // Break-even point = 75th percentile runner (by price, shortest first).
+      //   • Runners SHORTER than this (top 75%) → return > budget → PROFIT,
+      //     profit increasing as odds shorten.
+      //   • Runners LONGER than this (bottom 25%) → return < budget → small LOSS,
+      //     loss increasing as odds lengthen.
+      //
+      // With book < 100% (guaranteed by selection trimming above):
+      //   f(1) = Σ(1/odds) - 1 < 0   and   f(∞) → +∞
+      //   → unique root n > 1.
+      //
+      // At n > 1:  stake_i = K · odds_i^{-n}   (shorter odds → bigger stake)
+      //            return_i = stake_i · odds_i = K · odds_i^{1-n}
+      //            Since 1-n < 0, return decreases with odds → shorter winner = more profit.
+      const beIdx = Math.ceil(0.75 * nCovered) - 1; // 0-indexed from shortest
       const effectiveBE = oddsArr[beIdx];
 
-      // f(n) = Σ(odds^-n) - effectiveBE^(1-n) = 0
-      // Unique root in (1, ∞) whenever the sub-book of runners[0..beIdx] < 100%.
       const f = (exp: number): number =>
         oddsArr.reduce((s, o) => s + Math.pow(o, -exp), 0) - Math.pow(effectiveBE, 1 - exp);
 
@@ -345,7 +354,7 @@ async function runDutchStrategy(
         const mid = (lo + hi) / 2;
         if (f(mid) < 0) lo = mid; else hi = mid;
       }
-      const n = f(50.0) > 0 ? (lo + hi) / 2 : 1.0;
+      const n = (lo + hi) / 2;
 
       const sumInvOddsN = oddsArr.reduce((s, o) => s + Math.pow(o, -n), 0);
       const K = budget / sumInvOddsN;
@@ -356,10 +365,10 @@ async function runDutchStrategy(
           n: n.toFixed(4),
           covered: nCovered,
           profitingRunners: profitCount,
-          effectiveBE,
-          covBookPct: oddsArr.reduce((s, o) => s + 1 / o, 0).toFixed(3),
+          breakEvenRunner: effectiveBE,
+          book: oddsArr.reduce((s, o) => s + 1 / o, 0).toFixed(3),
         },
-        `[DUTCH] Weighted exponent solved — ${profitCount}/${nCovered} runners (${Math.round(profitCount/nCovered*100)}%) will profit`
+        `[DUTCH] n=${n.toFixed(3)} — ${profitCount}/${nCovered} runners profit (≤${effectiveBE} odds); bottom 25% lose small`
       );
 
       computedStakes = coveredRunners.map(r => {
