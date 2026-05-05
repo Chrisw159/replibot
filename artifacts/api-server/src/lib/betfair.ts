@@ -115,6 +115,13 @@ export async function loginWithEnvCredentials(): Promise<{
   return result;
 }
 
+export async function apiBetfairRequest<T>(
+  method: string,
+  params: Record<string, unknown>
+): Promise<T> {
+  return apiRequest<T>(BETFAIR_API_URL, method, params);
+}
+
 async function apiRequest<T>(
   url: string,
   method: string,
