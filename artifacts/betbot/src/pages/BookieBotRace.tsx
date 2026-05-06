@@ -99,11 +99,19 @@ export default function BookieBotRace() {
   const netProfit    = race?.netProfit ?? 0;
   const settled      = race?.settled ?? false;
 
-  // Worst-case net loss: if horse X wins, we pay X's liability but collect all other stakes.
-  // = max over all runners of (runner.liability - (totalStaked - runner.stakeAmount))
-  const worstCaseLoss = bets && bets.length > 0
-    ? Math.max(...bets.map(b => b.liability - (totalStaked - b.stakeAmount)))
-    : 0;
+  // For each runner: net race outcome if THAT horse wins
+  // = -(liability) + (all other runners' stakes)
+  const netIfWins = (b: { liability: number; stakeAmount: number }) =>
+    Math.round((-(b.liability) + (totalStaked - b.stakeAmount)) * 100) / 100;
+
+  // Best and worst case across all runners
+  const worstBet = bets && bets.length > 0
+    ? bets.reduce((a, b) => netIfWins(a) < netIfWins(b) ? a : b)
+    : null;
+  const bestBet = bets && bets.length > 0
+    ? bets.reduce((a, b) => netIfWins(a) > netIfWins(b) ? a : b)
+    : null;
+  const worstCaseLoss = worstBet ? Math.abs(netIfWins(worstBet)) : 0;
 
   const raceTime = race ? new Date(race.placedAt) : null;
 
@@ -284,13 +292,15 @@ export default function BookieBotRace() {
                       </>
                     ) : (
                       <>
-                        <div className="text-sm font-semibold text-emerald-400 tabular-nums leading-tight">
-                          +£{bet.stakeAmount.toFixed(2)}
-                        </div>
-                        <div className="text-sm font-semibold text-red-400 tabular-nums leading-tight">
-                          -£{bet.liability.toFixed(2)}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground mt-0.5">loses / wins</div>
+                        {(() => {
+                          const net = netIfWins(bet);
+                          return (
+                            <div className={`text-base font-bold tabular-nums ${net >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {net >= 0 ? "+" : ""}£{Math.abs(net).toFixed(2)}
+                            </div>
+                          );
+                        })()}
+                        <div className="text-[10px] text-muted-foreground mt-0.5">if this wins</div>
                       </>
                     )}
                   </div>
@@ -312,31 +322,52 @@ export default function BookieBotRace() {
               </h3>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-border/50">
-              {[
-                { label: "Total staked",   value: `£${totalStaked.toFixed(2)}`,            sub: "Backer pays us" },
-                { label: "Worst case loss",value: `-£${worstCaseLoss.toFixed(2)}`,        sub: "If favourite wins" },
-                { label: "Collected",      value: `£${race.totalCollected.toFixed(2)}`,   sub: "From losing lays" },
-                {
-                  label: "Net P&L",
-                  value: settled
-                    ? `${netProfit >= 0 ? "+" : ""}£${Math.abs(netProfit).toFixed(2)}`
-                    : "Pending",
-                  sub: settled
-                    ? netProfit >= 0 ? "Profit" : "Loss"
-                    : "Awaiting settlement",
-                  highlight: settled ? (netProfit >= 0 ? "green" : "red") : "neutral",
-                },
-              ].map(({ label, value, sub, highlight }) => (
-                <div key={label} className="px-5 py-4 text-center">
-                  <div className="text-xs text-muted-foreground mb-1">{label}</div>
-                  <div className={`text-xl font-bold tabular-nums ${
-                    highlight === "green" ? "text-emerald-500" :
-                    highlight === "red"   ? "text-red-500" :
-                    ""
-                  }`}>{value}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>
-                </div>
-              ))}
+              {(() => {
+                const bestNet  = bestBet  ? netIfWins(bestBet)  : 0;
+                const worstNet = worstBet ? netIfWins(worstBet) : 0;
+                const cells = [
+                  {
+                    label: "Best case",
+                    value: `${bestNet >= 0 ? "+" : ""}£${Math.abs(bestNet).toFixed(2)}`,
+                    sub: bestBet ? `if ${bestBet.selectionName} wins` : "—",
+                    highlight: bestNet >= 0 ? "green" : "amber",
+                  },
+                  {
+                    label: "Worst case",
+                    value: `-£${worstCaseLoss.toFixed(2)}`,
+                    sub: worstBet ? `if ${worstBet.selectionName} wins` : "—",
+                    highlight: "red",
+                  },
+                  {
+                    label: settled ? "Collected" : "Total staked",
+                    value: settled ? `£${race.totalCollected.toFixed(2)}` : `£${totalStaked.toFixed(2)}`,
+                    sub: settled ? "From losing lays" : "At risk",
+                    highlight: "neutral",
+                  },
+                  {
+                    label: "Net P&L",
+                    value: settled
+                      ? `${netProfit >= 0 ? "+" : ""}£${Math.abs(netProfit).toFixed(2)}`
+                      : "Pending",
+                    sub: settled
+                      ? netProfit >= 0 ? "Profit" : "Loss"
+                      : "Awaiting settlement",
+                    highlight: settled ? (netProfit >= 0 ? "green" : "red") : "neutral",
+                  },
+                ];
+                return cells.map(({ label, value, sub, highlight }) => (
+                  <div key={label} className="px-5 py-4 text-center">
+                    <div className="text-xs text-muted-foreground mb-1">{label}</div>
+                    <div className={`text-xl font-bold tabular-nums ${
+                      highlight === "green" ? "text-emerald-500" :
+                      highlight === "red"   ? "text-red-500"    :
+                      highlight === "amber" ? "text-amber-400"  :
+                      ""
+                    }`}>{value}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
         </div>
