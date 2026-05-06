@@ -44,8 +44,8 @@ function impliedPct(odds: number) {
 
 function bookieLabel(status: string) {
   switch (status) {
-    case "WON":     return "COLLECTED";
-    case "LOST":    return "PAID OUT";
+    case "WON":     return "BACKED & WON";
+    case "LOST":    return "BACKED & LOST";
     case "MATCHED": return "MATCHED";
     case "PLACED":  return "PLACED";
     case "VOID":    return "VOID";
@@ -110,26 +110,29 @@ export default function BookieBotRace() {
   const netProfit    = race?.netProfit ?? 0;
   const settled      = race?.settled ?? false;
 
-  // For each runner: net race outcome if THAT horse wins
-  // = -(liability) + (all other runners' stakes)
-  const netIfWins = (b: { liability: number; stakeAmount: number }) =>
-    Math.round((-(b.liability) + (totalStaked - b.stakeAmount)) * 100) / 100;
+  // Level-stakes back-the-field:
+  // Net race P&L if runner i wins = stake × odds_i − total staked
+  // (positive for outsiders beyond the breakeven point, negative for shorter runners)
+  const netIfWins = (b: { stakeAmount: number; requestedOdds: number }) =>
+    Math.round((b.stakeAmount * b.requestedOdds - totalStaked) * 100) / 100;
 
-  // Best and worst case across all runners
+  const breakevenOdds = bets?.length ?? 0; // decimal odds that = break even
+
+  // Best case = biggest outsider wins; worst case = shortest runner wins
   const worstBet = bets && bets.length > 0
     ? bets.reduce((a, b) => netIfWins(a) < netIfWins(b) ? a : b)
     : null;
   const bestBet = bets && bets.length > 0
     ? bets.reduce((a, b) => netIfWins(a) > netIfWins(b) ? a : b)
     : null;
-  const worstCaseLoss = worstBet ? Math.abs(netIfWins(worstBet)) : 0;
+  const worstCaseNet = worstBet ? netIfWins(worstBet) : 0;
 
   const raceTime = race ? new Date(race.placedAt) : null;
 
   // Sort: favourite (lowest odds) first
   const sortedBets = bets ? [...bets].sort((a, b) => a.requestedOdds - b.requestedOdds) : [];
-  // In lay betting: status=LOST means our lay lost = that horse actually WON the race
-  const actualWinner = sortedBets.find(b => b.status === "LOST");
+  // BACK bet: status=WON means our backed horse actually WON the race
+  const actualWinner = sortedBets.find(b => b.status === "WON");
 
   return (
     <div className="space-y-0 -mt-2">
@@ -148,7 +151,7 @@ export default function BookieBotRace() {
         {/* Top strip */}
         <div className="bg-[#0072bb] px-6 py-2 flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-widest text-white/80">
-            Horse Racing · WIN Market · Lay Strategy
+            Horse Racing · WIN Market · Back Strategy
           </span>
           {race && (
             <span className="text-xs text-white/70 flex items-center gap-1">
@@ -170,16 +173,30 @@ export default function BookieBotRace() {
 
           <div className="flex flex-wrap gap-4 text-right">
             <div>
-              <div className="text-xs text-white/50 uppercase tracking-wide">Runners laid</div>
+              <div className="text-xs text-white/50 uppercase tracking-wide">Runners backed</div>
               <div className="text-2xl font-bold text-white">{bets?.length ?? "—"}</div>
+              {breakevenOdds > 0 && (
+                <div className="text-[10px] text-white/40 mt-0.5">breakeven @ {breakevenOdds}+ odds</div>
+              )}
             </div>
             <div>
               <div className="text-xs text-white/50 uppercase tracking-wide">Total staked</div>
               <div className="text-2xl font-bold text-white">£{totalStaked.toFixed(2)}</div>
             </div>
             <div>
+              <div className="text-xs text-white/50 uppercase tracking-wide">Best case</div>
+              <div className="text-2xl font-bold text-emerald-300">
+                {bestBet ? (netIfWins(bestBet) >= 0 ? "+" : "-") : ""}£{bestBet ? Math.abs(netIfWins(bestBet)).toFixed(2) : "0.00"}
+              </div>
+              {bestBet && (
+                <div className="text-[10px] text-white/40 mt-0.5">if {bestBet.selectionName} wins</div>
+              )}
+            </div>
+            <div>
               <div className="text-xs text-white/50 uppercase tracking-wide">Worst case</div>
-              <div className="text-2xl font-bold text-amber-300">-£{worstCaseLoss.toFixed(2)}</div>
+              <div className="text-2xl font-bold text-amber-300">
+                {worstCaseNet >= 0 ? "+" : "-"}£{Math.abs(worstCaseNet).toFixed(2)}
+              </div>
               {worstBet && (
                 <div className="text-[10px] text-white/40 mt-0.5">if {worstBet.selectionName} wins</div>
               )}
@@ -200,15 +217,25 @@ export default function BookieBotRace() {
 
       {/* ── Race Winner banner (only shown when settled) ── */}
       {settled && actualWinner && (
-        <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-4 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+        <div className={`mt-4 rounded-xl border px-5 py-4 flex items-center gap-3 ${
+          netProfit >= 0
+            ? "border-emerald-500/40 bg-emerald-500/10"
+            : "border-amber-500/30 bg-amber-500/8"
+        }`}>
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+            netProfit >= 0 ? "bg-emerald-500" : "bg-amber-500"
+          }`}>
             <Trophy className="w-4 h-4 text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-emerald-400/70 uppercase tracking-wide font-semibold mb-0.5">Race Winner</div>
-            <div className="text-base font-bold text-emerald-300">{actualWinner.selectionName}</div>
-            <div className="text-xs text-emerald-400/60">
-              Odds {actualWinner.requestedOdds.toFixed(2)} · Our lay lost · Liability paid: £{Math.abs(actualWinner.actualProfit ?? 0).toFixed(2)}
+            <div className={`text-xs uppercase tracking-wide font-semibold mb-0.5 ${netProfit >= 0 ? "text-emerald-400/70" : "text-amber-400/70"}`}>
+              Race Winner — Our back landed
+            </div>
+            <div className={`text-base font-bold ${netProfit >= 0 ? "text-emerald-300" : "text-amber-300"}`}>
+              {actualWinner.selectionName}
+            </div>
+            <div className={`text-xs ${netProfit >= 0 ? "text-emerald-400/60" : "text-amber-400/60"}`}>
+              Odds {actualWinner.requestedOdds.toFixed(2)} · Profit on this bet: +£{(actualWinner.actualProfit ?? 0).toFixed(2)} · Other stakes lost
             </div>
           </div>
           <div className="text-right flex-shrink-0">
@@ -221,9 +248,9 @@ export default function BookieBotRace() {
       )}
 
       {settled && !actualWinner && (
-        <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/8 px-5 py-3 flex items-center gap-3 text-sm text-blue-300">
-          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          All lays won — no horse backed, clean sweep.
+        <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/8 px-5 py-3 flex items-center gap-3 text-sm text-red-300">
+          <XCircle className="w-4 h-4 flex-shrink-0" />
+          Winner was not in our covered runners — all stakes lost (£{totalStaked.toFixed(2)}).
         </div>
       )}
 
@@ -240,24 +267,24 @@ export default function BookieBotRace() {
 
         {sortedBets.map((bet, i) => {
           const prob = impliedPct(bet.requestedOdds);
-          // In lay betting: LOST = our lay lost = this horse WON the actual race
-          const isRaceWinner = bet.status === "LOST";
-          const isLayWon     = bet.status === "WON";
+          // BACK bet: WON = our backed horse won the race
+          const isRaceWinner = bet.status === "WON";
+          const isBackLost   = bet.status === "LOST";
 
           return (
             <div
               key={bet.id}
               className={`rounded-xl border transition-all ${
-                isRaceWinner ? "border-amber-500/40 bg-amber-500/5" :
-                isLayWon     ? "border-emerald-500/20 bg-emerald-500/3" :
+                isRaceWinner ? "border-emerald-500/40 bg-emerald-500/5" :
+                isBackLost   ? "border-red-500/10 bg-card/30" :
                 "border-border/60 bg-card/50"
               }`}
             >
               <div className="px-4 py-3 flex items-start gap-4">
                 {/* Rank bubble */}
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
-                  isRaceWinner ? "bg-amber-500 text-white" :
-                  isLayWon     ? "bg-emerald-500/20 text-emerald-400" :
+                  isRaceWinner ? "bg-emerald-500 text-white" :
+                  isBackLost   ? "bg-red-500/15 text-red-400" :
                   "bg-muted text-muted-foreground"
                 }`}>
                   {isRaceWinner ? <Trophy className="w-3.5 h-3.5" /> : i + 1}
@@ -277,21 +304,21 @@ export default function BookieBotRace() {
                 {/* Stats grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-shrink-0 text-right">
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Lay odds</div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Back odds</div>
                     <div className="text-base font-bold tabular-nums text-foreground">{bet.requestedOdds.toFixed(2)}</div>
                     <div className="text-[10px] text-muted-foreground">{prob}% prob</div>
                   </div>
                   <div>
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Stake</div>
                     <div className="text-base font-semibold tabular-nums">£{bet.stakeAmount.toFixed(2)}</div>
-                    <div className="text-[10px] text-muted-foreground">collected if loses</div>
+                    <div className="text-[10px] text-muted-foreground">at risk</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Liability</div>
-                    <div className={`text-base font-semibold tabular-nums ${isRaceWinner ? "text-red-400" : ""}`}>
-                      £{bet.liability.toFixed(2)}
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Potential win</div>
+                    <div className={`text-base font-semibold tabular-nums ${isRaceWinner ? "text-emerald-400" : ""}`}>
+                      £{(bet.stakeAmount * (bet.requestedOdds - 1)).toFixed(2)}
                     </div>
-                    <div className="text-[10px] text-muted-foreground">paid out if wins</div>
+                    <div className="text-[10px] text-muted-foreground">profit if wins</div>
                   </div>
                   {(() => {
                     const net = netIfWins(bet);
@@ -341,14 +368,14 @@ export default function BookieBotRace() {
                   },
                   {
                     label: "Worst case",
-                    value: `-£${worstCaseLoss.toFixed(2)}`,
+                    value: worstNet >= 0 ? `+£${worstNet.toFixed(2)}` : `-£${Math.abs(worstNet).toFixed(2)}`,
                     sub: worstBet ? `if ${worstBet.selectionName} wins` : "—",
-                    highlight: "red",
+                    highlight: worstNet >= 0 ? "green" : "red",
                   },
                   {
-                    label: settled ? "Collected" : "Total staked",
-                    value: settled ? `£${race.totalCollected.toFixed(2)}` : `£${totalStaked.toFixed(2)}`,
-                    sub: settled ? "From losing lays" : "At risk",
+                    label: "Total staked",
+                    value: `£${totalStaked.toFixed(2)}`,
+                    sub: settled ? "Stakes placed" : "At risk",
                     highlight: "neutral",
                   },
                   {
@@ -387,10 +414,10 @@ export default function BookieBotRace() {
             ? <TrendingUp className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
             : <TrendingDown className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />}
           <span>
-            <strong className="text-foreground/70">How lays work:</strong>{" "}
-            We lay every runner — if they lose, we collect their backer's stake.
-            If they win, we pay out the liability for that runner only.
-            The strategy scales each stake proportionally so the worst-case net loss is capped at your configured maximum, regardless of which horse wins.
+            <strong className="text-foreground/70">How level-stakes back-the-field works:</strong>{" "}
+            We back every runner with the same flat stake. The breakeven point in decimal odds equals the number of runners backed.
+            A big outsider winning = big profit (odds far above breakeven). The favourite winning = controlled loss.
+            Like an underground bookmaker — you profit most when the unexpected happens.
           </span>
         </div>
       </div>

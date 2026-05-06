@@ -85,22 +85,22 @@ router.post("/bookie/stop", async (_req, res): Promise<void> => {
 router.patch("/bookie/config", async (req, res): Promise<void> => {
   const body = req.body as Record<string, unknown>;
 
+  const stakePerRunner =
+    typeof body.stakePerRunner === "number" ? body.stakePerRunner : undefined;
   const maxRaceNetLoss =
     typeof body.maxRaceNetLoss === "number" ? body.maxRaceNetLoss : undefined;
-  const maxRunnerLiability =
-    typeof body.maxRunnerLiability === "number" ? body.maxRunnerLiability : undefined;
   const minLiquidity =
     typeof body.minLiquidity === "number" ? body.minLiquidity : undefined;
   const countryCodes = Array.isArray(body.countryCodes)
     ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
     : undefined;
 
-  if (maxRaceNetLoss !== undefined && (maxRaceNetLoss <= 0 || maxRaceNetLoss > 1000)) {
-    res.status(400).json({ error: "maxRaceNetLoss must be between 1 and 1000" });
+  if (stakePerRunner !== undefined && (stakePerRunner < 2 || stakePerRunner > 500)) {
+    res.status(400).json({ error: "stakePerRunner must be between 2 and 500" });
     return;
   }
-  if (maxRunnerLiability !== undefined && (maxRunnerLiability <= 0 || maxRunnerLiability > 5000)) {
-    res.status(400).json({ error: "maxRunnerLiability must be between 1 and 5000" });
+  if (maxRaceNetLoss !== undefined && (maxRaceNetLoss <= 0 || maxRaceNetLoss > 5000)) {
+    res.status(400).json({ error: "maxRaceNetLoss must be between 1 and 5000" });
     return;
   }
   if (minLiquidity !== undefined && (minLiquidity < 0 || minLiquidity > 500000)) {
@@ -113,8 +113,8 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
   }
 
   const patch: Parameters<typeof setBookieConfig>[0] = {};
+  if (stakePerRunner !== undefined) patch.stakePerRunner = stakePerRunner;
   if (maxRaceNetLoss !== undefined) patch.maxRaceNetLoss = maxRaceNetLoss;
-  if (maxRunnerLiability !== undefined) patch.maxRunnerLiability = maxRunnerLiability;
   if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
   if (countryCodes !== undefined) patch.countryCodes = countryCodes;
   setBookieConfig(patch);

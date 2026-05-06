@@ -24,8 +24,8 @@ interface BookieStatus {
   startedAt: string | null;
   paperTradingMode: boolean;
   bookieConfig: {
+    stakePerRunner: number;
     maxRaceNetLoss: number;
-    maxRunnerLiability: number;
     countryCodes: string[];
     minLiquidity: number;
   };
@@ -198,21 +198,21 @@ export default function BookieBot() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bookie-status"] }),
   });
 
-  const [maxLoss, setMaxLoss]       = useState("");
-  const [maxLiab, setMaxLiab]       = useState("");
-  const [minLiq, setMinLiq]         = useState("");
-  const [countryInput, setCountryInput] = useState("");
+  const [stakePerRunner, setStakePerRunner] = useState("");
+  const [maxLoss, setMaxLoss]               = useState("");
+  const [minLiq, setMinLiq]                 = useState("");
+  const [countryInput, setCountryInput]     = useState("");
 
   const configMutation = useMutation({
     mutationFn: (body: {
+      stakePerRunner?: number;
       maxRaceNetLoss?: number;
-      maxRunnerLiability?: number;
       minLiquidity?: number;
       countryCodes?: string[];
     }) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookie-status"] });
-      setMaxLoss(""); setMaxLiab(""); setMinLiq(""); setCountryInput("");
+      setStakePerRunner(""); setMaxLoss(""); setMinLiq(""); setCountryInput("");
     },
   });
 
@@ -222,9 +222,9 @@ export default function BookieBot() {
 
   const handleSaveConfig = () => {
     const patch: Parameters<typeof configMutation.mutate>[0] = {};
-    if (maxLoss !== "")            patch.maxRaceNetLoss      = parseFloat(maxLoss);
-    if (maxLiab !== "")            patch.maxRunnerLiability  = parseFloat(maxLiab);
-    if (minLiq !== "")             patch.minLiquidity        = parseFloat(minLiq);
+    if (stakePerRunner !== "")      patch.stakePerRunner     = parseFloat(stakePerRunner);
+    if (maxLoss !== "")             patch.maxRaceNetLoss     = parseFloat(maxLoss);
+    if (minLiq !== "")              patch.minLiquidity       = parseFloat(minLiq);
     if (countryInput.trim() !== "") {
       patch.countryCodes = countryInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
     }
@@ -255,7 +255,7 @@ export default function BookieBot() {
             )}
           </div>
           <p className="text-sm text-muted-foreground mt-1.5 ml-0.5">
-            Proportional lay strategy · Horse racing WIN markets · {cfg?.countryCodes?.join(", ") ?? "GB, IE"}
+            Level-stakes back-the-field · Horse racing WIN markets · {cfg?.countryCodes?.join(", ") ?? "GB, IE"}
           </p>
         </div>
 
@@ -311,15 +311,15 @@ export default function BookieBot() {
             colour: totalProfit > 0 ? "text-emerald-500" : totalProfit < 0 ? "text-red-500" : "",
           },
           {
-            label: "Max Net Loss / Race",
-            value: `£${cfg?.maxRaceNetLoss ?? 100}`,
-            sub: "Worst case per race",
+            label: "Stake / Runner",
+            value: `£${cfg?.stakePerRunner ?? 10}`,
+            sub: "Flat back stake each",
             colour: "",
           },
           {
-            label: "Max Liability / Runner",
-            value: `£${cfg?.maxRunnerLiability ?? 300}`,
-            sub: "Single runner cap",
+            label: "Max Race Outlay",
+            value: `£${cfg?.maxRaceNetLoss ?? 150}`,
+            sub: "Skip if total > this",
             colour: "",
           },
         ].map(s => (
@@ -430,20 +430,20 @@ export default function BookieBot() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label htmlFor="maxLoss" className="text-xs">Max Loss / Race (£)</Label>
+                  <Label htmlFor="stakePerRunner" className="text-xs">Stake / Runner (£)</Label>
                   <Input
-                    id="maxLoss" type="number"
-                    placeholder={String(cfg?.maxRaceNetLoss ?? 100)}
-                    value={maxLoss} onChange={e => setMaxLoss(e.target.value)}
-                    min={1} max={1000} className="h-8 text-sm"
+                    id="stakePerRunner" type="number"
+                    placeholder={String(cfg?.stakePerRunner ?? 10)}
+                    value={stakePerRunner} onChange={e => setStakePerRunner(e.target.value)}
+                    min={2} max={500} className="h-8 text-sm"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="maxLiab" className="text-xs">Max Liability / Runner (£)</Label>
+                  <Label htmlFor="maxLoss" className="text-xs">Max Race Outlay (£)</Label>
                   <Input
-                    id="maxLiab" type="number"
-                    placeholder={String(cfg?.maxRunnerLiability ?? 300)}
-                    value={maxLiab} onChange={e => setMaxLiab(e.target.value)}
+                    id="maxLoss" type="number"
+                    placeholder={String(cfg?.maxRaceNetLoss ?? 150)}
+                    value={maxLoss} onChange={e => setMaxLoss(e.target.value)}
                     min={1} max={5000} className="h-8 text-sm"
                   />
                 </div>
@@ -461,7 +461,7 @@ export default function BookieBot() {
 
               <Button
                 onClick={handleSaveConfig}
-                disabled={configMutation.isPending || (maxLoss === "" && maxLiab === "" && minLiq === "" && countryInput.trim() === "")}
+                disabled={configMutation.isPending || (stakePerRunner === "" && maxLoss === "" && minLiq === "" && countryInput.trim() === "")}
                 className="w-full h-8 text-xs"
               >
                 Save Config
