@@ -293,31 +293,24 @@ export default function BookieBotRace() {
                     </div>
                     <div className="text-[10px] text-muted-foreground">paid out if wins</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                      {bet.actualProfit !== null ? "Profit" : "Possible"}
-                    </div>
-                    {bet.actualProfit !== null ? (
-                      <>
-                        <div className={`text-base font-bold tabular-nums ${bet.actualProfit >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-                          {bet.actualProfit >= 0 ? "+" : ""}£{Math.abs(bet.actualProfit).toFixed(2)}
+                  {(() => {
+                    const net = netIfWins(bet);
+                    return (
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">If wins</div>
+                        <div className={`text-base font-bold tabular-nums ${net > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {net >= 0 ? "+" : "-"}£{Math.abs(net).toFixed(2)}
                         </div>
-                        <div className="text-[10px] text-muted-foreground">actual</div>
-                      </>
-                    ) : (
-                      <>
-                        {(() => {
-                          const net = netIfWins(bet);
-                          return (
-                            <div className={`text-base font-bold tabular-nums ${net >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                              {net >= 0 ? "+" : ""}£{Math.abs(net).toFixed(2)}
-                            </div>
-                          );
-                        })()}
-                        <div className="text-[10px] text-muted-foreground mt-0.5">if this wins</div>
-                      </>
-                    )}
-                  </div>
+                        {bet.actualProfit !== null ? (
+                          <div className={`text-[10px] mt-0.5 font-medium ${bet.actualProfit >= 0 ? "text-emerald-500/70" : "text-red-500/70"}`}>
+                            actual: {bet.actualProfit >= 0 ? "+" : "-"}£{Math.abs(bet.actualProfit).toFixed(2)}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-muted-foreground mt-0.5">race outcome</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
