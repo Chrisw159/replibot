@@ -42,6 +42,17 @@ function impliedPct(odds: number) {
   return Math.round((1 / odds) * 100);
 }
 
+function bookieLabel(status: string) {
+  switch (status) {
+    case "WON":     return "COLLECTED";
+    case "LOST":    return "PAID OUT";
+    case "MATCHED": return "MATCHED";
+    case "PLACED":  return "PLACED";
+    case "VOID":    return "VOID";
+    default:        return status;
+  }
+}
+
 function statusIcon(status: string) {
   switch (status) {
     case "WON":    return <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
@@ -257,7 +268,7 @@ export default function BookieBotRace() {
                   <div className="flex items-center gap-2 mb-1.5">
                     <span className="font-semibold text-foreground text-sm leading-tight">{bet.selectionName}</span>
                     <div className="flex items-center gap-1">{statusIcon(bet.status)}
-                      <Badge className={`text-[10px] px-1.5 py-0 ${statusColour(bet.status)}`}>{bet.status}</Badge>
+                      <Badge className={`text-[10px] px-1.5 py-0 ${statusColour(bet.status)}`}>{bookieLabel(bet.status)}</Badge>
                     </div>
                   </div>
                   <ProbBar pct={prob} status={bet.status} />
@@ -331,9 +342,9 @@ export default function BookieBotRace() {
                 const cells = [
                   {
                     label: "Best case",
-                    value: `${bestNet >= 0 ? "+" : ""}£${Math.abs(bestNet).toFixed(2)}`,
+                    value: bestNet >= 0 ? `+£${bestNet.toFixed(2)}` : `-£${Math.abs(bestNet).toFixed(2)}`,
                     sub: bestBet ? `if ${bestBet.selectionName} wins` : "—",
-                    highlight: bestNet >= 0 ? "green" : "amber",
+                    highlight: bestNet > 0 ? "green" : bestNet < 0 ? "amber" : "neutral",
                   },
                   {
                     label: "Worst case",
@@ -350,7 +361,7 @@ export default function BookieBotRace() {
                   {
                     label: "Net P&L",
                     value: settled
-                      ? `${netProfit >= 0 ? "+" : ""}£${Math.abs(netProfit).toFixed(2)}`
+                      ? netProfit >= 0 ? `+£${netProfit.toFixed(2)}` : `-£${Math.abs(netProfit).toFixed(2)}`
                       : "Pending",
                     sub: settled
                       ? netProfit >= 0 ? "Profit" : "Loss"
