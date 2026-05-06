@@ -272,18 +272,25 @@ export default function BookieBotRace() {
                     <div className="text-[10px] text-muted-foreground">paid out if wins</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Profit</div>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                      {bet.actualProfit !== null ? "Profit" : "Possible"}
+                    </div>
                     {bet.actualProfit !== null ? (
                       <>
                         <div className={`text-base font-bold tabular-nums ${bet.actualProfit >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                           {bet.actualProfit >= 0 ? "+" : ""}£{Math.abs(bet.actualProfit).toFixed(2)}
                         </div>
-                        <div className="text-[10px] text-muted-foreground">realised</div>
+                        <div className="text-[10px] text-muted-foreground">actual</div>
                       </>
                     ) : (
                       <>
-                        <div className="text-base font-semibold text-muted-foreground">—</div>
-                        <div className="text-[10px] text-muted-foreground">pending</div>
+                        <div className="text-sm font-semibold text-emerald-400 tabular-nums leading-tight">
+                          +£{bet.stakeAmount.toFixed(2)}
+                        </div>
+                        <div className="text-sm font-semibold text-red-400 tabular-nums leading-tight">
+                          -£{bet.liability.toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">loses / wins</div>
                       </>
                     )}
                   </div>
