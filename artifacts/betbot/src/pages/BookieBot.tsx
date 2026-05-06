@@ -1,38 +1,29 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
-  Scale, Power, PowerOff, TrendingUp, TrendingDown, Clock,
-  ChevronRight, Trophy, Banknote, Activity,
+  Play, Square, RefreshCw, ChevronRight,
+  TrendingUp, TrendingDown, CircleDot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-interface BotLog {
-  id: number;
-  level: string;
-  message: string;
-  metadata: string | null;
-  createdAt: string;
-}
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 
 interface BookieStatus {
   isRunning: boolean;
   startedAt: string | null;
   paperTradingMode: boolean;
   bookieConfig: {
-    stakePerRunner: number;
+    totalStakePerRace: number;
     maxRaceNetLoss: number;
-    maxOdds: number;
-    minRunners: number;
-    countryCodes: string[];
     minLiquidity: number;
+    countryCodes: string[];
+    minRunners: number;
   };
   racesToday: number;
-  betsToday: number;
   profitToday: number;
   totalRaces: number;
   totalNetProfit: number;
@@ -43,123 +34,25 @@ interface BookieRace {
   marketName: string;
   eventName: string;
   placedAt: string;
-  betCount: number;
-  totalStaked: number;
-  totalCollected: number;
-  totalPaidOut: number;
+  runners: number;
   netProfit: number;
   settled: boolean;
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
-    ...options,
+    ...opts,
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<T>;
 }
 
-function PnlChip({ value, settled }: { value: number; settled: boolean }) {
-  if (!settled) return (
-    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-      <Clock className="w-3 h-3" /> Pending
-    </span>
-  );
-  if (value > 0) return (
-    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-500">
-      <TrendingUp className="w-3 h-3" /> +£{value.toFixed(2)}
-    </span>
-  );
-  if (value < 0) return (
-    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-500">
-      <TrendingDown className="w-3 h-3" /> -£{Math.abs(value).toFixed(2)}
-    </span>
-  );
-  return <span className="text-xs text-muted-foreground">£0.00</span>;
-}
-
-function RaceRow({ race }: { race: BookieRace }) {
-  const isToday = new Date(race.placedAt).toDateString() === new Date().toDateString();
-
-  return (
-    <Link href={`/bookiebot/race/${race.marketId}`}>
-      <div className="group flex items-center gap-4 px-4 py-3.5 rounded-xl border border-border/60 bg-card/50 hover:bg-muted/40 hover:border-border transition-all cursor-pointer">
-        {/* Icon */}
-        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
-          race.settled && race.netProfit > 0 ? "bg-emerald-500/15 text-emerald-500" :
-          race.settled && race.netProfit < 0 ? "bg-red-500/15 text-red-500" :
-          "bg-muted text-muted-foreground"
-        }`}>
-          {race.settled && race.netProfit > 0
-            ? <Trophy className="w-4 h-4" />
-            : <Banknote className="w-4 h-4" />}
-        </div>
-
-        {/* Name + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm text-foreground truncate">{race.eventName}</div>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className="text-xs text-muted-foreground">{race.marketName}</span>
-            <span className="text-muted-foreground/40 text-xs">·</span>
-            <span className="text-xs text-muted-foreground">
-              {new Date(race.placedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              {!isToday && (
-                <> · {new Date(race.placedAt).toLocaleDateString([], { day: "numeric", month: "short" })}</>
-              )}
-            </span>
-            <span className="text-muted-foreground/40 text-xs">·</span>
-            <span className="text-xs text-muted-foreground">{race.betCount} runners</span>
-            <span className="text-muted-foreground/40 text-xs">·</span>
-            <span className="text-xs text-muted-foreground">£{race.totalStaked.toFixed(2)} staked</span>
-          </div>
-        </div>
-
-        {/* P&L */}
-        <div className="flex-shrink-0">
-          <PnlChip value={race.netProfit} settled={race.settled} />
-        </div>
-
-        {/* Arrow */}
-        <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors flex-shrink-0" />
-      </div>
-    </Link>
-  );
-}
-
-function LogLine({ log }: { log: BotLog }) {
-  const isLaying  = log.message.toLowerCase().includes("laying");
-  const isSkip    = log.message.toLowerCase().includes("skipping");
-  const isError   = log.level === "error";
-  const isWarn    = log.level === "warn";
-  const isCycle   = log.message.toLowerCase().startsWith("cycle");
-  const isStart   = log.message.toLowerCase().includes("started") || log.message.toLowerCase().includes("stopped");
-
-  const msgColour =
-    isError   ? "text-red-400" :
-    isWarn    ? "text-amber-400" :
-    isLaying  ? "text-emerald-400 font-medium" :
-    isSkip    ? "text-muted-foreground/60" :
-    isCycle   ? "text-blue-400/80" :
-    isStart   ? "text-violet-400" :
-    "text-slate-300";
-
-  const levelColour =
-    isError ? "text-red-500" :
-    isWarn  ? "text-amber-500" :
-    "text-slate-600";
-
-  return (
-    <div className="flex items-start gap-3 py-1 border-b border-white/[0.04] last:border-0">
-      <span className="text-slate-600 flex-shrink-0 tabular-nums text-[11px] pt-px w-[52px]">
-        {new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-      </span>
-      <span className={`text-[10px] font-bold uppercase flex-shrink-0 w-8 pt-px ${levelColour}`}>
-        {log.level.slice(0, 4)}
-      </span>
-      <span className={`text-xs leading-relaxed break-words ${msgColour}`}>{log.message}</span>
-    </div>
-  );
+function fmtProfit(n: number, settled: boolean) {
+  if (!settled) return { text: "Pending", cls: "text-muted-foreground" };
+  if (n > 0) return { text: `+£${n.toFixed(2)}`, cls: "text-emerald-400" };
+  if (n < 0) return { text: `-£${Math.abs(n).toFixed(2)}`, cls: "text-red-400" };
+  return { text: "£0.00", cls: "text-muted-foreground" };
 }
 
 export default function BookieBot() {
@@ -168,27 +61,14 @@ export default function BookieBot() {
   const { data: status, isLoading } = useQuery<BookieStatus>({
     queryKey: ["bookie-status"],
     queryFn: () => apiFetch("/bookie/status"),
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
   });
 
   const { data: races } = useQuery<BookieRace[]>({
     queryKey: ["bookie-races"],
     queryFn: () => apiFetch("/bookie/races"),
-    refetchInterval: 10000,
+    refetchInterval: 30_000,
   });
-
-  const { data: logs } = useQuery<BotLog[]>({
-    queryKey: ["bookie-logs"],
-    queryFn: () => apiFetch("/bookie/logs?limit=200"),
-    refetchInterval: 5000,
-  });
-
-  const consoleRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (consoleRef.current) {
-      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
-    }
-  }, [logs]);
 
   const startMutation = useMutation({
     mutationFn: () => apiFetch<BookieStatus>("/bookie/start", { method: "POST" }),
@@ -200,28 +80,29 @@ export default function BookieBot() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bookie-status"] }),
   });
 
-  const [stakePerRunner, setStakePerRunner]   = useState("");
-  const [maxLoss, setMaxLoss]                 = useState("");
-  const [maxOddsInput, setMaxOddsInput]       = useState("");
-  const [minRunnersInput, setMinRunnersInput] = useState("");
-  const [minLiq, setMinLiq]                   = useState("");
-  const [countryInput, setCountryInput]       = useState("");
+  const paperMutation = useMutation({
+    mutationFn: (paperTradingMode: boolean) =>
+      apiFetch("/bot/config", { method: "PATCH", body: JSON.stringify({ paperTradingMode }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["bookie-status"] }),
+  });
 
   const configMutation = useMutation({
-    mutationFn: (body: {
-      stakePerRunner?: number;
-      maxRaceNetLoss?: number;
-      maxOdds?: number;
-      minRunners?: number;
-      minLiquidity?: number;
-      countryCodes?: string[];
-    }) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
+    mutationFn: (body: Partial<{
+      totalStakePerRace: number;
+      maxRaceNetLoss: number;
+      minLiquidity: number;
+      minRunners: number;
+    }>) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookie-status"] });
-      setStakePerRunner(""); setMaxLoss(""); setMaxOddsInput("");
-      setMinRunnersInput(""); setMinLiq(""); setCountryInput("");
+      setStakeInput(""); setMaxLossInput(""); setLiqInput(""); setMinRunnersInput("");
     },
   });
+
+  const [stakeInput, setStakeInput]         = useState("");
+  const [maxLossInput, setMaxLossInput]     = useState("");
+  const [liqInput, setLiqInput]             = useState("");
+  const [minRunnersInput, setMinRunnersInput] = useState("");
 
   const isRunning = status?.isRunning ?? false;
   const isPaper   = status?.paperTradingMode ?? true;
@@ -229,322 +110,256 @@ export default function BookieBot() {
 
   const handleSaveConfig = () => {
     const patch: Parameters<typeof configMutation.mutate>[0] = {};
-    if (stakePerRunner !== "")  patch.stakePerRunner = parseFloat(stakePerRunner);
-    if (maxLoss !== "")         patch.maxRaceNetLoss = parseFloat(maxLoss);
-    if (maxOddsInput !== "")    patch.maxOdds        = parseFloat(maxOddsInput);
-    if (minRunnersInput !== "") patch.minRunners     = parseInt(minRunnersInput, 10);
-    if (minLiq !== "")          patch.minLiquidity   = parseFloat(minLiq);
-    if (countryInput.trim() !== "") {
-      patch.countryCodes = countryInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
-    }
+    if (stakeInput)       patch.totalStakePerRace = parseFloat(stakeInput);
+    if (maxLossInput)     patch.maxRaceNetLoss    = parseFloat(maxLossInput);
+    if (liqInput)         patch.minLiquidity      = parseFloat(liqInput);
+    if (minRunnersInput)  patch.minRunners        = parseInt(minRunnersInput, 10);
     if (Object.keys(patch).length > 0) configMutation.mutate(patch);
   };
 
-  const profitToday  = status?.profitToday    ?? 0;
-  const totalProfit  = status?.totalNetProfit ?? 0;
-  const todaysRaces  = (races ?? []).filter(r => new Date(r.placedAt).toDateString() === new Date().toDateString());
-  const profitableCount = (races ?? []).filter(r => r.settled && r.netProfit > 0).length;
-  const losingCount     = (races ?? []).filter(r => r.settled && r.netProfit < 0).length;
+  const nothingChanged = !stakeInput && !maxLossInput && !liqInput && !minRunnersInput;
+
+  const profitToday    = status?.profitToday    ?? 0;
+  const totalNetProfit = status?.totalNetProfit ?? 0;
 
   return (
-    <div className="space-y-6 pb-8">
-
+    <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex items-center justify-between">
         <div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#0072bb]/20 flex items-center justify-center">
-              <Scale className="w-4 h-4 text-[#0072bb]" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">Bookie Bot</h1>
-            {isPaper && (
-              <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/30 text-[10px] uppercase tracking-wider font-semibold">
-                Paper
-              </Badge>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground mt-1.5 ml-0.5">
-            Level-stakes back-the-field · Horse racing WIN markets · {cfg?.countryCodes?.join(", ") ?? "GB, IE"}
+          <h1 className="text-2xl font-bold tracking-tight">Bookie Bot</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Mirrors market money — lays each runner in proportion to public betting volume
           </p>
         </div>
-
-        <Button
-          size="lg"
-          variant={isRunning ? "destructive" : "default"}
-          disabled={isLoading || startMutation.isPending || stopMutation.isPending}
-          onClick={() => isRunning ? stopMutation.mutate() : startMutation.mutate()}
-          className="gap-2 shadow-md"
-        >
-          {isRunning ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-          {isRunning ? "Stop Bookie Bot" : "Start Bookie Bot"}
-        </Button>
-      </div>
-
-      {/* ── Status banner ── */}
-      {isRunning ? (
-        <div className="flex items-center gap-3 text-sm bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
-          <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-          </span>
-          <span className="text-emerald-600 font-medium">
-            Running{isPaper ? " in paper mode" : ""} — scanning {cfg?.countryCodes?.join(", ") ?? "GB, IE"} races
-          </span>
-          {status?.startedAt && (
-            <span className="ml-auto text-muted-foreground flex items-center gap-1.5 text-xs">
-              <Clock className="w-3 h-3" />
-              Since {new Date(status.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => qc.invalidateQueries()}>
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
+          {isRunning ? (
+            <Button
+              variant="destructive" size="sm"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+            >
+              <Square className="w-3.5 h-3.5 mr-1.5" />
+              Stop
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => startMutation.mutate()}
+              disabled={startMutation.isPending || isLoading}
+            >
+              <Play className="w-3.5 h-3.5 mr-1.5" />
+              Start
+            </Button>
           )}
         </div>
-      ) : (
-        <div className="flex items-center gap-3 text-sm bg-muted/40 border border-border/60 rounded-xl px-4 py-3">
-          <span className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40 flex-shrink-0" />
-          <span className="text-muted-foreground">Bot is stopped — press Start to begin scanning races</span>
-        </div>
-      )}
-
-      {/* ── Stats row ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {
-            label: "Today's P&L",
-            value: `${profitToday >= 0 ? "+" : ""}£${profitToday.toFixed(2)}`,
-            sub: `${status?.racesToday ?? 0} races today`,
-            colour: profitToday > 0 ? "text-emerald-500" : profitToday < 0 ? "text-red-500" : "",
-          },
-          {
-            label: "All-time P&L",
-            value: `${totalProfit >= 0 ? "+" : ""}£${totalProfit.toFixed(2)}`,
-            sub: `${status?.totalRaces ?? 0} races total`,
-            colour: totalProfit > 0 ? "text-emerald-500" : totalProfit < 0 ? "text-red-500" : "",
-          },
-          {
-            label: "Stake / Runner",
-            value: `£${cfg?.stakePerRunner ?? 10}`,
-            sub: "Flat back stake each",
-            colour: "",
-          },
-          {
-            label: "Max Race Outlay",
-            value: `£${cfg?.maxRaceNetLoss ?? 150}`,
-            sub: "Skip if total > this",
-            colour: "",
-          },
-        ].map(s => (
-          <Card key={s.label} className="border-border/60">
-            <CardContent className="pt-5 pb-4">
-              <div className={`text-2xl font-bold tabular-nums ${s.colour}`}>{s.value}</div>
-              <div className="text-xs text-muted-foreground mt-1 font-medium">{s.label}</div>
-              <div className="text-[11px] text-muted-foreground/60 mt-0.5">{s.sub}</div>
-            </CardContent>
-          </Card>
-        ))}
       </div>
 
-      {/* ── Main grid ── */}
-      <div className="grid md:grid-cols-[1fr_360px] gap-6">
+      {/* ── Status strip ── */}
+      <div className="flex flex-wrap gap-2">
+        <Badge
+          variant="outline"
+          className={isRunning
+            ? "border-emerald-500/40 text-emerald-400 bg-emerald-500/10"
+            : "text-muted-foreground"}
+        >
+          <CircleDot className={`w-2.5 h-2.5 mr-1.5 ${isRunning ? "text-emerald-400" : ""}`} />
+          {isRunning ? "Running" : "Stopped"}
+        </Badge>
+        <Badge
+          variant="outline"
+          className={isPaper
+            ? "border-amber-500/40 text-amber-400 bg-amber-500/10"
+            : "border-emerald-500/30 text-emerald-400"}
+        >
+          {isPaper ? "Paper trading" : "Live"}
+        </Badge>
+        <Badge variant="outline" className="text-muted-foreground">
+          GB + IE · WIN markets · 1–4 min before start
+        </Badge>
+      </div>
 
-        {/* Race history */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Race History</h2>
-            {(races ?? []).length > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {profitableCount} won · {losingCount} lost · {(races ?? []).filter(r => !r.settled).length} pending
-              </span>
-            )}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ── Stats ── */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "Races today",    value: String(status?.racesToday ?? 0) },
+              {
+                label: "Today P&L",
+                value: profitToday >= 0 ? `+£${profitToday.toFixed(2)}` : `-£${Math.abs(profitToday).toFixed(2)}`,
+                cls: profitToday > 0 ? "text-emerald-400" : profitToday < 0 ? "text-red-400" : "",
+              },
+              { label: "Total races",   value: String(status?.totalRaces ?? 0) },
+              {
+                label: "All-time P&L",
+                value: totalNetProfit >= 0 ? `+£${totalNetProfit.toFixed(2)}` : `-£${Math.abs(totalNetProfit).toFixed(2)}`,
+                cls: totalNetProfit > 0 ? "text-emerald-400" : totalNetProfit < 0 ? "text-red-400" : "",
+              },
+            ].map(({ label, value, cls }) => (
+              <Card key={label} className="bg-card/60">
+                <CardContent className="pt-4 pb-3 px-4">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</div>
+                  <div className={`text-2xl font-bold tabular-nums mt-0.5 ${cls ?? ""}`}>{value}</div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
 
-          {!races || races.length === 0 ? (
-            <div className="rounded-xl border border-border/60 border-dashed bg-muted/20 py-16 text-center">
-              <Banknote className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No races yet</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Start the bot to begin laying markets</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {races.map(race => <RaceRow key={race.marketId} race={race} />)}
-            </div>
-          )}
+          {/* ── Race history ── */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Race History</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!races || races.length === 0 ? (
+                <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+                  No races yet — start the bot to begin
+                </div>
+              ) : (
+                <div className="divide-y divide-border/50">
+                  {races.map(race => {
+                    const p = fmtProfit(race.netProfit, race.settled);
+                    const t = new Date(race.placedAt);
+                    return (
+                      <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
+                        <div className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 transition-colors cursor-pointer">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{race.eventName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {race.marketName} · {race.runners} runners · {t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <div className={`text-sm font-bold tabular-nums ${p.cls}`}>{p.text}</div>
+                            {race.settled
+                              ? <div className="text-[10px] text-muted-foreground">Settled</div>
+                              : <div className="text-[10px] text-amber-400/70">Pending</div>
+                            }
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground/50 flex-shrink-0" />
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Right column: config + today's summary */}
+        {/* ── Config ── */}
         <div className="space-y-4">
-
-          {/* Today's summary */}
-          <Card className="border-border/60">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Today</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0">
-              {todaysRaces.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-4 text-center">No races today yet</p>
-              ) : (
-                todaysRaces.map(race => (
-                  <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
-                    <div className="flex items-center justify-between py-2 border-b border-border/40 last:border-0 cursor-pointer hover:opacity-80 transition-opacity group">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                          {race.eventName}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {race.betCount} runners · £{race.totalStaked.toFixed(2)}
-                        </div>
-                      </div>
-                      <PnlChip value={race.netProfit} settled={race.settled} />
-                    </div>
-                  </Link>
-                ))
+          {/* Paper trading toggle */}
+          <Card>
+            <CardContent className="pt-4 pb-4 px-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">Paper Trading</div>
+                  <div className="text-xs text-muted-foreground">No real money placed</div>
+                </div>
+                <Switch
+                  checked={isPaper}
+                  onCheckedChange={v => paperMutation.mutate(v)}
+                  disabled={paperMutation.isPending}
+                />
+              </div>
+              {!isPaper && (
+                <div className="rounded-md bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400">
+                  Live mode — real money will be placed on Betfair
+                </div>
               )}
             </CardContent>
           </Card>
 
           {/* Config */}
-          <Card className="border-border/60">
+          <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Strategy Config</CardTitle>
+              <CardTitle className="text-sm">Configuration</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-
-              {/* Country presets */}
-              <div className="space-y-2">
-                <Label className="text-xs">Country Codes</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { label: "GB + IE",       codes: ["GB", "IE"] },
-                    { label: "AU",            codes: ["AU"] },
-                    { label: "GB + IE + AU",  codes: ["GB", "IE", "AU"] },
-                    { label: "All",           codes: ["GB", "IE", "AU", "US", "ZA", "FR"] },
-                  ].map(p => (
-                    <Button
-                      key={p.label}
-                      size="sm"
-                      variant={cfg?.countryCodes?.join(",") === p.codes.join(",") ? "default" : "outline"}
-                      className="h-7 text-xs"
-                      disabled={configMutation.isPending}
-                      onClick={() => configMutation.mutate({ countryCodes: p.codes })}
-                    >
-                      {p.label}
-                    </Button>
-                  ))}
-                </div>
+            <CardContent className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Total Lay Budget Per Race (£)</Label>
                 <Input
-                  placeholder={`Current: ${cfg?.countryCodes?.join(", ") ?? "GB, IE"}`}
-                  value={countryInput}
-                  onChange={e => setCountryInput(e.target.value)}
-                  className="text-xs h-8"
+                  type="number" min={10} max={10000}
+                  placeholder={`Current: £${cfg?.totalStakePerRace ?? 100}`}
+                  value={stakeInput} onChange={e => setStakeInput(e.target.value)}
+                  className="h-8 text-sm"
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="stakePerRunner" className="text-xs">Lay Stake / Runner (£)</Label>
-                  <Input
-                    id="stakePerRunner" type="number"
-                    placeholder={String(cfg?.stakePerRunner ?? 10)}
-                    value={stakePerRunner} onChange={e => setStakePerRunner(e.target.value)}
-                    min={2} max={500} className="h-8 text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="maxOdds" className="text-xs">Max Lay Odds (liability cap)</Label>
-                  <Input
-                    id="maxOdds" type="number"
-                    placeholder={String(cfg?.maxOdds ?? 20)}
-                    value={maxOddsInput} onChange={e => setMaxOddsInput(e.target.value)}
-                    min={2} max={100} className="h-8 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="maxLoss" className="text-xs">Max Race Loss (£)</Label>
-                  <Input
-                    id="maxLoss" type="number"
-                    placeholder={String(cfg?.maxRaceNetLoss ?? 150)}
-                    value={maxLoss} onChange={e => setMaxLoss(e.target.value)}
-                    min={1} max={5000} className="h-8 text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="minRunners" className="text-xs">Min Runners</Label>
-                  <Input
-                    id="minRunners" type="number"
-                    placeholder={String(cfg?.minRunners ?? 5)}
-                    value={minRunnersInput} onChange={e => setMinRunnersInput(e.target.value)}
-                    min={2} max={20} className="h-8 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="rounded-md bg-white/[0.04] border border-white/10 px-3 py-2 text-[11px] text-muted-foreground/80 space-y-0.5">
-                <div className="font-medium text-muted-foreground">How it works</div>
-                <div>Lay all runners at equal stake. P&L = stake × (runners − winner odds)</div>
-                <div>Favourite wins (short odds) → biggest profit · Outsider wins → biggest loss</div>
-                <div>Breakeven = number of eligible runners as decimal odds</div>
+                <p className="text-[10px] text-muted-foreground/70">
+                  Split across runners in proportion to their betting volume
+                </p>
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="minLiq" className="text-xs">Min Market Liquidity (£)</Label>
+                <Label className="text-xs">Max Net Loss Per Race (£)</Label>
                 <Input
-                  id="minLiq" type="number"
-                  placeholder={String(cfg?.minLiquidity ?? 1000)}
-                  value={minLiq} onChange={e => setMinLiq(e.target.value)}
-                  min={0} max={500000} step={1000} className="h-8 text-sm"
+                  type="number" min={10} max={10000}
+                  placeholder={`Current: £${cfg?.maxRaceNetLoss ?? 200}`}
+                  value={maxLossInput} onChange={e => setMaxLossInput(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground/70">
+                  Race skipped if worst-case outcome exceeds this
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Min Market Liquidity (£)</Label>
+                <Input
+                  type="number" min={0}
+                  placeholder={`Current: £${cfg?.minLiquidity ?? 8000}`}
+                  value={liqInput} onChange={e => setLiqInput(e.target.value)}
+                  className="h-8 text-sm"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Min Runners</Label>
+                <Input
+                  type="number" min={2} max={20}
+                  placeholder={`Current: ${cfg?.minRunners ?? 4}`}
+                  value={minRunnersInput} onChange={e => setMinRunnersInput(e.target.value)}
+                  className="h-8 text-sm"
                 />
               </div>
 
               <Button
                 onClick={handleSaveConfig}
-                disabled={configMutation.isPending || (stakePerRunner === "" && maxLoss === "" && maxOddsInput === "" && minRunnersInput === "" && minLiq === "" && countryInput.trim() === "")}
+                disabled={configMutation.isPending || nothingChanged}
                 className="w-full h-8 text-xs"
               >
                 Save Config
               </Button>
 
-              <div className="text-[11px] text-muted-foreground/70 border-t border-border/40 pt-3 space-y-0.5">
-                <div className="font-medium text-muted-foreground/90">Fixed parameters</div>
-                <div>Market type: WIN · Timing: 1–4 min before start</div>
-                <div>Min odds: 1.5 · Min pool share: 2% · Timing: 1–4 min before start</div>
+              <div className="text-[10px] text-muted-foreground/60 border-t border-border/40 pt-3 space-y-0.5">
+                <div>Countries: GB + IE · Market type: WIN</div>
+                <div>Timing: 1–4 min before start</div>
+                <div>Odds range: 1.5 – 50</div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* How it works */}
+          <Card className="bg-muted/20">
+            <CardContent className="pt-4 pb-4 px-4 text-xs text-muted-foreground space-y-1.5">
+              <div className="font-medium text-muted-foreground/90">How it works</div>
+              <div>Checks how much money punters have bet on each runner, then lays each one proportionally to their share of the total market volume.</div>
+              <div className="flex items-center gap-1.5 text-emerald-400/80">
+                <TrendingUp className="w-3 h-3 flex-shrink-0" />
+                Heavily-backed runner wins = maximum loss
+              </div>
+              <div className="flex items-center gap-1.5 text-blue-400/80">
+                <TrendingDown className="w-3 h-3 flex-shrink-0" />
+                Lightly-backed runner wins = best result
               </div>
             </CardContent>
           </Card>
         </div>
       </div>
-
-      {/* ── Activity console ── */}
-      <div className="rounded-xl border border-white/10 bg-[#0a0d14] overflow-hidden shadow-xl">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
-          <div className="flex items-center gap-2">
-            <Activity className="w-3.5 h-3.5 text-slate-500" />
-            <span className="text-xs font-medium text-slate-400">Live Activity</span>
-            {isRunning && (
-              <span className="flex items-center gap-1 text-[10px] text-emerald-500/80">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                LIVE
-              </span>
-            )}
-          </div>
-          {logs && logs.length > 0 && (
-            <span className="text-[10px] text-slate-600">{logs.length} entries</span>
-          )}
-        </div>
-        <div
-          ref={consoleRef}
-          className="h-64 overflow-y-auto px-4 py-3 space-y-0 scrollbar-thin"
-        >
-          {!logs || logs.length === 0 ? (
-            <div className="text-slate-600 text-xs py-8 text-center">
-              No activity yet — start the bot to see live logs here
-            </div>
-          ) : (
-            [...logs].reverse().map(log => <LogLine key={log.id} log={log} />)
-          )}
-        </div>
-      </div>
-
     </div>
   );
 }

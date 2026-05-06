@@ -19,8 +19,7 @@ async function getBookieStats() {
 
   const [today] = await db
     .select({
-      racesToday: sql<number>`count(distinct ${betsTable.marketId})::int`,
-      betsToday: sql<number>`count(*)::int`,
+      racesToday:  sql<number>`count(distinct ${betsTable.marketId})::int`,
       profitToday: sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
     })
     .from(betsTable)
@@ -31,106 +30,80 @@ async function getBookieStats() {
 
   const [allTime] = await db
     .select({
-      totalRaces: sql<number>`count(distinct ${betsTable.marketId})::int`,
+      totalRaces:     sql<number>`count(distinct ${betsTable.marketId})::int`,
       totalNetProfit: sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
     })
     .from(betsTable)
     .where(sql`${betsTable.strategyName} = 'Bookie Bot'`);
 
   return {
-    racesToday: today?.racesToday ?? 0,
-    betsToday: today?.betsToday ?? 0,
-    profitToday: Math.round((today?.profitToday ?? 0) * 100) / 100,
-    totalRaces: allTime?.totalRaces ?? 0,
+    racesToday:     today?.racesToday  ?? 0,
+    profitToday:    Math.round((today?.profitToday ?? 0) * 100) / 100,
+    totalRaces:     allTime?.totalRaces  ?? 0,
     totalNetProfit: Math.round((allTime?.totalNetProfit ?? 0) * 100) / 100,
+  };
+}
+
+function statusPayload() {
+  return {
+    isRunning:  isBookieBotRunning(),
+    startedAt:  getBookieStartedAt()?.toISOString() ?? null,
+    bookieConfig: getBookieConfig(),
   };
 }
 
 router.get("/bookie/status", async (_req, res): Promise<void> => {
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getBookieStats();
-  res.json({
-    isRunning: isBookieBotRunning(),
-    startedAt: getBookieStartedAt()?.toISOString() ?? null,
-    paperTradingMode: config?.paperTradingMode ?? true,
-    bookieConfig: getBookieConfig(),
-    ...stats,
-  });
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats });
 });
 
 router.post("/bookie/start", async (_req, res): Promise<void> => {
   await startBookieBot();
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getBookieStats();
-  res.json({
-    isRunning: true,
-    startedAt: getBookieStartedAt()?.toISOString() ?? null,
-    paperTradingMode: config?.paperTradingMode ?? true,
-    bookieConfig: getBookieConfig(),
-    ...stats,
-  });
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats });
 });
 
 router.post("/bookie/stop", async (_req, res): Promise<void> => {
   await stopBookieBot();
   const stats = await getBookieStats();
-  res.json({
-    isRunning: false,
-    startedAt: null,
-    bookieConfig: getBookieConfig(),
-    ...stats,
-  });
+  res.json({ ...statusPayload(), ...stats });
 });
 
 router.patch("/bookie/config", async (req, res): Promise<void> => {
   const body = req.body as Record<string, unknown>;
 
-  const stakePerRunner =
-    typeof body.stakePerRunner === "number" ? body.stakePerRunner : undefined;
-  const maxRaceNetLoss =
-    typeof body.maxRaceNetLoss === "number" ? body.maxRaceNetLoss : undefined;
-  const maxOdds =
-    typeof body.maxOdds === "number" ? body.maxOdds : undefined;
-  const minRunners =
-    typeof body.minRunners === "number" ? body.minRunners : undefined;
-  const minLiquidity =
-    typeof body.minLiquidity === "number" ? body.minLiquidity : undefined;
-  const countryCodes = Array.isArray(body.countryCodes)
+  const totalStakePerRace = typeof body.totalStakePerRace === "number" ? body.totalStakePerRace : undefined;
+  const maxRaceNetLoss    = typeof body.maxRaceNetLoss    === "number" ? body.maxRaceNetLoss    : undefined;
+  const minLiquidity      = typeof body.minLiquidity      === "number" ? body.minLiquidity      : undefined;
+  const minRunners        = typeof body.minRunners        === "number" ? body.minRunners        : undefined;
+  const countryCodes      = Array.isArray(body.countryCodes)
     ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
     : undefined;
 
-  if (stakePerRunner !== undefined && (stakePerRunner < 2 || stakePerRunner > 500)) {
-    res.status(400).json({ error: "stakePerRunner must be between 2 and 500" });
-    return;
+  if (totalStakePerRace !== undefined && (totalStakePerRace < 10 || totalStakePerRace > 10000)) {
+    res.status(400).json({ error: "totalStakePerRace must be between £10 and £10,000" }); return;
   }
-  if (maxRaceNetLoss !== undefined && (maxRaceNetLoss <= 0 || maxRaceNetLoss > 5000)) {
-    res.status(400).json({ error: "maxRaceNetLoss must be between 1 and 5000" });
-    return;
+  if (maxRaceNetLoss !== undefined && (maxRaceNetLoss < 10 || maxRaceNetLoss > 10000)) {
+    res.status(400).json({ error: "maxRaceNetLoss must be between £10 and £10,000" }); return;
   }
-  if (maxOdds !== undefined && (maxOdds < 2 || maxOdds > 100)) {
-    res.status(400).json({ error: "maxOdds must be between 2 and 100" });
-    return;
+  if (minLiquidity !== undefined && (minLiquidity < 0 || minLiquidity > 1_000_000)) {
+    res.status(400).json({ error: "minLiquidity must be between 0 and 1,000,000" }); return;
   }
   if (minRunners !== undefined && (minRunners < 2 || minRunners > 20)) {
-    res.status(400).json({ error: "minRunners must be between 2 and 20" });
-    return;
-  }
-  if (minLiquidity !== undefined && (minLiquidity < 0 || minLiquidity > 500000)) {
-    res.status(400).json({ error: "minLiquidity must be between 0 and 500000" });
-    return;
+    res.status(400).json({ error: "minRunners must be between 2 and 20" }); return;
   }
   if (countryCodes !== undefined && countryCodes.length === 0) {
-    res.status(400).json({ error: "At least one country code is required" });
-    return;
+    res.status(400).json({ error: "At least one country code is required" }); return;
   }
 
   const patch: Parameters<typeof setBookieConfig>[0] = {};
-  if (stakePerRunner !== undefined) patch.stakePerRunner = stakePerRunner;
-  if (maxRaceNetLoss !== undefined) patch.maxRaceNetLoss = maxRaceNetLoss;
-  if (maxOdds !== undefined) patch.maxOdds = maxOdds;
-  if (minRunners !== undefined) patch.minRunners = minRunners;
-  if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
-  if (countryCodes !== undefined) patch.countryCodes = countryCodes;
+  if (totalStakePerRace !== undefined) patch.totalStakePerRace = totalStakePerRace;
+  if (maxRaceNetLoss    !== undefined) patch.maxRaceNetLoss    = maxRaceNetLoss;
+  if (minLiquidity      !== undefined) patch.minLiquidity      = minLiquidity;
+  if (minRunners        !== undefined) patch.minRunners        = minRunners;
+  if (countryCodes      !== undefined) patch.countryCodes      = countryCodes;
   setBookieConfig(patch);
   await saveBookieConfigToDb();
   res.json({ bookieConfig: getBookieConfig() });
@@ -150,25 +123,22 @@ router.get("/bookie/logs", async (req, res): Promise<void> => {
       id: l.id,
       level: l.level,
       message: l.message.replace(/^\[BOOKIE\] /, ""),
-      metadata: l.metadata ?? null,
       createdAt: l.createdAt.toISOString(),
-    }))
+    })),
   );
 });
 
+// Race list — one row per market, with net P&L once settled
 router.get("/bookie/races", async (_req, res): Promise<void> => {
   const rows = await db
     .select({
-      marketId: betsTable.marketId,
+      marketId:   betsTable.marketId,
       marketName: betsTable.marketName,
-      eventName: betsTable.eventName,
-      placedAt: sql<string>`min(${betsTable.placedAt})`,
-      betCount: sql<number>`count(*)::int`,
-      totalStaked: sql<number>`sum(${betsTable.stakeAmount})::float`,
-      totalCollected: sql<number>`coalesce(sum(case when ${betsTable.status} = 'WON' then ${betsTable.stakeAmount} else 0 end), 0)::float`,
-      totalPaidOut: sql<number>`coalesce(sum(case when ${betsTable.status} = 'LOST' then abs(${betsTable.actualProfit}) else 0 end), 0)::float`,
-      netProfit: sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
-      settled: sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','VOID'))`,
+      eventName:  betsTable.eventName,
+      placedAt:   sql<string>`min(${betsTable.placedAt})`,
+      runners:    sql<number>`count(*)::int`,
+      netProfit:  sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
+      settled:    sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','VOID'))`,
     })
     .from(betsTable)
     .where(sql`${betsTable.strategyName} = 'Bookie Bot'`)
@@ -176,9 +146,13 @@ router.get("/bookie/races", async (_req, res): Promise<void> => {
     .orderBy(desc(sql`min(${betsTable.placedAt})`))
     .limit(50);
 
-  res.json(rows);
+  res.json(rows.map(r => ({
+    ...r,
+    netProfit: Math.round(r.netProfit * 100) / 100,
+  })));
 });
 
+// Race detail — individual runner bets for a market
 router.get("/bookie/race/:marketId", async (req, res): Promise<void> => {
   const { marketId } = req.params;
   const bets = await db
@@ -190,19 +164,26 @@ router.get("/bookie/race/:marketId", async (req, res): Promise<void> => {
     )
     .orderBy(desc(betsTable.stakeAmount));
 
+  const totalStake = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
+
   res.json(
-    bets.map(b => ({
-      id: b.id,
-      selectionName: b.selectionName,
-      betType: b.betType,
-      requestedOdds: Number(b.requestedOdds),
-      stakeAmount: Number(b.stakeAmount),
-      liability: Math.round(Number(b.stakeAmount) * (Number(b.requestedOdds) - 1) * 100) / 100,
-      actualProfit: b.actualProfit !== null ? Number(b.actualProfit) : null,
-      status: b.status,
-      aiReasoning: b.aiReasoning,
-      placedAt: b.placedAt.toISOString(),
-    })),
+    bets.map(b => {
+      const odds  = Number(b.requestedOdds);
+      const stake = Number(b.stakeAmount);
+      // Race net if THIS runner wins = total collected from all other lays − liability on this one
+      const raceNetIfWins = Math.round((totalStake - stake * odds) * 100) / 100;
+      return {
+        id:            b.id,
+        selectionId:   b.selectionId,
+        selectionName: b.selectionName,
+        layOdds:       odds,
+        layStake:      stake,
+        raceNetIfWins,
+        actualProfit:  b.actualProfit !== null ? Number(b.actualProfit) : null,
+        status:        b.status,
+        placedAt:      b.placedAt.toISOString(),
+      };
+    }),
   );
 });
 
