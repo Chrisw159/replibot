@@ -15,24 +15,24 @@ const MIN_RUNNER_SHARE = 0.02;
 const MIN_MINS_BEFORE_START = 1;
 const MAX_MINS_BEFORE_START = 4;
 const MIN_ODDS = 1.5;
-const MAX_ODDS = 50;
+const HARD_MAX_ODDS = 1000;
 
 const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
 
 interface BookieConfig {
-  // Flat stake placed on each runner (BACK bets).
-  // Profit if winner odds > number of runners backed; loss otherwise.
+  // Lay stake per runner — this is the backer's stake you're accepting.
+  // Your liability if that runner wins = stakePerRunner × (odds − 1).
   stakePerRunner: number;
-  // Safety cap: skip the race if total outlay (stakePerRunner × runners) exceeds this.
+  // Skip the race if worst-case net loss (highest-odds runner wins) exceeds this.
   maxRaceNetLoss: number;
-  // Skip races with fewer than this many eligible runners.
-  // With fewer runners there are no real outsiders and the breakeven is too easy to breach.
-  // e.g. 6 runners → breakeven at 6.0+ odds, giving meaningful outsider payouts.
+  // Don't lay runners above this price — caps your maximum liability per runner.
+  maxOdds: number;
+  // Skip races with fewer eligible runners than this.
   minRunners: number;
   // Countries to scan. Common codes: GB, IE, US, AU, ZA, FR
   countryCodes: string[];
-  // Minimum market totalMatched. Higher = more representative crowd data.
+  // Minimum market totalMatched.
   minLiquidity: number;
 }
 
@@ -45,7 +45,8 @@ const processingMarkets = new Set<string>();
 let bookieConfig: BookieConfig = {
   stakePerRunner: 10,
   maxRaceNetLoss: 150,
-  minRunners: 6,
+  maxOdds: 20,
+  minRunners: 5,
   countryCodes: ["GB", "IE"],
   minLiquidity: 1000,
 };
@@ -91,6 +92,7 @@ async function loadBookieConfigFromDb(): Promise<void> {
       if (typeof saved.minLiquidity === "number") bookieConfig.minLiquidity = saved.minLiquidity;
       if (typeof saved.stakePerRunner === "number") bookieConfig.stakePerRunner = saved.stakePerRunner;
       if (typeof saved.maxRaceNetLoss === "number") bookieConfig.maxRaceNetLoss = saved.maxRaceNetLoss;
+      if (typeof saved.maxOdds === "number") bookieConfig.maxOdds = saved.maxOdds;
       if (typeof saved.minRunners === "number") bookieConfig.minRunners = saved.minRunners;
       logger.info({ bookieConfig }, "[BOOKIE] Loaded config from DB");
     }
@@ -300,11 +302,14 @@ async function runBookieMarket(
     return;
   }
 
-  // Pass 1: filter by status and odds only
+  const { maxOdds } = bookieConfig;
+
+  // Pass 1: filter by status and odds only.
+  // Use lay price for LAY bets; fall back to back price if lay not available.
   const priceEligible = marketDetail.runners.filter(r => {
     if (r.status !== "ACTIVE") return false;
-    const odds = r.bestLayPrice ?? r.bestBackPrice;
-    if (!odds || odds < MIN_ODDS || odds > MAX_ODDS) return false;
+    const layPrice = r.bestLayPrice ?? r.bestBackPrice;
+    if (!layPrice || layPrice < MIN_ODDS || layPrice > Math.min(maxOdds, HARD_MAX_ODDS)) return false;
     return true;
   });
 
@@ -313,19 +318,20 @@ async function runBookieMarket(
     return;
   }
 
-  // Use back price for implied probability — reflects where crowd money sits.
-  const withImplied = priceEligible.map(r => {
-    const backPrice = r.bestBackPrice ?? r.bestLayPrice ?? 2.0;
+  // Use lay price for the bet; back price for implied probability calculation.
+  const withPrices = priceEligible.map(r => {
+    const layPrice  = r.bestLayPrice  ?? r.bestBackPrice ?? 2.0;
+    const backPrice = r.bestBackPrice ?? r.bestLayPrice  ?? 2.0;
     const impliedProb = 1 / backPrice;
-    return { runner: r, backPrice, impliedProb };
+    return { runner: r, layPrice, backPrice, impliedProb };
   });
 
-  const totalImplied = withImplied.reduce((s, r) => s + r.impliedProb, 0);
+  const totalImplied = withPrices.reduce((s, r) => s + r.impliedProb, 0);
 
   // Pass 2: drop runners with less than MIN_RUNNER_SHARE of the implied pool.
-  const eligible = withImplied.filter(r => (r.impliedProb / totalImplied) >= MIN_RUNNER_SHARE);
+  const eligible = withPrices.filter(r => (r.impliedProb / totalImplied) >= MIN_RUNNER_SHARE);
 
-  const dropped = withImplied.length - eligible.length;
+  const dropped = withPrices.length - eligible.length;
   if (dropped > 0) {
     log("info",
       `${eventName} — dropped ${dropped} runner(s) with < ${(MIN_RUNNER_SHARE * 100).toFixed(0)}% implied probability`,
@@ -339,8 +345,6 @@ async function runBookieMarket(
 
   const { stakePerRunner, maxRaceNetLoss, minRunners } = bookieConfig;
 
-  // Minimum field size: small fields have no real outsiders and the breakeven
-  // point (= number of runners) is too low to generate meaningful profits.
   if (eligible.length < minRunners) {
     log("info",
       `Skipping ${eventName} — only ${eligible.length} eligible runner(s), need at least ${minRunners}`,
@@ -348,33 +352,46 @@ async function runBookieMarket(
     return;
   }
 
-  // Level-stakes back-the-field:
-  // Same flat stake on every runner. Breakeven when winner's odds > number of runners.
-  // Short-priced winners (favourites) produce a controlled loss; big outsiders produce
-  // a proportionally large profit.
-  const totalRisk = Math.round(stakePerRunner * eligible.length * 100) / 100;
+  // LAY ALL eligible runners at equal stake.
+  //
+  // P&L when runner i wins:
+  //   = (n−1) × stakePerRunner  [collected from all other lays]
+  //   − stakePerRunner × (odds_i − 1)  [liability paid on the winner]
+  //   = stakePerRunner × (n − odds_i)
+  //
+  // Profit   when odds_i < n  (favourite / short-priced runners)
+  // Breakeven when odds_i = n
+  // Loss     when odds_i > n  (outsiders)
+  //
+  // Max liability (worst case): stakePerRunner × (maxOdds − 1)
+  const n = eligible.length;
+  const breakevenOdds = n; // the decimal odds value that produces zero P&L
+  const maxLiability  = Math.round(stakePerRunner * (eligible[eligible.length - 1].layPrice - 1) * 100) / 100;
+  const worstCaseLoss = Math.round(stakePerRunner * (eligible[eligible.length - 1].layPrice - n) * 100) / 100;
 
-  if (totalRisk > maxRaceNetLoss) {
+  if (worstCaseLoss > maxRaceNetLoss) {
     log("info",
-      `Skipping ${eventName} — total outlay £${totalRisk.toFixed(2)} exceeds max £${maxRaceNetLoss} (${eligible.length} runners × £${stakePerRunner})`,
+      `Skipping ${eventName} — worst-case loss £${worstCaseLoss.toFixed(2)} exceeds limit £${maxRaceNetLoss} (raise maxOdds or maxRaceNetLoss)`,
     );
     return;
   }
 
-  // Breakeven odds = number of runners backed (in decimal)
-  const breakevenOdds = eligible.length;
+  const runnerSummary = eligible
+    .map(r => `${r.runner.runnerName} (${r.layPrice})`)
+    .join(", ");
 
   log(
     "info",
-    `Backing ${eligible.length} runners in ${eventName} — £${stakePerRunner}/runner · £${totalRisk.toFixed(2)} total at risk · breakeven @ ${breakevenOdds}+ odds${paperTrading ? " [PAPER]" : ""}`,
-    { marketId, totalRisk, stakePerRunner, runners: eligible.length, breakevenOdds },
+    `LAYING ${n} runners in ${eventName} — £${stakePerRunner}/runner · breakeven @ ${breakevenOdds} odds · worst-case -£${Math.abs(worstCaseLoss).toFixed(2)} if outsider wins · [${runnerSummary}]${paperTrading ? " [PAPER]" : ""}`,
+    { marketId, stakePerRunner, runners: n, breakevenOdds, maxLiability, worstCaseLoss },
   );
 
   for (const r of eligible) {
-    const odds = r.backPrice;
-    const netIfWins = Math.round((stakePerRunner * odds - totalRisk) * 100) / 100;
+    const odds = r.layPrice;
+    // Net P&L for this race if THIS runner wins
+    const netIfThisWins = Math.round(stakePerRunner * (n - odds) * 100) / 100;
     const reasoning =
-      `[BOOKIE] Level stake £${stakePerRunner} · back @ ${odds} · net if wins ${netIfWins >= 0 ? "+" : ""}£${netIfWins.toFixed(2)} · ${eligible.length} runners · breakeven ${breakevenOdds}+`;
+      `[BOOKIE] LAY @ ${odds} · £${stakePerRunner} stake · net if wins ${netIfThisWins >= 0 ? "+" : ""}£${netIfThisWins.toFixed(2)} · ${n} runners · breakeven ${breakevenOdds}`;
 
     if (paperTrading) {
       await db.insert(betsTable).values({
@@ -385,11 +402,12 @@ async function runBookieMarket(
         eventName,
         selectionId: r.runner.selectionId,
         selectionName: r.runner.runnerName,
-        betType: "BACK",
+        betType: "LAY",
         requestedOdds: odds.toFixed(2),
         matchedOdds: odds.toFixed(2),
         stakeAmount: stakePerRunner.toFixed(2),
-        potentialProfit: (stakePerRunner * (odds - 1)).toFixed(2),
+        // potentialProfit = what we collect if this runner LOSES (the common outcome)
+        potentialProfit: stakePerRunner.toFixed(2),
         status: "MATCHED",
         aiReasoning: reasoning,
         betId: `BOOKIE-PAPER-${Date.now()}-${r.runner.selectionId}`,
@@ -398,7 +416,7 @@ async function runBookieMarket(
       const result = await placeBet({
         marketId,
         selectionId: r.runner.selectionId,
-        betType: "BACK",
+        betType: "LAY",
         price: odds,
         size: stakePerRunner,
       });
@@ -410,10 +428,10 @@ async function runBookieMarket(
         eventName,
         selectionId: r.runner.selectionId,
         selectionName: r.runner.runnerName,
-        betType: "BACK",
+        betType: "LAY",
         requestedOdds: odds.toFixed(2),
         stakeAmount: stakePerRunner.toFixed(2),
-        potentialProfit: (stakePerRunner * (odds - 1)).toFixed(2),
+        potentialProfit: stakePerRunner.toFixed(2),
         status: result.status === "PLACED" ? "PLACED" : "CANCELLED",
         aiReasoning: reasoning,
         betId: result.betId ?? `BOOKIE-${Date.now()}-${r.runner.selectionId}`,
@@ -488,18 +506,19 @@ async function runBookieSettlement(): Promise<void> {
         const odds = Number(bet.matchedOdds ?? bet.requestedOdds);
         const stake = Number(bet.stakeAmount);
 
-        // BACK bet settlement:
-        // WON  = backed horse won the race  → profit = stake × (odds − 1)
-        // LOST = backed horse didn't win    → loss   = −stake
+        // LAY bet settlement:
+        // WON  = horse LOST the race  → we collect backer's stake  = +stake
+        // LOST = horse WON the race   → we pay liability           = −stake × (odds − 1)
         const actualProfit = selectionWon
-          ? stake * (odds - 1)
-          : -stake;
+          ? -(stake * (odds - 1))   // we pay the liability
+          :   stake;                // we collect the backer's stake
 
-        if (selectionWon) totalCollected += stake * (odds - 1);
-        else totalPaidOut += stake;
+        if (!selectionWon) totalCollected += stake;
+        else totalPaidOut += stake * (odds - 1);
 
         await db.update(betsTable).set({
-          status: selectionWon ? "WON" : "LOST",
+          // For a LAY bet: WON means the horse LOST (we keep the stake)
+          status: selectionWon ? "LOST" : "WON",
           actualProfit: actualProfit.toFixed(2),
           settledAt,
         }).where(eq(betsTable.id, bet.id));

@@ -89,6 +89,8 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
     typeof body.stakePerRunner === "number" ? body.stakePerRunner : undefined;
   const maxRaceNetLoss =
     typeof body.maxRaceNetLoss === "number" ? body.maxRaceNetLoss : undefined;
+  const maxOdds =
+    typeof body.maxOdds === "number" ? body.maxOdds : undefined;
   const minRunners =
     typeof body.minRunners === "number" ? body.minRunners : undefined;
   const minLiquidity =
@@ -103,6 +105,10 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
   }
   if (maxRaceNetLoss !== undefined && (maxRaceNetLoss <= 0 || maxRaceNetLoss > 5000)) {
     res.status(400).json({ error: "maxRaceNetLoss must be between 1 and 5000" });
+    return;
+  }
+  if (maxOdds !== undefined && (maxOdds < 2 || maxOdds > 100)) {
+    res.status(400).json({ error: "maxOdds must be between 2 and 100" });
     return;
   }
   if (minRunners !== undefined && (minRunners < 2 || minRunners > 20)) {
@@ -121,6 +127,7 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
   const patch: Parameters<typeof setBookieConfig>[0] = {};
   if (stakePerRunner !== undefined) patch.stakePerRunner = stakePerRunner;
   if (maxRaceNetLoss !== undefined) patch.maxRaceNetLoss = maxRaceNetLoss;
+  if (maxOdds !== undefined) patch.maxOdds = maxOdds;
   if (minRunners !== undefined) patch.minRunners = minRunners;
   if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
   if (countryCodes !== undefined) patch.countryCodes = countryCodes;
