@@ -169,6 +169,9 @@ export default function BookieBotRace() {
             <div>
               <div className="text-xs text-white/50 uppercase tracking-wide">Worst case</div>
               <div className="text-2xl font-bold text-amber-300">-£{worstCaseLoss.toFixed(2)}</div>
+              {worstBet && (
+                <div className="text-[10px] text-white/40 mt-0.5">if {worstBet.selectionName} wins</div>
+              )}
             </div>
             <div>
               <div className="text-xs text-white/50 uppercase tracking-wide">Net P&L</div>
