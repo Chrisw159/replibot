@@ -26,6 +26,7 @@ interface BookieStatus {
   bookieConfig: {
     stakePerRunner: number;
     maxRaceNetLoss: number;
+    minRunners: number;
     countryCodes: string[];
     minLiquidity: number;
   };
@@ -200,6 +201,7 @@ export default function BookieBot() {
 
   const [stakePerRunner, setStakePerRunner] = useState("");
   const [maxLoss, setMaxLoss]               = useState("");
+  const [minRunnersInput, setMinRunnersInput] = useState("");
   const [minLiq, setMinLiq]                 = useState("");
   const [countryInput, setCountryInput]     = useState("");
 
@@ -207,12 +209,13 @@ export default function BookieBot() {
     mutationFn: (body: {
       stakePerRunner?: number;
       maxRaceNetLoss?: number;
+      minRunners?: number;
       minLiquidity?: number;
       countryCodes?: string[];
     }) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookie-status"] });
-      setStakePerRunner(""); setMaxLoss(""); setMinLiq(""); setCountryInput("");
+      setStakePerRunner(""); setMaxLoss(""); setMinRunnersInput(""); setMinLiq(""); setCountryInput("");
     },
   });
 
@@ -224,6 +227,7 @@ export default function BookieBot() {
     const patch: Parameters<typeof configMutation.mutate>[0] = {};
     if (stakePerRunner !== "")      patch.stakePerRunner     = parseFloat(stakePerRunner);
     if (maxLoss !== "")             patch.maxRaceNetLoss     = parseFloat(maxLoss);
+    if (minRunnersInput !== "")     patch.minRunners         = parseInt(minRunnersInput, 10);
     if (minLiq !== "")              patch.minLiquidity       = parseFloat(minLiq);
     if (countryInput.trim() !== "") {
       patch.countryCodes = countryInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
@@ -450,6 +454,19 @@ export default function BookieBot() {
               </div>
 
               <div className="space-y-1">
+                <Label htmlFor="minRunners" className="text-xs">Min Runners (skip small fields)</Label>
+                <Input
+                  id="minRunners" type="number"
+                  placeholder={String(cfg?.minRunners ?? 6)}
+                  value={minRunnersInput} onChange={e => setMinRunnersInput(e.target.value)}
+                  min={2} max={20} className="h-8 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground/70">
+                  Breakeven = runners backed as decimal odds. More runners → bigger outsider upside.
+                </p>
+              </div>
+
+              <div className="space-y-1">
                 <Label htmlFor="minLiq" className="text-xs">Min Market Liquidity (£)</Label>
                 <Input
                   id="minLiq" type="number"
@@ -461,7 +478,7 @@ export default function BookieBot() {
 
               <Button
                 onClick={handleSaveConfig}
-                disabled={configMutation.isPending || (stakePerRunner === "" && maxLoss === "" && minLiq === "" && countryInput.trim() === "")}
+                disabled={configMutation.isPending || (stakePerRunner === "" && maxLoss === "" && minRunnersInput === "" && minLiq === "" && countryInput.trim() === "")}
                 className="w-full h-8 text-xs"
               >
                 Save Config

@@ -26,6 +26,10 @@ interface BookieConfig {
   stakePerRunner: number;
   // Safety cap: skip the race if total outlay (stakePerRunner × runners) exceeds this.
   maxRaceNetLoss: number;
+  // Skip races with fewer than this many eligible runners.
+  // With fewer runners there are no real outsiders and the breakeven is too easy to breach.
+  // e.g. 6 runners → breakeven at 6.0+ odds, giving meaningful outsider payouts.
+  minRunners: number;
   // Countries to scan. Common codes: GB, IE, US, AU, ZA, FR
   countryCodes: string[];
   // Minimum market totalMatched. Higher = more representative crowd data.
@@ -41,6 +45,7 @@ const processingMarkets = new Set<string>();
 let bookieConfig: BookieConfig = {
   stakePerRunner: 10,
   maxRaceNetLoss: 150,
+  minRunners: 6,
   countryCodes: ["GB", "IE"],
   minLiquidity: 1000,
 };
@@ -86,6 +91,7 @@ async function loadBookieConfigFromDb(): Promise<void> {
       if (typeof saved.minLiquidity === "number") bookieConfig.minLiquidity = saved.minLiquidity;
       if (typeof saved.stakePerRunner === "number") bookieConfig.stakePerRunner = saved.stakePerRunner;
       if (typeof saved.maxRaceNetLoss === "number") bookieConfig.maxRaceNetLoss = saved.maxRaceNetLoss;
+      if (typeof saved.minRunners === "number") bookieConfig.minRunners = saved.minRunners;
       logger.info({ bookieConfig }, "[BOOKIE] Loaded config from DB");
     }
   } catch (err) {
@@ -331,7 +337,16 @@ async function runBookieMarket(
     return;
   }
 
-  const { stakePerRunner, maxRaceNetLoss } = bookieConfig;
+  const { stakePerRunner, maxRaceNetLoss, minRunners } = bookieConfig;
+
+  // Minimum field size: small fields have no real outsiders and the breakeven
+  // point (= number of runners) is too low to generate meaningful profits.
+  if (eligible.length < minRunners) {
+    log("info",
+      `Skipping ${eventName} — only ${eligible.length} eligible runner(s), need at least ${minRunners}`,
+    );
+    return;
+  }
 
   // Level-stakes back-the-field:
   // Same flat stake on every runner. Breakeven when winner's odds > number of runners.
