@@ -8,6 +8,7 @@ import {
   getBookieStartedAt,
   getBookieConfig,
   setBookieConfig,
+  saveBookieConfigToDb,
 } from "../lib/bookieEngine";
 
 const router: IRouter = Router();
@@ -111,7 +112,13 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
     return;
   }
 
-  setBookieConfig({ maxRaceNetLoss, maxRunnerLiability, minLiquidity, countryCodes });
+  const patch: Parameters<typeof setBookieConfig>[0] = {};
+  if (maxRaceNetLoss !== undefined) patch.maxRaceNetLoss = maxRaceNetLoss;
+  if (maxRunnerLiability !== undefined) patch.maxRunnerLiability = maxRunnerLiability;
+  if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
+  if (countryCodes !== undefined) patch.countryCodes = countryCodes;
+  setBookieConfig(patch);
+  await saveBookieConfigToDb();
   res.json({ bookieConfig: getBookieConfig() });
 });
 

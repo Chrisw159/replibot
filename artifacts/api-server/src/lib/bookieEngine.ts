@@ -57,6 +57,40 @@ export function setBookieConfig(patch: Partial<BookieConfig>): void {
   }
 }
 
+export async function saveBookieConfigToDb(): Promise<void> {
+  try {
+    const [row] = await db.select({ id: botConfigTable.id }).from(botConfigTable).limit(1);
+    if (row) {
+      await db
+        .update(botConfigTable)
+        .set({ bookieConfigJson: bookieConfig as unknown as Record<string, unknown> })
+        .where(eq(botConfigTable.id, row.id));
+    } else {
+      await db.insert(botConfigTable).values({
+        bookieConfigJson: bookieConfig as unknown as Record<string, unknown>,
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, "[BOOKIE] Failed to save config to DB");
+  }
+}
+
+async function loadBookieConfigFromDb(): Promise<void> {
+  try {
+    const [row] = await db.select({ bookieConfigJson: botConfigTable.bookieConfigJson }).from(botConfigTable).limit(1);
+    if (row?.bookieConfigJson) {
+      const saved = row.bookieConfigJson as Partial<BookieConfig>;
+      if (Array.isArray(saved.countryCodes)) bookieConfig.countryCodes = saved.countryCodes;
+      if (typeof saved.minLiquidity === "number") bookieConfig.minLiquidity = saved.minLiquidity;
+      if (typeof saved.maxRaceNetLoss === "number") bookieConfig.maxRaceNetLoss = saved.maxRaceNetLoss;
+      if (typeof saved.maxRunnerLiability === "number") bookieConfig.maxRunnerLiability = saved.maxRunnerLiability;
+      logger.info({ bookieConfig }, "[BOOKIE] Loaded config from DB");
+    }
+  } catch (err) {
+    logger.error({ err }, "[BOOKIE] Failed to load config from DB — using defaults");
+  }
+}
+
 async function log(level: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
   await db.insert(botLogsTable).values({
     level,
@@ -81,14 +115,19 @@ async function runBookieCycle(): Promise<number> {
     const [config] = await db.select().from(botConfigTable).limit(1);
     const paperTrading = config?.paperTradingMode ?? true;
 
-    const { countryCodes, minLiquidity } = bookieConfig;
+    const countryCodes = bookieConfig.countryCodes?.length ? bookieConfig.countryCodes : ["GB", "IE"];
+    const { minLiquidity } = bookieConfig;
     let markets: Awaited<ReturnType<typeof listMarkets>> = [];
     try {
+      // hoursAhead: 2 ensures we only get markets starting in the next 2 hours,
+      // excluding already-started/in-play races that listMarketCatalogue returns
+      // by default when no time filter is applied.
       markets = await listMarkets({
         eventTypeId: "1",
         countryCodes,
         marketType: "WIN",
-        limit: 30,
+        limit: 50,
+        hoursAhead: 2,
       });
     } catch (err) {
       await log("error", `API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
@@ -121,15 +160,10 @@ async function runBookieCycle(): Promise<number> {
         .limit(1);
       if (existing) continue;
 
-      if (market.totalMatched < minLiquidity) {
-        await log("info", `Skipping ${market.eventName} — liquidity £${market.totalMatched.toFixed(0)} < £${minLiquidity}`);
-        continue;
-      }
-
       processingMarkets.add(market.marketId);
       acted++;
       try {
-        await runBookieMarket(market.marketId, market.eventName, market.marketName, paperTrading);
+        await runBookieMarket(market.marketId, market.eventName, market.marketName, paperTrading, minLiquidity);
       } finally {
         processingMarkets.delete(market.marketId);
       }
@@ -152,7 +186,7 @@ const MAX_LOOK_AHEAD_H = 36;            // look up to 36 h ahead
 
 async function computeBookieSleepMs(): Promise<number> {
   try {
-    const { countryCodes } = bookieConfig;
+    const countryCodes = bookieConfig.countryCodes?.length ? bookieConfig.countryCodes : ["GB", "IE"];
     const markets = await listMarkets({
       eventTypeId: "1",
       countryCodes,
@@ -235,9 +269,17 @@ async function runBookieMarket(
   eventName: string,
   marketName: string,
   paperTrading: boolean,
+  minLiquidity: number,
 ): Promise<void> {
   const marketDetail = await getMarketDetail(marketId);
   if (!marketDetail) return;
+
+  // Real liquidity check — marketDetail.totalMatched comes from listMarketBook,
+  // unlike listMarketCatalogue which always returns 0 for totalMatched.
+  if (marketDetail.totalMatched < minLiquidity) {
+    await log("info", `Skipping ${eventName} — liquidity £${marketDetail.totalMatched.toFixed(0)} < £${minLiquidity}`);
+    return;
+  }
 
   // Pass 1: filter by status and odds only
   const priceEligible = marketDetail.runners.filter(r => {
@@ -372,6 +414,7 @@ async function runBookieMarket(
 
 export async function startBookieBot(): Promise<void> {
   if (bookieBotRunning) return;
+  await loadBookieConfigFromDb();
   bookieBotRunning = true;
   bookieStartedAt = new Date();
   await log("info", "Bookie Bot started");

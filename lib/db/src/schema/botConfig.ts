@@ -6,6 +6,7 @@ import {
   integer,
   numeric,
   timestamp,
+  json,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -23,6 +24,7 @@ export const botConfigTable = pgTable("bot_config", {
   betfairUsername: text("betfair_username"),
   betfairPassword: text("betfair_password"),
   betfairAppKey: text("betfair_app_key"),
+  bookieConfigJson: json("bookie_config_json").$type<Record<string, unknown>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
