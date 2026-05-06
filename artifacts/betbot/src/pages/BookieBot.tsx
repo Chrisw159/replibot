@@ -88,20 +88,18 @@ export default function BookieBot() {
 
   const configMutation = useMutation({
     mutationFn: (body: Partial<{
-      totalStakePerRace: number;
       maxRaceNetLoss: number;
       minLiquidity: number;
       minRunners: number;
     }>) => apiFetch("/bookie/config", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookie-status"] });
-      setStakeInput(""); setMaxLossInput(""); setLiqInput(""); setMinRunnersInput("");
+      setMaxLossInput(""); setLiqInput(""); setMinRunnersInput("");
     },
   });
 
-  const [stakeInput, setStakeInput]         = useState("");
-  const [maxLossInput, setMaxLossInput]     = useState("");
-  const [liqInput, setLiqInput]             = useState("");
+  const [maxLossInput, setMaxLossInput]       = useState("");
+  const [liqInput, setLiqInput]               = useState("");
   const [minRunnersInput, setMinRunnersInput] = useState("");
 
   const isRunning = status?.isRunning ?? false;
@@ -110,14 +108,13 @@ export default function BookieBot() {
 
   const handleSaveConfig = () => {
     const patch: Parameters<typeof configMutation.mutate>[0] = {};
-    if (stakeInput)       patch.totalStakePerRace = parseFloat(stakeInput);
-    if (maxLossInput)     patch.maxRaceNetLoss    = parseFloat(maxLossInput);
-    if (liqInput)         patch.minLiquidity      = parseFloat(liqInput);
-    if (minRunnersInput)  patch.minRunners        = parseInt(minRunnersInput, 10);
+    if (maxLossInput)    patch.maxRaceNetLoss = parseFloat(maxLossInput);
+    if (liqInput)        patch.minLiquidity   = parseFloat(liqInput);
+    if (minRunnersInput) patch.minRunners     = parseInt(minRunnersInput, 10);
     if (Object.keys(patch).length > 0) configMutation.mutate(patch);
   };
 
-  const nothingChanged = !stakeInput && !maxLossInput && !liqInput && !minRunnersInput;
+  const nothingChanged = !maxLossInput && !liqInput && !minRunnersInput;
 
   const profitToday    = status?.profitToday    ?? 0;
   const totalNetProfit = status?.totalNetProfit ?? 0;
@@ -281,17 +278,9 @@ export default function BookieBot() {
               <CardTitle className="text-sm">Configuration</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Total Lay Budget Per Race (£)</Label>
-                <Input
-                  type="number" min={10} max={10000}
-                  placeholder={`Current: £${cfg?.totalStakePerRace ?? 100}`}
-                  value={stakeInput} onChange={e => setStakeInput(e.target.value)}
-                  className="h-8 text-sm"
-                />
-                <p className="text-[10px] text-muted-foreground/70">
-                  Split across runners in proportion to their betting volume
-                </p>
+              <div className="rounded-md bg-muted/30 border border-border/40 px-3 py-2.5 text-xs text-muted-foreground space-y-0.5">
+                <div className="font-medium text-foreground/70">Stake is auto-calculated</div>
+                <div>Each race the bot works out the exact total stake so the worst possible outcome equals your Max Net Loss limit.</div>
               </div>
 
               <div className="space-y-1">

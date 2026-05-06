@@ -19,9 +19,8 @@ const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
 
 interface BookieConfig {
-  // Total lay budget distributed proportionally across runners per race.
-  totalStakePerRace: number;
-  // Skip the race if worst-case net loss exceeds this amount.
+  // Maximum net loss allowed for any single race outcome.
+  // The bot back-calculates the total lay stake from this figure each race.
   maxRaceNetLoss: number;
   // Minimum market totalMatched (£) — filters out illiquid/skewed markets.
   minLiquidity: number;
@@ -38,7 +37,6 @@ let bookieStartedAt: Date | null = null;
 const processingMarkets = new Set<string>();
 
 let bookieConfig: BookieConfig = {
-  totalStakePerRace: 100,
   maxRaceNetLoss: 200,
   minLiquidity: 8000,
   countryCodes: ["GB", "IE"],
@@ -84,7 +82,6 @@ async function loadBookieConfigFromDb(): Promise<void> {
       .limit(1);
     if (row?.bookieConfigJson) {
       const saved = row.bookieConfigJson as Partial<BookieConfig>;
-      if (typeof saved.totalStakePerRace === "number") bookieConfig.totalStakePerRace = saved.totalStakePerRace;
       if (typeof saved.maxRaceNetLoss === "number") bookieConfig.maxRaceNetLoss = saved.maxRaceNetLoss;
       if (typeof saved.minLiquidity === "number") bookieConfig.minLiquidity = saved.minLiquidity;
       if (Array.isArray(saved.countryCodes)) bookieConfig.countryCodes = saved.countryCodes;
@@ -220,43 +217,51 @@ async function runBookieMarket(
     return;
   }
 
-  // Proportional lay stakes: stake_i = totalStakePerRace × (vol_i / totalVolume)
-  // This mirrors the money distribution — runners with more backing get bigger lay stakes.
-  const { totalStakePerRace, maxRaceNetLoss } = bookieConfig;
+  // Back-calculate total lay stake so the worst-case net loss = maxRaceNetLoss.
+  //
+  // stake_i = totalStake × (vol_i / totalVolume)
+  // Race net if runner i wins = totalStake − stake_i × odds_i
+  //                           = totalStake × (1 − vol_i × odds_i / totalVolume)
+  //
+  // Worst case = runner with highest (vol_i × odds_i / totalVolume).
+  // Setting that equal to maxRaceNetLoss:
+  //   totalStake × (maxRatio − 1) = maxRaceNetLoss
+  //   totalStake = maxRaceNetLoss / (maxRatio − 1)
+  //
+  // If maxRatio ≤ 1, every outcome is profitable — cap stake at £10,000.
+
+  const { maxRaceNetLoss } = bookieConfig;
+
+  const maxRatio = Math.max(...runners.map(r => (r.volume * r.layPrice) / totalVolume));
+  const totalStake = maxRatio > 1
+    ? Math.min(Math.floor((maxRaceNetLoss / (maxRatio - 1)) * 100) / 100, 10_000)
+    : 10_000;
 
   const withStakes = runners.map(r => ({
     ...r,
-    stake: Math.round(totalStakePerRace * (r.volume / totalVolume) * 100) / 100,
+    stake: Math.round(totalStake * (r.volume / totalVolume) * 100) / 100,
   }));
 
   // Race P&L if runner i wins:
   //   = sum of all other stakes collected − liability on winner
-  //   = totalStakePerRace − stake_i × lay_odds_i
+  //   = totalStake − stake_i × odds_i
   const raceNets = withStakes.map(r => ({
     selectionId: r.runner.selectionId,
     name: r.runner.runnerName,
     odds: r.layPrice,
     stake: r.stake,
-    raceNetIfWins: Math.round((totalStakePerRace - r.stake * r.layPrice) * 100) / 100,
+    raceNetIfWins: Math.round((totalStake - r.stake * r.layPrice) * 100) / 100,
   }));
 
-  // Worst-case loss: the runner whose win costs us most
   const worstCase = Math.min(...raceNets.map(r => r.raceNetIfWins));
-
-  if (worstCase < -maxRaceNetLoss) {
-    log("info",
-      `Skipping ${eventName} — worst-case loss £${Math.abs(worstCase).toFixed(2)} exceeds limit £${maxRaceNetLoss}`,
-    );
-    return;
-  }
 
   const summary = withStakes
     .map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)} @ ${r.layPrice} (vol £${r.volume.toFixed(0)})`)
     .join(" | ");
 
   log("info",
-    `LAYING ${withStakes.length} runners in ${eventName} — £${totalStakePerRace} total · worst-case -£${Math.abs(worstCase).toFixed(2)}${paperTrading ? " [PAPER]" : ""}`,
-    { marketId, totalStakePerRace, runners: withStakes.length, worstCase, summary },
+    `LAYING ${withStakes.length} runners in ${eventName} — total stake £${totalStake.toFixed(2)} · worst-case -£${Math.abs(worstCase).toFixed(2)}${paperTrading ? " [PAPER]" : ""}`,
+    { marketId, totalStake, runners: withStakes.length, worstCase, maxRatio, summary },
   );
 
   for (const r of withStakes) {

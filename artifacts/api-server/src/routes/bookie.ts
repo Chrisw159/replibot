@@ -74,17 +74,13 @@ router.post("/bookie/stop", async (_req, res): Promise<void> => {
 router.patch("/bookie/config", async (req, res): Promise<void> => {
   const body = req.body as Record<string, unknown>;
 
-  const totalStakePerRace = typeof body.totalStakePerRace === "number" ? body.totalStakePerRace : undefined;
-  const maxRaceNetLoss    = typeof body.maxRaceNetLoss    === "number" ? body.maxRaceNetLoss    : undefined;
+  const maxRaceNetLoss    = typeof body.maxRaceNetLoss === "number" ? body.maxRaceNetLoss : undefined;
   const minLiquidity      = typeof body.minLiquidity      === "number" ? body.minLiquidity      : undefined;
   const minRunners        = typeof body.minRunners        === "number" ? body.minRunners        : undefined;
   const countryCodes      = Array.isArray(body.countryCodes)
     ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
     : undefined;
 
-  if (totalStakePerRace !== undefined && (totalStakePerRace < 10 || totalStakePerRace > 10000)) {
-    res.status(400).json({ error: "totalStakePerRace must be between £10 and £10,000" }); return;
-  }
   if (maxRaceNetLoss !== undefined && (maxRaceNetLoss < 10 || maxRaceNetLoss > 10000)) {
     res.status(400).json({ error: "maxRaceNetLoss must be between £10 and £10,000" }); return;
   }
@@ -99,8 +95,7 @@ router.patch("/bookie/config", async (req, res): Promise<void> => {
   }
 
   const patch: Parameters<typeof setBookieConfig>[0] = {};
-  if (totalStakePerRace !== undefined) patch.totalStakePerRace = totalStakePerRace;
-  if (maxRaceNetLoss    !== undefined) patch.maxRaceNetLoss    = maxRaceNetLoss;
+  if (maxRaceNetLoss !== undefined) patch.maxRaceNetLoss = maxRaceNetLoss;
   if (minLiquidity      !== undefined) patch.minLiquidity      = minLiquidity;
   if (minRunners        !== undefined) patch.minRunners        = minRunners;
   if (countryCodes      !== undefined) patch.countryCodes      = countryCodes;
