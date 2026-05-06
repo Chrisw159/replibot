@@ -40,7 +40,7 @@ let bookieConfig: BookieConfig = {
   maxRaceNetLoss: 100,
   maxRunnerLiability: 300,
   countryCodes: ["GB", "IE"],
-  minLiquidity: 10000,
+  minLiquidity: 1000,
 };
 
 export function isBookieBotRunning(): boolean { return bookieBotRunning; }
@@ -91,13 +91,15 @@ async function loadBookieConfigFromDb(): Promise<void> {
   }
 }
 
-async function log(level: string, message: string, metadata?: Record<string, unknown>): Promise<void> {
-  await db.insert(botLogsTable).values({
+function log(level: string, message: string, metadata?: Record<string, unknown>): void {
+  const fullMessage = `[BOOKIE] ${message}`;
+  logger.info({ level, metadata }, fullMessage);
+  // Fire-and-forget — never let a DB write block or crash the cycle
+  db.insert(botLogsTable).values({
     level,
-    message: `[BOOKIE] ${message}`,
+    message: fullMessage,
     metadata: metadata ? JSON.stringify(metadata) : null,
-  });
-  logger.info({ level, metadata }, `[BOOKIE] ${message}`);
+  }).catch((err: unknown) => logger.error({ err }, "[BOOKIE] Failed to write log to DB"));
 }
 
 // Returns the number of candidates acted on (used by scheduler)
@@ -107,7 +109,7 @@ async function runBookieCycle(): Promise<number> {
     if (!getSession()) {
       const r = await loginWithEnvCredentials();
       if (!r.success) {
-        await log("warn", `Auto-connect failed: ${r.error}`);
+        log("warn", `Auto-connect failed: ${r.error}`);
         return 0;
       }
     }
@@ -130,7 +132,7 @@ async function runBookieCycle(): Promise<number> {
         hoursAhead: 2,
       });
     } catch (err) {
-      await log("error", `API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
+      log("error", `API error fetching markets: ${err instanceof Error ? err.message : String(err)}`);
       return 0;
     }
 
@@ -143,7 +145,7 @@ async function runBookieCycle(): Promise<number> {
       return minsToStart >= MIN_MINS_BEFORE_START && minsToStart <= MAX_MINS_BEFORE_START;
     });
 
-    await log("info", `Cycle — ${markets.length} markets fetched, ${candidates.length} in ${MIN_MINS_BEFORE_START}–${MAX_MINS_BEFORE_START}-min window`);
+    log("info", `Cycle — ${markets.length} markets fetched, ${candidates.length} in ${MIN_MINS_BEFORE_START}–${MAX_MINS_BEFORE_START}-min window`);
 
     let acted = 0;
     for (const market of candidates) {
@@ -171,7 +173,7 @@ async function runBookieCycle(): Promise<number> {
     return acted;
   } catch (err) {
     logger.error({ err }, "[BOOKIE] Cycle error");
-    await log("error", `Cycle error: ${err instanceof Error ? err.message : "Unknown"}`);
+    log("error", `Cycle error: ${err instanceof Error ? err.message : "Unknown"}`);
     return 0;
   }
 }
@@ -215,7 +217,7 @@ async function computeBookieSleepMs(): Promise<number> {
       .sort((a, b) => a - b);
 
     if (futureUnbet.length === 0) {
-      await log("info", "[SCHEDULER] No upcoming races in the next 36 h — sleeping 1 hour");
+      log("info", "[SCHEDULER] No upcoming races in the next 36 h — sleeping 1 hour");
       return 60 * 60_000;
     }
 
@@ -240,7 +242,7 @@ async function computeBookieSleepMs(): Promise<number> {
       : `${(sleepMs / 60_000).toFixed(1)} min`;
 
     if (sleepMs > 30 * 60_000) {
-      await log("info",
+      log("info",
         `[SCHEDULER] Next race at ${raceLabel} — sleeping ${sleepDesc}, waking at ${wakeLabel}`
       );
     }
@@ -252,7 +254,13 @@ async function computeBookieSleepMs(): Promise<number> {
 
 async function scheduleBookieCycle(): Promise<void> {
   if (!bookieBotRunning) return;
-  await runBookieCycle();
+
+  try {
+    await runBookieCycle();
+  } catch (err) {
+    logger.error({ err }, "[BOOKIE] Unhandled cycle error — will reschedule");
+  }
+
   if (!bookieBotRunning) return;
 
   let sleepMs = MIN_SLEEP_MS;
@@ -261,7 +269,10 @@ async function scheduleBookieCycle(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "[BOOKIE] computeBookieSleepMs threw — falling back to 30 s");
   }
-  bookieBotInterval = setTimeout(() => void scheduleBookieCycle(), sleepMs);
+
+  if (bookieBotRunning) {
+    bookieBotInterval = setTimeout(() => void scheduleBookieCycle(), sleepMs);
+  }
 }
 
 async function runBookieMarket(
@@ -277,7 +288,7 @@ async function runBookieMarket(
   // Real liquidity check — marketDetail.totalMatched comes from listMarketBook,
   // unlike listMarketCatalogue which always returns 0 for totalMatched.
   if (marketDetail.totalMatched < minLiquidity) {
-    await log("info", `Skipping ${eventName} — liquidity £${marketDetail.totalMatched.toFixed(0)} < £${minLiquidity}`);
+    log("info", `Skipping ${eventName} — liquidity £${marketDetail.totalMatched.toFixed(0)} < £${minLiquidity}`);
     return;
   }
 
@@ -289,44 +300,55 @@ async function runBookieMarket(
     return true;
   });
 
-  const totalMatchedSum = priceEligible.reduce((s, r) => s + (r.totalMatched ?? 0), 0);
-  if (totalMatchedSum === 0) return;
+  if (priceEligible.length < 2) {
+    log("info", `Skipping ${eventName} — only ${priceEligible.length} runner(s) with valid odds`);
+    return;
+  }
 
-  // Pass 2: drop runners with less than MIN_RUNNER_SHARE of the pool.
-  // This scales with market size (2% of £5k = £100, 2% of £100k = £2k).
-  const minMatchedForRunner = totalMatchedSum * MIN_RUNNER_SHARE;
-  const eligible = priceEligible.filter(r => (r.totalMatched ?? 0) >= minMatchedForRunner);
+  // Use implied probability (1/backPrice) as each runner's crowd-money share.
+  // This is always available from best back price and accurately reflects
+  // where the crowd has put their money (lower odds = more money backed).
+  const withImplied = priceEligible.map(r => {
+    const odds = r.bestLayPrice ?? r.bestBackPrice ?? 2.0;
+    const backPrice = r.bestBackPrice ?? odds;
+    const impliedProb = 1 / backPrice;
+    return { runner: r, odds, impliedProb };
+  });
 
-  const dropped = priceEligible.length - eligible.length;
+  const totalImplied = withImplied.reduce((s, r) => s + r.impliedProb, 0);
+
+  // Pass 2: drop runners with less than MIN_RUNNER_SHARE of the implied pool.
+  const eligible = withImplied.filter(r => (r.impliedProb / totalImplied) >= MIN_RUNNER_SHARE);
+
+  const dropped = withImplied.length - eligible.length;
   if (dropped > 0) {
-    await log("info",
-      `${eventName} — dropped ${dropped} runner(s) with < ${(MIN_RUNNER_SHARE * 100).toFixed(0)}% of pool (< £${minMatchedForRunner.toFixed(0)})`,
+    log("info",
+      `${eventName} — dropped ${dropped} runner(s) with < ${(MIN_RUNNER_SHARE * 100).toFixed(0)}% implied probability`,
     );
   }
 
   if (eligible.length < 2) {
-    await log("info", `Skipping ${eventName} — only ${eligible.length} eligible runner(s) after share filter`);
+    log("info", `Skipping ${eventName} — only ${eligible.length} eligible runner(s) after share filter`);
     return;
   }
 
   const { maxRaceNetLoss, maxRunnerLiability } = bookieConfig;
 
-  // Recompute sum from eligible runners only so shares sum to ~1 for the formula.
-  const eligibleMatchedSum = eligible.reduce((s, r) => s + (r.totalMatched ?? 0), 0);
+  // Recompute normalised shares from eligible runners only.
+  const eligibleImpliedSum = eligible.reduce((s, r) => s + r.impliedProb, 0);
 
-  const computations = eligible.map(r => {
-    const odds = r.bestLayPrice ?? r.bestBackPrice ?? 2.0;
-    const share = (r.totalMatched ?? 0) / eligibleMatchedSum;
+  const computations = eligible.map(({ runner, odds, impliedProb }) => {
+    const share = impliedProb / eligibleImpliedSum;
     const netLossCoeff = share * odds - 1;
     const liabilityCoeff = share * (odds - 1);
-    return { runner: r, odds, share, netLossCoeff, liabilityCoeff };
+    return { runner, odds, share, netLossCoeff, liabilityCoeff };
   });
 
   const maxNetLossCoeff = Math.max(...computations.map(c => c.netLossCoeff));
   const maxLiabilityCoeff = Math.max(...computations.map(c => c.liabilityCoeff));
 
   if (maxNetLossCoeff <= 0 || maxLiabilityCoeff <= 0) {
-    await log("info", `Skipping ${eventName} — all runners naturally profitable to lay (rare)`);
+    log("info", `Skipping ${eventName} — all runners naturally profitable to lay (rare)`);
     return;
   }
 
@@ -336,7 +358,7 @@ async function runBookieMarket(
   );
 
   if (K < 1) {
-    await log("info", `Skipping ${eventName} — K=${K.toFixed(2)} too small (stakes < £1)`);
+    log("info", `Skipping ${eventName} — K=${K.toFixed(2)} too small (stakes < £1)`);
     return;
   }
 
@@ -356,7 +378,7 @@ async function runBookieMarket(
   const maxNetLoss = Math.max(...stakes.map(s => s.netLossIfWins));
   const totalStaked = stakes.reduce((s, x) => s + x.stake, 0);
 
-  await log(
+  log(
     "info",
     `Laying ${stakes.length} runners in ${eventName} — K=${K.toFixed(2)}, worst-case net loss £${maxNetLoss.toFixed(2)}, total stakes £${totalStaked.toFixed(2)}${paperTrading ? " [PAPER]" : ""}`,
     { marketId, K, maxNetLoss, totalStaked, runners: stakes.length },
@@ -417,7 +439,7 @@ export async function startBookieBot(): Promise<void> {
   await loadBookieConfigFromDb();
   bookieBotRunning = true;
   bookieStartedAt = new Date();
-  await log("info", "Bookie Bot started");
+  log("info", "Bookie Bot started");
   void scheduleBookieCycle();
   bookieSettlementInterval = setInterval(() => { void runBookieSettlement(); }, 2 * 60_000);
 }
@@ -428,7 +450,7 @@ export async function stopBookieBot(): Promise<void> {
   bookieStartedAt = null;
   if (bookieBotInterval) { clearTimeout(bookieBotInterval); bookieBotInterval = null; }
   if (bookieSettlementInterval) { clearInterval(bookieSettlementInterval); bookieSettlementInterval = null; }
-  await log("info", "Bookie Bot stopped");
+  log("info", "Bookie Bot stopped");
 }
 
 async function runBookieSettlement(): Promise<void> {
@@ -488,7 +510,7 @@ async function runBookieSettlement(): Promise<void> {
 
       const netProfit = totalCollected - totalPaidOut;
       const winnerBet = bets.find(b => b.selectionId === winnerSelectionId);
-      await log(
+      log(
         "info",
         `[SETTLED] ${bets[0]?.eventName} — WINNER: ${winnerBet?.selectionName ?? "Unknown"} | Collected £${totalCollected.toFixed(2)}, Paid out £${totalPaidOut.toFixed(2)}, Net: ${netProfit >= 0 ? "+" : ""}£${netProfit.toFixed(2)}`,
         { marketId, totalCollected, totalPaidOut, netProfit },

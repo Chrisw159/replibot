@@ -449,7 +449,7 @@ export async function getMarketDetail(
         {
           marketIds: [marketId],
           priceProjection: {
-            priceData: ["EX_BEST_OFFERS"],
+            priceData: ["EX_BEST_OFFERS", "EX_TRADED"],
             exBestOffersOverrides: { bestPricesDepth: 1 },
           },
         }
