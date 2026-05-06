@@ -345,7 +345,14 @@ async function runBookieMarket(
   });
 
   const maxNetLossCoeff = Math.max(...computations.map(c => c.netLossCoeff));
+  const minNetLossCoeff = Math.min(...computations.map(c => c.netLossCoeff));
   const maxLiabilityCoeff = Math.max(...computations.map(c => c.liabilityCoeff));
+
+  // Under-round market: every possible winner results in a loss — skip entirely.
+  if (minNetLossCoeff >= 0) {
+    log("info", `Skipping ${eventName} — market book ${(eligibleImpliedSum * 100).toFixed(1)}% (under-round), no outcome gives a profit regardless of winner`);
+    return;
+  }
 
   if (maxNetLossCoeff <= 0 || maxLiabilityCoeff <= 0) {
     log("info", `Skipping ${eventName} — all runners naturally profitable to lay (rare)`);
