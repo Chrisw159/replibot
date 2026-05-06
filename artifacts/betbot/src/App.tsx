@@ -14,6 +14,7 @@ import BotControl from "@/pages/BotControl";
 import Settings from "@/pages/Settings";
 import GoalBot from "@/pages/GoalBot";
 import BookieBot from "@/pages/BookieBot";
+import BookieBotRace from "@/pages/BookieBotRace";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +28,7 @@ function Router() {
         <Route path="/bets" component={Bets} />
         <Route path="/bot" component={BotControl} />
         <Route path="/goalbot" component={GoalBot} />
+        <Route path="/bookiebot/race/:marketId" component={BookieBotRace} />
         <Route path="/bookiebot" component={BookieBot} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />

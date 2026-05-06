@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Scale, Power, PowerOff, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Clock, Terminal } from "lucide-react";
+import { Link } from "wouter";
+import {
+  Scale, Power, PowerOff, TrendingUp, TrendingDown, Clock,
+  ChevronRight, Trophy, Banknote, Activity,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
 
 interface BotLog {
   id: number;
@@ -46,19 +49,6 @@ interface BookieRace {
   settled: boolean;
 }
 
-interface BookieRaceBet {
-  id: number;
-  selectionName: string;
-  betType: string;
-  requestedOdds: number;
-  stakeAmount: number;
-  liability: number;
-  actualProfit: number | null;
-  status: string;
-  aiReasoning: string | null;
-  placedAt: string;
-}
-
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -68,101 +58,104 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="text-2xl font-bold">{value}</div>
-        <div className="text-sm text-muted-foreground mt-1">{label}</div>
-        {sub && <div className="text-xs text-muted-foreground/70 mt-0.5">{sub}</div>}
-      </CardContent>
-    </Card>
+function PnlChip({ value, settled }: { value: number; settled: boolean }) {
+  if (!settled) return (
+    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+      <Clock className="w-3 h-3" /> Pending
+    </span>
   );
-}
-
-function ProfitBadge({ value, settled }: { value: number; settled: boolean }) {
-  if (!settled) return <Badge variant="outline" className="text-muted-foreground">Pending</Badge>;
-  if (value > 0) return <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/30">+£{value.toFixed(2)}</Badge>;
-  if (value < 0) return <Badge className="bg-red-500/15 text-red-600 border-red-500/30">-£{Math.abs(value).toFixed(2)}</Badge>;
-  return <Badge variant="outline">£0.00</Badge>;
-}
-
-function RunnerStatusBadge({ status }: { status: string }) {
-  const colours: Record<string, string> = {
-    WON: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30",
-    LOST: "bg-red-500/15 text-red-600 border-red-500/30",
-    MATCHED: "bg-blue-500/15 text-blue-600 border-blue-500/30",
-    PLACED: "bg-amber-500/15 text-amber-600 border-amber-500/30",
-    VOID: "bg-muted text-muted-foreground",
-  };
-  return <Badge className={colours[status] ?? ""}>{status}</Badge>;
+  if (value > 0) return (
+    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-500">
+      <TrendingUp className="w-3 h-3" /> +£{value.toFixed(2)}
+    </span>
+  );
+  if (value < 0) return (
+    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-500">
+      <TrendingDown className="w-3 h-3" /> -£{Math.abs(value).toFixed(2)}
+    </span>
+  );
+  return <span className="text-xs text-muted-foreground">£0.00</span>;
 }
 
 function RaceRow({ race }: { race: BookieRace }) {
-  const [open, setOpen] = useState(false);
-  const { data: runners } = useQuery<BookieRaceBet[]>({
-    queryKey: ["bookie-race", race.marketId],
-    queryFn: () => apiFetch(`/bookie/race/${race.marketId}`),
-    enabled: open,
-  });
+  const isToday = new Date(race.placedAt).toDateString() === new Date().toDateString();
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/40 transition-colors text-left"
-        onClick={() => setOpen(o => !o)}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          {open ? <ChevronDown className="w-4 h-4 flex-shrink-0 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 flex-shrink-0 text-muted-foreground" />}
-          <div className="min-w-0">
-            <div className="font-medium text-sm truncate">{race.eventName}</div>
-            <div className="text-xs text-muted-foreground">{race.marketName} · {new Date(race.placedAt).toLocaleString()}</div>
+    <Link href={`/bookiebot/race/${race.marketId}`}>
+      <div className="group flex items-center gap-4 px-4 py-3.5 rounded-xl border border-border/60 bg-card/50 hover:bg-muted/40 hover:border-border transition-all cursor-pointer">
+        {/* Icon */}
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+          race.settled && race.netProfit > 0 ? "bg-emerald-500/15 text-emerald-500" :
+          race.settled && race.netProfit < 0 ? "bg-red-500/15 text-red-500" :
+          "bg-muted text-muted-foreground"
+        }`}>
+          {race.settled && race.netProfit > 0
+            ? <Trophy className="w-4 h-4" />
+            : <Banknote className="w-4 h-4" />}
+        </div>
+
+        {/* Name + meta */}
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm text-foreground truncate">{race.eventName}</div>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">{race.marketName}</span>
+            <span className="text-muted-foreground/40 text-xs">·</span>
+            <span className="text-xs text-muted-foreground">
+              {new Date(race.placedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {!isToday && (
+                <> · {new Date(race.placedAt).toLocaleDateString([], { day: "numeric", month: "short" })}</>
+              )}
+            </span>
+            <span className="text-muted-foreground/40 text-xs">·</span>
+            <span className="text-xs text-muted-foreground">{race.betCount} runners</span>
+            <span className="text-muted-foreground/40 text-xs">·</span>
+            <span className="text-xs text-muted-foreground">£{race.totalStaked.toFixed(2)} staked</span>
           </div>
         </div>
-        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
-          <div className="text-xs text-muted-foreground hidden sm:block">{race.betCount} runners</div>
-          <ProfitBadge value={race.netProfit} settled={race.settled} />
-        </div>
-      </button>
 
-      {open && (
-        <div className="border-t bg-muted/10 px-4 py-3">
-          {!runners ? (
-            <div className="text-sm text-muted-foreground">Loading...</div>
-          ) : (
-            <div className="space-y-1">
-              <div className="grid grid-cols-5 text-xs font-medium text-muted-foreground mb-2 gap-2">
-                <div className="col-span-2">Runner</div>
-                <div className="text-right">Odds</div>
-                <div className="text-right">Stake / Liab</div>
-                <div className="text-right">Result</div>
-              </div>
-              {runners.map(r => (
-                <div key={r.id} className="grid grid-cols-5 text-sm items-center gap-2 py-1 border-b border-border/50 last:border-0">
-                  <div className="col-span-2 font-medium truncate">{r.selectionName}</div>
-                  <div className="text-right text-muted-foreground">{r.requestedOdds.toFixed(2)}</div>
-                  <div className="text-right">
-                    <div>£{r.stakeAmount.toFixed(2)}</div>
-                    <div className="text-xs text-muted-foreground">£{r.liability.toFixed(2)} liab</div>
-                  </div>
-                  <div className="text-right">
-                    <RunnerStatusBadge status={r.status} />
-                    {r.actualProfit !== null && (
-                      <div className={`text-xs mt-0.5 ${r.actualProfit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                        {r.actualProfit >= 0 ? "+" : ""}£{r.actualProfit.toFixed(2)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="pt-2 flex justify-between text-xs text-muted-foreground">
-                <span>Total staked: £{race.totalStaked.toFixed(2)}</span>
-                <span>Collected: £{race.totalCollected.toFixed(2)} · Paid out: £{race.totalPaidOut.toFixed(2)}</span>
-              </div>
-            </div>
-          )}
+        {/* P&L */}
+        <div className="flex-shrink-0">
+          <PnlChip value={race.netProfit} settled={race.settled} />
         </div>
-      )}
+
+        {/* Arrow */}
+        <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors flex-shrink-0" />
+      </div>
+    </Link>
+  );
+}
+
+function LogLine({ log }: { log: BotLog }) {
+  const isLaying  = log.message.toLowerCase().includes("laying");
+  const isSkip    = log.message.toLowerCase().includes("skipping");
+  const isError   = log.level === "error";
+  const isWarn    = log.level === "warn";
+  const isCycle   = log.message.toLowerCase().startsWith("cycle");
+  const isStart   = log.message.toLowerCase().includes("started") || log.message.toLowerCase().includes("stopped");
+
+  const msgColour =
+    isError   ? "text-red-400" :
+    isWarn    ? "text-amber-400" :
+    isLaying  ? "text-emerald-400 font-medium" :
+    isSkip    ? "text-muted-foreground/60" :
+    isCycle   ? "text-blue-400/80" :
+    isStart   ? "text-violet-400" :
+    "text-slate-300";
+
+  const levelColour =
+    isError ? "text-red-500" :
+    isWarn  ? "text-amber-500" :
+    "text-slate-600";
+
+  return (
+    <div className="flex items-start gap-3 py-1 border-b border-white/[0.04] last:border-0">
+      <span className="text-slate-600 flex-shrink-0 tabular-nums text-[11px] pt-px w-[52px]">
+        {new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+      </span>
+      <span className={`text-[10px] font-bold uppercase flex-shrink-0 w-8 pt-px ${levelColour}`}>
+        {log.level.slice(0, 4)}
+      </span>
+      <span className={`text-xs leading-relaxed break-words ${msgColour}`}>{log.message}</span>
     </div>
   );
 }
@@ -184,7 +177,7 @@ export default function BookieBot() {
 
   const { data: logs } = useQuery<BotLog[]>({
     queryKey: ["bookie-logs"],
-    queryFn: () => apiFetch("/bookie/logs?limit=100"),
+    queryFn: () => apiFetch("/bookie/logs?limit=200"),
     refetchInterval: 5000,
   });
 
@@ -205,10 +198,10 @@ export default function BookieBot() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bookie-status"] }),
   });
 
-  const [maxLoss, setMaxLoss] = useState<string>("");
-  const [maxLiab, setMaxLiab] = useState<string>("");
-  const [minLiq, setMinLiq] = useState<string>("");
-  const [countryInput, setCountryInput] = useState<string>("");
+  const [maxLoss, setMaxLoss]       = useState("");
+  const [maxLiab, setMaxLiab]       = useState("");
+  const [minLiq, setMinLiq]         = useState("");
+  const [countryInput, setCountryInput] = useState("");
 
   const configMutation = useMutation({
     mutationFn: (body: {
@@ -224,43 +217,45 @@ export default function BookieBot() {
   });
 
   const isRunning = status?.isRunning ?? false;
-  const isPaper = status?.paperTradingMode ?? true;
-  const cfg = status?.bookieConfig;
+  const isPaper   = status?.paperTradingMode ?? true;
+  const cfg       = status?.bookieConfig;
 
   const handleSaveConfig = () => {
     const patch: Parameters<typeof configMutation.mutate>[0] = {};
-    if (maxLoss !== "") patch.maxRaceNetLoss = parseFloat(maxLoss);
-    if (maxLiab !== "") patch.maxRunnerLiability = parseFloat(maxLiab);
-    if (minLiq !== "") patch.minLiquidity = parseFloat(minLiq);
+    if (maxLoss !== "")            patch.maxRaceNetLoss      = parseFloat(maxLoss);
+    if (maxLiab !== "")            patch.maxRunnerLiability  = parseFloat(maxLiab);
+    if (minLiq !== "")             patch.minLiquidity        = parseFloat(minLiq);
     if (countryInput.trim() !== "") {
       patch.countryCodes = countryInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
     }
     if (Object.keys(patch).length > 0) configMutation.mutate(patch);
   };
 
-  const applyPreset = (codes: string[]) => {
-    configMutation.mutate({ countryCodes: codes });
-  };
-
-  const profitToday = status?.profitToday ?? 0;
-  const totalProfit = status?.totalNetProfit ?? 0;
+  const profitToday  = status?.profitToday    ?? 0;
+  const totalProfit  = status?.totalNetProfit ?? 0;
+  const todaysRaces  = (races ?? []).filter(r => new Date(r.placedAt).toDateString() === new Date().toDateString());
+  const profitableCount = (races ?? []).filter(r => r.settled && r.netProfit > 0).length;
+  const losingCount     = (races ?? []).filter(r => r.settled && r.netProfit < 0).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-8">
+
+      {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-2">
-            <Scale className="w-5 h-5 text-primary" />
-            <h1 className="text-2xl font-bold">Bookie Bot</h1>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#0072bb]/20 flex items-center justify-center">
+              <Scale className="w-4 h-4 text-[#0072bb]" />
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight">Bookie Bot</h1>
             {isPaper && (
-              <Badge className="bg-chart-2/20 text-chart-2 border-chart-2/30 text-[10px] uppercase tracking-wider">
+              <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/30 text-[10px] uppercase tracking-wider font-semibold">
                 Paper
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            Lays every runner proportional to real Betfair crowd money
-            {cfg?.countryCodes?.length ? ` — ${cfg.countryCodes.join(", ")} races` : ""}
+          <p className="text-sm text-muted-foreground mt-1.5 ml-0.5">
+            Proportional lay strategy · Horse racing WIN markets · {cfg?.countryCodes?.join(", ") ?? "GB, IE"}
           </p>
         </div>
 
@@ -269,271 +264,250 @@ export default function BookieBot() {
           variant={isRunning ? "destructive" : "default"}
           disabled={isLoading || startMutation.isPending || stopMutation.isPending}
           onClick={() => isRunning ? stopMutation.mutate() : startMutation.mutate()}
-          className="gap-2"
+          className="gap-2 shadow-md"
         >
           {isRunning ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
           {isRunning ? "Stop Bookie Bot" : "Start Bookie Bot"}
         </Button>
       </div>
 
-      {isRunning && (
-        <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Bookie Bot is running{isPaper ? " in paper trading mode" : ""} — scanning {cfg?.countryCodes?.join(", ") ?? "GB, IE"} races every 60 seconds</span>
+      {/* ── Status banner ── */}
+      {isRunning ? (
+        <div className="flex items-center gap-3 text-sm bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+          <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+          </span>
+          <span className="text-emerald-600 font-medium">
+            Running{isPaper ? " in paper mode" : ""} — scanning {cfg?.countryCodes?.join(", ") ?? "GB, IE"} races
+          </span>
           {status?.startedAt && (
-            <span className="ml-auto text-muted-foreground flex items-center gap-1">
+            <span className="ml-auto text-muted-foreground flex items-center gap-1.5 text-xs">
               <Clock className="w-3 h-3" />
-              Since {new Date(status.startedAt).toLocaleTimeString()}
+              Since {new Date(status.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
         </div>
+      ) : (
+        <div className="flex items-center gap-3 text-sm bg-muted/40 border border-border/60 rounded-xl px-4 py-3">
+          <span className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40 flex-shrink-0" />
+          <span className="text-muted-foreground">Bot is stopped — press Start to begin scanning races</span>
+        </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          label="Today's Net P&L"
-          value={`${profitToday >= 0 ? "+" : ""}£${profitToday.toFixed(2)}`}
-          sub={`${status?.racesToday ?? 0} races today`}
-        />
-        <StatCard
-          label="Total Net P&L"
-          value={`${totalProfit >= 0 ? "+" : ""}£${totalProfit.toFixed(2)}`}
-          sub={`${status?.totalRaces ?? 0} races all time`}
-        />
-        <StatCard
-          label="Max Race Net Loss"
-          value={`£${cfg?.maxRaceNetLoss ?? 100}`}
-          sub="Worst-case per race"
-        />
-        <StatCard
-          label="Max Runner Liability"
-          value={`£${cfg?.maxRunnerLiability ?? 300}`}
-          sub="Per individual runner"
-        />
+      {/* ── Stats row ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          {
+            label: "Today's P&L",
+            value: `${profitToday >= 0 ? "+" : ""}£${profitToday.toFixed(2)}`,
+            sub: `${status?.racesToday ?? 0} races today`,
+            colour: profitToday > 0 ? "text-emerald-500" : profitToday < 0 ? "text-red-500" : "",
+          },
+          {
+            label: "All-time P&L",
+            value: `${totalProfit >= 0 ? "+" : ""}£${totalProfit.toFixed(2)}`,
+            sub: `${status?.totalRaces ?? 0} races total`,
+            colour: totalProfit > 0 ? "text-emerald-500" : totalProfit < 0 ? "text-red-500" : "",
+          },
+          {
+            label: "Max Net Loss / Race",
+            value: `£${cfg?.maxRaceNetLoss ?? 100}`,
+            sub: "Worst case per race",
+            colour: "",
+          },
+          {
+            label: "Max Liability / Runner",
+            value: `£${cfg?.maxRunnerLiability ?? 300}`,
+            sub: "Single runner cap",
+            colour: "",
+          },
+        ].map(s => (
+          <Card key={s.label} className="border-border/60">
+            <CardContent className="pt-5 pb-4">
+              <div className={`text-2xl font-bold tabular-nums ${s.colour}`}>{s.value}</div>
+              <div className="text-xs text-muted-foreground mt-1 font-medium">{s.label}</div>
+              <div className="text-[11px] text-muted-foreground/60 mt-0.5">{s.sub}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Strategy Config</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="bg-muted/40 rounded-lg p-3 text-sm space-y-1">
-              <div className="font-medium text-xs text-muted-foreground uppercase tracking-wide mb-2">How it works</div>
-              <p>Reads the real crowd money on each runner (<code className="text-xs bg-muted px-1 rounded">totalMatched</code>) and lays every runner at the same proportion — mirroring the betting market on a smaller scale.</p>
-              <p className="text-muted-foreground text-xs mt-2">Worst case: if the most-backed horse wins, net loss is capped at your max race loss. If an outsider wins, you profit.</p>
-            </div>
+      {/* ── Main grid ── */}
+      <div className="grid md:grid-cols-[1fr_360px] gap-6">
 
-            {/* Country codes */}
+        {/* Race history */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Race History</h2>
+            {(races ?? []).length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {profitableCount} won · {losingCount} lost · {(races ?? []).filter(r => !r.settled).length} pending
+              </span>
+            )}
+          </div>
+
+          {!races || races.length === 0 ? (
+            <div className="rounded-xl border border-border/60 border-dashed bg-muted/20 py-16 text-center">
+              <Banknote className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">No races yet</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Start the bot to begin laying markets</p>
+            </div>
+          ) : (
             <div className="space-y-2">
-              <Label>Country Codes</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: "GB + IE", codes: ["GB", "IE"] },
-                  { label: "AU", codes: ["AU"] },
-                  { label: "US", codes: ["US"] },
-                  { label: "GB + IE + AU", codes: ["GB", "IE", "AU"] },
-                  { label: "All", codes: ["GB", "IE", "AU", "US", "ZA", "FR"] },
-                ].map(p => (
-                  <Button
-                    key={p.label}
-                    size="sm"
-                    variant={
-                      cfg?.countryCodes?.join(",") === p.codes.join(",")
-                        ? "default"
-                        : "outline"
-                    }
-                    className="h-7 text-xs"
-                    disabled={configMutation.isPending}
-                    onClick={() => applyPreset(p.codes)}
-                  >
-                    {p.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex gap-2">
+              {races.map(race => <RaceRow key={race.marketId} race={race} />)}
+            </div>
+          )}
+        </div>
+
+        {/* Right column: config + today's summary */}
+        <div className="space-y-4">
+
+          {/* Today's summary */}
+          <Card className="border-border/60">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Today</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-0">
+              {todaysRaces.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">No races today yet</p>
+              ) : (
+                todaysRaces.map(race => (
+                  <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
+                    <div className="flex items-center justify-between py-2 border-b border-border/40 last:border-0 cursor-pointer hover:opacity-80 transition-opacity group">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                          {race.eventName}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {race.betCount} runners · £{race.totalStaked.toFixed(2)}
+                        </div>
+                      </div>
+                      <PnlChip value={race.netProfit} settled={race.settled} />
+                    </div>
+                  </Link>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Config */}
+          <Card className="border-border/60">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Strategy Config</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+
+              {/* Country presets */}
+              <div className="space-y-2">
+                <Label className="text-xs">Country Codes</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: "GB + IE",       codes: ["GB", "IE"] },
+                    { label: "AU",            codes: ["AU"] },
+                    { label: "GB + IE + AU",  codes: ["GB", "IE", "AU"] },
+                    { label: "All",           codes: ["GB", "IE", "AU", "US", "ZA", "FR"] },
+                  ].map(p => (
+                    <Button
+                      key={p.label}
+                      size="sm"
+                      variant={cfg?.countryCodes?.join(",") === p.codes.join(",") ? "default" : "outline"}
+                      className="h-7 text-xs"
+                      disabled={configMutation.isPending}
+                      onClick={() => configMutation.mutate({ countryCodes: p.codes })}
+                    >
+                      {p.label}
+                    </Button>
+                  ))}
+                </div>
                 <Input
                   placeholder={`Current: ${cfg?.countryCodes?.join(", ") ?? "GB, IE"}`}
                   value={countryInput}
                   onChange={e => setCountryInput(e.target.value)}
-                  className="text-sm"
+                  className="text-xs h-8"
                 />
-                <p className="text-xs text-muted-foreground self-center whitespace-nowrap">comma-separated</p>
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="maxLoss">Max Net Loss / Race (£)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="maxLoss" className="text-xs">Max Loss / Race (£)</Label>
+                  <Input
+                    id="maxLoss" type="number"
+                    placeholder={String(cfg?.maxRaceNetLoss ?? 100)}
+                    value={maxLoss} onChange={e => setMaxLoss(e.target.value)}
+                    min={1} max={1000} className="h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="maxLiab" className="text-xs">Max Liability / Runner (£)</Label>
+                  <Input
+                    id="maxLiab" type="number"
+                    placeholder={String(cfg?.maxRunnerLiability ?? 300)}
+                    value={maxLiab} onChange={e => setMaxLiab(e.target.value)}
+                    min={1} max={5000} className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="minLiq" className="text-xs">Min Market Liquidity (£)</Label>
                 <Input
-                  id="maxLoss"
-                  type="number"
-                  placeholder={String(cfg?.maxRaceNetLoss ?? 100)}
-                  value={maxLoss}
-                  onChange={e => setMaxLoss(e.target.value)}
-                  min={1}
-                  max={1000}
+                  id="minLiq" type="number"
+                  placeholder={String(cfg?.minLiquidity ?? 1000)}
+                  value={minLiq} onChange={e => setMinLiq(e.target.value)}
+                  min={0} max={500000} step={1000} className="h-8 text-sm"
                 />
-                <p className="text-xs text-muted-foreground">Worst case P&L if any one horse wins</p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="maxLiab">Max Liability / Runner (£)</Label>
-                <Input
-                  id="maxLiab"
-                  type="number"
-                  placeholder={String(cfg?.maxRunnerLiability ?? 300)}
-                  value={maxLiab}
-                  onChange={e => setMaxLiab(e.target.value)}
-                  min={1}
-                  max={5000}
-                />
-                <p className="text-xs text-muted-foreground">Cap on any single runner payout</p>
+
+              <Button
+                onClick={handleSaveConfig}
+                disabled={configMutation.isPending || (maxLoss === "" && maxLiab === "" && minLiq === "" && countryInput.trim() === "")}
+                className="w-full h-8 text-xs"
+              >
+                Save Config
+              </Button>
+
+              <div className="text-[11px] text-muted-foreground/70 border-t border-border/40 pt-3 space-y-0.5">
+                <div className="font-medium text-muted-foreground/90">Fixed parameters</div>
+                <div>Market type: WIN · Timing: 1–4 min before start</div>
+                <div>Odds range: 1.5–50 · Min pool share: 2%</div>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="minLiq">Min Market Liquidity (£)</Label>
-              <Input
-                id="minLiq"
-                type="number"
-                placeholder={String(cfg?.minLiquidity ?? 10000)}
-                value={minLiq}
-                onChange={e => setMinLiq(e.target.value)}
-                min={0}
-                max={500000}
-                step={1000}
-              />
-              <p className="text-xs text-muted-foreground">Skip races with less totalMatched than this — lower for US/AU markets</p>
-            </div>
-
-            <div className="text-xs text-muted-foreground space-y-0.5 border-t pt-3">
-              <div className="font-medium">Fixed parameters:</div>
-              <div>Race type: WIN markets · Timing: 1–4 min before start · Odds: 1.5–50</div>
-              <div>Min runner pool share: 2% · Min stake: £2</div>
-            </div>
-
-            <Button
-              onClick={handleSaveConfig}
-              disabled={configMutation.isPending || (maxLoss === "" && maxLiab === "" && minLiq === "" && countryInput.trim() === "")}
-              className="w-full"
-            >
-              Save Config
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Today's Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {(races ?? []).filter(r => {
-              const d = new Date(r.placedAt);
-              const today = new Date();
-              return d.toDateString() === today.toDateString();
-            }).length === 0 ? (
-              <div className="text-sm text-muted-foreground py-8 text-center">
-                No races today yet — bot will scan every minute when running
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {(races ?? [])
-                  .filter(r => new Date(r.placedAt).toDateString() === new Date().toDateString())
-                  .map(race => (
-                    <div key={race.marketId} className="flex items-center justify-between text-sm py-1 border-b border-border/50 last:border-0">
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{race.eventName}</div>
-                        <div className="text-xs text-muted-foreground">{race.betCount} runners · £{race.totalStaked.toFixed(2)} staked</div>
-                      </div>
-                      <ProfitBadge value={race.netProfit} settled={race.settled} />
-                    </div>
-                  ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Race History</CardTitle>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {(races ?? []).filter(r => r.settled && r.netProfit > 0).length} profitable ·{" "}
-              {(races ?? []).filter(r => r.settled && r.netProfit < 0).length} losing
-            </div>
+      {/* ── Activity console ── */}
+      <div className="rounded-xl border border-white/10 bg-[#0a0d14] overflow-hidden shadow-xl">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] bg-white/[0.02]">
+          <div className="flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-xs font-medium text-slate-400">Live Activity</span>
+            {isRunning && (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-500/80">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                LIVE
+              </span>
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
-          {!races || races.length === 0 ? (
-            <div className="text-sm text-muted-foreground text-center py-10">
-              No bookie bets placed yet. Start the bot to begin laying markets.
+          {logs && logs.length > 0 && (
+            <span className="text-[10px] text-slate-600">{logs.length} entries</span>
+          )}
+        </div>
+        <div
+          ref={consoleRef}
+          className="h-64 overflow-y-auto px-4 py-3 space-y-0 scrollbar-thin"
+        >
+          {!logs || logs.length === 0 ? (
+            <div className="text-slate-600 text-xs py-8 text-center">
+              No activity yet — start the bot to see live logs here
             </div>
           ) : (
-            <div className="space-y-2">
-              {races.map(race => (
-                <RaceRow key={race.marketId} race={race} />
-              ))}
-            </div>
+            [...logs].reverse().map(log => <LogLine key={log.id} log={log} />)
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card className="border-muted">
-        <CardContent className="pt-4">
-          <div className="text-xs text-muted-foreground space-y-1">
-            <div className="flex items-center gap-1 font-medium">
-              {totalProfit >= 0
-                ? <TrendingUp className="w-3 h-3 text-emerald-500" />
-                : <TrendingDown className="w-3 h-3 text-red-500" />}
-              Position interpretation
-            </div>
-            <p>
-              When longshots win → you profit (small liability, large stakes collected from everyone else).
-              When the most-backed horse wins → worst case, capped at £{cfg?.maxRaceNetLoss ?? 100}.
-              The formula scales stakes so both constraints are satisfied simultaneously.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border/50 bg-card/50">
-        <CardHeader className="pb-3 border-b border-border/50">
-          <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-            <Terminal className="w-4 h-4" />
-            Bookie Bot Console
-            {logs && logs.length > 0 && (
-              <span className="ml-auto text-xs text-muted-foreground/60">{logs.length} entries</span>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div
-            ref={consoleRef}
-            className="h-72 overflow-y-auto p-4 font-mono text-xs space-y-1.5 bg-[#0A0D14] text-gray-300 rounded-b-lg"
-          >
-            {!logs || logs.length === 0 ? (
-              <div className="text-gray-600">No Bookie Bot logs yet — start the bot to see activity here.</div>
-            ) : (
-              [...logs].reverse().map(log => (
-                <div key={log.id} className="flex gap-3 leading-relaxed">
-                  <span className="text-gray-600 flex-shrink-0 tabular-nums">
-                    {new Date(log.createdAt).toLocaleTimeString()}
-                  </span>
-                  <span className={`font-bold flex-shrink-0 w-10 ${
-                    log.level.toUpperCase() === "ERROR" ? "text-red-500" :
-                    log.level.toUpperCase() === "WARN"  ? "text-yellow-500" :
-                    log.level.toUpperCase() === "INFO"  ? "text-blue-400" : "text-gray-500"
-                  }`}>
-                    {log.level.toUpperCase().slice(0, 4)}
-                  </span>
-                  <span className="break-words">{log.message}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
