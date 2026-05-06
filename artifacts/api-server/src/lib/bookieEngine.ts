@@ -439,6 +439,9 @@ export async function startBookieBot(): Promise<void> {
   await loadBookieConfigFromDb();
   bookieBotRunning = true;
   bookieStartedAt = new Date();
+  // Persist running state so auto-resume works after server restart
+  db.update(botConfigTable).set({ bookieIsRunning: true })
+    .catch((err: unknown) => logger.error({ err }, "[BOOKIE] Failed to persist bookieIsRunning=true"));
   log("info", "Bookie Bot started");
   void scheduleBookieCycle();
   bookieSettlementInterval = setInterval(() => { void runBookieSettlement(); }, 2 * 60_000);
@@ -450,6 +453,9 @@ export async function stopBookieBot(): Promise<void> {
   bookieStartedAt = null;
   if (bookieBotInterval) { clearTimeout(bookieBotInterval); bookieBotInterval = null; }
   if (bookieSettlementInterval) { clearInterval(bookieSettlementInterval); bookieSettlementInterval = null; }
+  // Persist stopped state
+  db.update(botConfigTable).set({ bookieIsRunning: false })
+    .catch((err: unknown) => logger.error({ err }, "[BOOKIE] Failed to persist bookieIsRunning=false"));
   log("info", "Bookie Bot stopped");
 }
 
