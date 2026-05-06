@@ -123,7 +123,7 @@ async function runBookieCycle(): Promise<number> {
       // excluding already-started/in-play races that listMarketCatalogue returns
       // by default when no time filter is applied.
       markets = await listMarkets({
-        eventTypeId: "1",
+        eventTypeId: "7",
         countryCodes,
         marketType: "WIN",
         limit: 50,
@@ -188,7 +188,7 @@ async function computeBookieSleepMs(): Promise<number> {
   try {
     const countryCodes = bookieConfig.countryCodes?.length ? bookieConfig.countryCodes : ["GB", "IE"];
     const markets = await listMarkets({
-      eventTypeId: "1",
+      eventTypeId: "7",
       countryCodes,
       marketType: "WIN",
       limit: 100,
