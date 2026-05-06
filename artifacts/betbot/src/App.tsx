@@ -15,6 +15,8 @@ import Settings from "@/pages/Settings";
 import GoalBot from "@/pages/GoalBot";
 import BookieBot from "@/pages/BookieBot";
 import BookieBotRace from "@/pages/BookieBotRace";
+import DutchingBot from "@/pages/DutchingBot";
+import DutchingBotRace from "@/pages/DutchingBotRace";
 
 const queryClient = new QueryClient();
 
@@ -30,6 +32,8 @@ function Router() {
         <Route path="/goalbot" component={GoalBot} />
         <Route path="/bookiebot/race/:marketId" component={BookieBotRace} />
         <Route path="/bookiebot" component={BookieBot} />
+        <Route path="/dutchingbot/race/:marketId" component={DutchingBotRace} />
+        <Route path="/dutchingbot" component={DutchingBot} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

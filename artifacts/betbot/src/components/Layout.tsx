@@ -11,6 +11,7 @@ import {
   PowerOff,
   Zap,
   Scale,
+  Layers,
 } from "lucide-react";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -29,6 +30,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/bot", label: "Bot Control", icon: TrendingUp },
     { href: "/goalbot", label: "Goal Bot", icon: Zap },
     { href: "/bookiebot", label: "Bookie Bot", icon: Scale },
+    { href: "/dutchingbot", label: "Dutching Bot", icon: Layers },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

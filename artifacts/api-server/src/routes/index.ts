@@ -9,6 +9,7 @@ import dashboardRouter from "./dashboard";
 import settingsRouter from "./settings";
 import goalbotRouter from "./goalbot";
 import bookieRouter from "./bookie";
+import dutchRouter from "./dutch";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(dashboardRouter);
 router.use(settingsRouter);
 router.use(goalbotRouter);
 router.use(bookieRouter);
+router.use(dutchRouter);
 
 export default router;
