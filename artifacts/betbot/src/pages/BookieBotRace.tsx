@@ -96,14 +96,21 @@ export default function BookieBotRace() {
   const race = races?.find(r => r.marketId === marketId);
 
   const totalStaked  = bets?.reduce((s, b) => s + b.stakeAmount, 0) ?? 0;
-  const totalLiab    = bets?.reduce((s, b) => s + b.liability, 0) ?? 0;
   const netProfit    = race?.netProfit ?? 0;
   const settled      = race?.settled ?? false;
+
+  // Worst-case net loss: if horse X wins, we pay X's liability but collect all other stakes.
+  // = max over all runners of (runner.liability - (totalStaked - runner.stakeAmount))
+  const worstCaseLoss = bets && bets.length > 0
+    ? Math.max(...bets.map(b => b.liability - (totalStaked - b.stakeAmount)))
+    : 0;
 
   const raceTime = race ? new Date(race.placedAt) : null;
 
   // Sort: favourite (lowest odds) first
   const sortedBets = bets ? [...bets].sort((a, b) => a.requestedOdds - b.requestedOdds) : [];
+  // In lay betting: status=LOST means our lay lost = that horse actually WON the race
+  const actualWinner = sortedBets.find(b => b.status === "LOST");
 
   return (
     <div className="space-y-0 -mt-2">
@@ -152,8 +159,8 @@ export default function BookieBotRace() {
               <div className="text-2xl font-bold text-white">£{totalStaked.toFixed(2)}</div>
             </div>
             <div>
-              <div className="text-xs text-white/50 uppercase tracking-wide">Max liability</div>
-              <div className="text-2xl font-bold text-white">£{totalLiab.toFixed(2)}</div>
+              <div className="text-xs text-white/50 uppercase tracking-wide">Worst case</div>
+              <div className="text-2xl font-bold text-amber-300">-£{worstCaseLoss.toFixed(2)}</div>
             </div>
             <div>
               <div className="text-xs text-white/50 uppercase tracking-wide">Net P&L</div>
@@ -169,6 +176,35 @@ export default function BookieBotRace() {
         </div>
       </div>
 
+      {/* ── Race Winner banner (only shown when settled) ── */}
+      {settled && actualWinner && (
+        <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+            <Trophy className="w-4 h-4 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-emerald-400/70 uppercase tracking-wide font-semibold mb-0.5">Race Winner</div>
+            <div className="text-base font-bold text-emerald-300">{actualWinner.selectionName}</div>
+            <div className="text-xs text-emerald-400/60">
+              Odds {actualWinner.requestedOdds.toFixed(2)} · Our lay lost · Liability paid: £{Math.abs(actualWinner.actualProfit ?? 0).toFixed(2)}
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-xs text-muted-foreground mb-0.5">Net result</div>
+            <div className={`text-xl font-bold tabular-nums ${netProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {netProfit >= 0 ? "+" : ""}£{netProfit.toFixed(2)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {settled && !actualWinner && (
+        <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/8 px-5 py-3 flex items-center gap-3 text-sm text-blue-300">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          All lays won — no horse backed, clean sweep.
+        </div>
+      )}
+
       {/* ── Runner table ── */}
       <div className="pt-6 space-y-2">
         <div className="flex items-center justify-between mb-3">
@@ -182,26 +218,27 @@ export default function BookieBotRace() {
 
         {sortedBets.map((bet, i) => {
           const prob = impliedPct(bet.requestedOdds);
-          const isWinner = bet.status === "WON";
-          const isLoser  = bet.status === "LOST";
+          // In lay betting: LOST = our lay lost = this horse WON the actual race
+          const isRaceWinner = bet.status === "LOST";
+          const isLayWon     = bet.status === "WON";
 
           return (
             <div
               key={bet.id}
               className={`rounded-xl border transition-all ${
-                isWinner ? "border-emerald-500/40 bg-emerald-500/5" :
-                isLoser  ? "border-red-500/20 bg-red-500/3" :
+                isRaceWinner ? "border-amber-500/40 bg-amber-500/5" :
+                isLayWon     ? "border-emerald-500/20 bg-emerald-500/3" :
                 "border-border/60 bg-card/50"
               }`}
             >
               <div className="px-4 py-3 flex items-start gap-4">
                 {/* Rank bubble */}
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
-                  isWinner ? "bg-emerald-500 text-white" :
-                  isLoser  ? "bg-red-500/30 text-red-400" :
+                  isRaceWinner ? "bg-amber-500 text-white" :
+                  isLayWon     ? "bg-emerald-500/20 text-emerald-400" :
                   "bg-muted text-muted-foreground"
                 }`}>
-                  {isWinner ? <Trophy className="w-3.5 h-3.5" /> : i + 1}
+                  {isRaceWinner ? <Trophy className="w-3.5 h-3.5" /> : i + 1}
                 </div>
 
                 {/* Runner name + prob bar */}
@@ -229,7 +266,7 @@ export default function BookieBotRace() {
                   </div>
                   <div>
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Liability</div>
-                    <div className={`text-base font-semibold tabular-nums ${isWinner ? "text-red-400" : ""}`}>
+                    <div className={`text-base font-semibold tabular-nums ${isRaceWinner ? "text-red-400" : ""}`}>
                       £{bet.liability.toFixed(2)}
                     </div>
                     <div className="text-[10px] text-muted-foreground">paid out if wins</div>
@@ -269,9 +306,9 @@ export default function BookieBotRace() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-border/50">
               {[
-                { label: "Total staked",   value: `£${totalStaked.toFixed(2)}`,         sub: "Backer pays us" },
-                { label: "Total liability",value: `£${totalLiab.toFixed(2)}`,            sub: "Max we could pay out" },
-                { label: "Collected",      value: `£${race.totalCollected.toFixed(2)}`,  sub: "From losing lays" },
+                { label: "Total staked",   value: `£${totalStaked.toFixed(2)}`,            sub: "Backer pays us" },
+                { label: "Worst case loss",value: `-£${worstCaseLoss.toFixed(2)}`,        sub: "If favourite wins" },
+                { label: "Collected",      value: `£${race.totalCollected.toFixed(2)}`,   sub: "From losing lays" },
                 {
                   label: "Net P&L",
                   value: settled

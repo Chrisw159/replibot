@@ -116,8 +116,8 @@ router.get("/dashboard/recent-bets", async (_req, res): Promise<void> => {
       totalStaked: sql<number>`sum(${betsTable.stakeAmount})::float`.as("total_staked"),
       netProfit: sql<number>`sum(${betsTable.actualProfit})::float`.as("net_profit"),
       settled: sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','SETTLED'))`.as("settled"),
-      hasWinner: sql<boolean>`bool_or(${betsTable.status} = 'WON')`.as("has_winner"),
-      winnerName: sql<string>`max(case when ${betsTable.status} = 'WON' then ${betsTable.selectionName} end)`.as("winner_name"),
+      hasWinner: sql<boolean>`bool_or(${betsTable.status} = 'LOST')`.as("has_winner"),
+      winnerName: sql<string>`max(case when ${betsTable.status} = 'LOST' then ${betsTable.selectionName} end)`.as("winner_name"),
     })
     .from(betsTable)
     .groupBy(betsTable.marketId, betsTable.marketName, betsTable.eventName, betsTable.strategyName)
