@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
 import {
   Play, Square, RefreshCw,
-  TrendingUp, TrendingDown, CircleDot,
+  TrendingUp, TrendingDown, CircleDot, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -232,24 +233,27 @@ export default function BookieBot() {
                     const p = fmtProfit(race.netProfit, race.settled);
                     const t = new Date(race.placedAt);
                     return (
-                      <div key={race.marketId} className="flex items-center gap-3 px-5 py-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm truncate">{race.eventName}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {race.marketName} · {race.betCount} backed · £{race.totalStaked.toFixed(2)} outlay
-                            {" · "}{t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
+                        <div className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 cursor-pointer transition-colors group">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate group-hover:text-foreground">{race.eventName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {race.marketName} · {race.betCount} backed · £{race.totalStaked.toFixed(2)} outlay
+                              {" · "}{t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                            {race.winnerName && (
+                              <div className="text-xs text-emerald-400/80 mt-0.5">Winner: {race.winnerName}</div>
+                            )}
                           </div>
-                          {race.winnerName && (
-                            <div className="text-xs text-emerald-400/80 mt-0.5">Winner: {race.winnerName}</div>
-                          )}
+                          <div className="text-right flex-shrink-0">
+                            <div className={`text-sm font-bold tabular-nums ${p.cls}`}>{p.text}</div>
+                            {race.settled
+                              ? <div className="text-[10px] text-muted-foreground">Settled</div>
+                              : <div className="text-[10px] text-amber-400/70">Pending</div>}
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground flex-shrink-0" />
                         </div>
-                        <div className="text-right flex-shrink-0">
-                          <div className={`text-sm font-bold tabular-nums ${p.cls}`}>{p.text}</div>
-                          {race.settled
-                            ? <div className="text-[10px] text-muted-foreground">Settled</div>
-                            : <div className="text-[10px] text-amber-400/70">Pending</div>}
-                        </div>
-                      </div>
+                      </Link>
                     );
                   })}
                 </div>
