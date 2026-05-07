@@ -13,7 +13,7 @@ const BOOKIE_STRATEGY_NAME = "Bookie Bot";
 const MIN_MINS_BEFORE_START = 1;
 const MAX_MINS_BEFORE_START = 4;
 const MIN_ODDS = 1.5;
-const MAX_ODDS = 50;
+const MAX_ODDS = 300; // runners above 300/1 are excluded from the lay field; race still runs without them
 
 const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
@@ -212,12 +212,22 @@ async function runBookieMarket(
     return;
   }
 
-  // Filter to active runners with valid lay prices
-  const activeRunners = marketDetail.runners.filter(r => {
-    if (r.status !== "ACTIVE") return false;
+  // Filter to active runners within odds range.
+  // Runners above 300/1 are excluded from the lay field — race still runs without them.
+  const allActive = marketDetail.runners.filter(r => r.status === "ACTIVE");
+  const excluded300 = allActive.filter(r => {
+    const price = r.bestLayPrice ?? r.bestBackPrice ?? 0;
+    return price > MAX_ODDS;
+  });
+  if (excluded300.length > 0) {
+    log("info",
+      `${eventName} — excluding ${excluded300.length} runner(s) above ${MAX_ODDS}/1 from lay field: ${excluded300.map(r => `${r.runnerName} (${r.bestLayPrice ?? r.bestBackPrice})`).join(", ")}`,
+    );
+  }
+
+  const activeRunners = allActive.filter(r => {
     const price = r.bestLayPrice ?? r.bestBackPrice;
-    if (!price || price < MIN_ODDS || price > MAX_ODDS) return false;
-    return true;
+    return price && price >= MIN_ODDS && price <= MAX_ODDS;
   });
 
   if (activeRunners.length < bookieConfig.minRunners) {
