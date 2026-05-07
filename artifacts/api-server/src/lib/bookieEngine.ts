@@ -116,8 +116,8 @@ async function runBookieCycle(): Promise<number> {
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() + MIN_MINS_BEFORE_START * 60_000);
-    const to   = new Date(now.getTime() + MAX_MINS_BEFORE_START * 60_000);
+    const fromMs = now.getTime() + MIN_MINS_BEFORE_START * 60_000;
+    const toMs   = now.getTime() + MAX_MINS_BEFORE_START * 60_000;
 
     const markets = await listMarkets({
       eventTypeId: "7",
@@ -126,14 +126,41 @@ async function runBookieCycle(): Promise<number> {
       hoursAhead: MAX_MINS_BEFORE_START / 60,
     });
 
-    const candidates = markets.filter(m => {
+    // Filter to only races in the 1–4 min pre-start window
+    const inWindow = markets.filter(m => {
+      const startMs = new Date(m.marketStartTime).getTime();
+      return startMs >= fromMs && startMs <= toMs;
+    });
+
+    const candidates = inWindow.filter(m => {
       if (processingMarkets.has(m.marketId)) return false;
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
       return true;
     });
 
+    // Skip markets we have already bet on (guards against double-processing across cycles)
+    const alreadyBet = candidates.length > 0
+      ? await db
+          .select({ marketId: betsTable.marketId })
+          .from(betsTable)
+          .where(
+            sql`${betsTable.strategyName} = ${BOOKIE_STRATEGY_NAME}
+                AND ${betsTable.marketId} = ANY(ARRAY[${sql.join(
+                  candidates.map(m => sql`${m.marketId}`),
+                  sql`, `,
+                )}])`,
+          )
+      : [];
+    const alreadyBetIds = new Set(alreadyBet.map(r => r.marketId));
+
+    const fresh = candidates.filter(m => !alreadyBetIds.has(m.marketId));
+
+    log("info",
+      `Cycle — ${markets.length} markets fetched, ${inWindow.length} in ${MIN_MINS_BEFORE_START}–${MAX_MINS_BEFORE_START}-min window, ${fresh.length} fresh`,
+    );
+
     let acted = 0;
-    for (const m of candidates) {
+    for (const m of fresh) {
       processingMarkets.add(m.marketId);
       try {
         await runBookieMarket(
