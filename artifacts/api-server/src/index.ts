@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startBot } from "./lib/botEngine";
 import { startBookieBot } from "./lib/bookieEngine";
+import { startDutchBot } from "./lib/dutchEngine";
 import { db, botConfigTable } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
@@ -37,6 +38,10 @@ app.listen(port, (err) => {
       if (config?.bookieIsRunning) {
         logger.info("Auto-resuming Bookie Bot after server restart");
         await startBookieBot();
+      }
+      if (config?.dutchIsRunning) {
+        logger.info("Auto-resuming Dutch Bot after server restart");
+        await startDutchBot();
       }
     } catch (err) {
       logger.error({ err }, "Failed to auto-resume bots on startup");

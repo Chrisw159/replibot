@@ -26,6 +26,8 @@ export const botConfigTable = pgTable("bot_config", {
   betfairAppKey: text("betfair_app_key"),
   bookieIsRunning: boolean("bookie_is_running").notNull().default(false),
   bookieConfigJson: json("bookie_config_json").$type<Record<string, unknown>>(),
+  dutchIsRunning: boolean("dutch_is_running").notNull().default(false),
+  dutchConfigJson: json("dutch_config_json").$type<Record<string, unknown>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
