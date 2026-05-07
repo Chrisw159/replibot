@@ -255,51 +255,29 @@ async function runBookieMarket(
   //   totalStake × (maxRatio − 1) = maxRaceNetLoss
   //   totalStake = maxRaceNetLoss / (maxRatio − 1)
   //
-  // Betfair minimum bet is £2. If any runner's calculated stake falls below that,
-  // we drop it from the lay list and recalculate from scratch with the remaining
-  // runners. We keep iterating until all stakes are ≥ £2 or fewer than minRunners
-  // remain (in which case we skip the race entirely).
+  // Strategy requires laying ALL runners in the field.
+  // Betfair minimum bet is £2 — if any single runner's calculated stake falls
+  // below that, the race does not match the strategy and is skipped entirely.
+  // No partial fields, no runner substitutions.
 
-  const { maxRaceNetLoss, minRunners } = bookieConfig;
+  const { maxRaceNetLoss } = bookieConfig;
   const MIN_BET_SIZE = 2.0;
 
-  type LayRunner = typeof runners[0] & { stake: number };
+  const maxRatio = Math.max(...runners.map(r => (r.volume * r.layPrice) / totalVolume));
+  const totalStake = maxRatio > 1
+    ? Math.min(Math.floor((maxRaceNetLoss / (maxRatio - 1)) * 100) / 100, 10_000)
+    : 10_000;
 
-  let working = runners as Array<typeof runners[0]>;
-  let withStakes: LayRunner[] = [];
-  let totalStake = 0;
+  const withStakes = runners.map(r => ({
+    ...r,
+    stake: Math.round(totalStake * (r.volume / totalVolume) * 100) / 100,
+  }));
 
-  while (working.length >= minRunners) {
-    const vol = working.reduce((s, r) => s + r.volume, 0);
-    const ratio = Math.max(...working.map(r => (r.volume * r.layPrice) / vol));
-    const ts = ratio > 1
-      ? Math.min(Math.floor((maxRaceNetLoss / (ratio - 1)) * 100) / 100, 10_000)
-      : 10_000;
-
-    const staked: LayRunner[] = working.map(r => ({
-      ...r,
-      stake: Math.round(ts * (r.volume / vol) * 100) / 100,
-    }));
-
-    const tooSmall = staked.filter(r => r.stake < MIN_BET_SIZE);
-
-    if (tooSmall.length === 0) {
-      withStakes = staked;
-      totalStake = ts;
-      break;
-    }
-
-    // Drop the runner with the smallest stake and retry
-    const drop = tooSmall.reduce((a, b) => a.stake < b.stake ? a : b);
+  const belowMin = withStakes.filter(r => r.stake < MIN_BET_SIZE);
+  if (belowMin.length > 0) {
+    const names = belowMin.map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)}`).join(", ");
     log("info",
-      `${eventName} — dropping ${drop.runner.runnerName} (stake £${drop.stake.toFixed(2)} < £${MIN_BET_SIZE} Betfair minimum), recalculating`,
-    );
-    working = working.filter(r => r.runner.selectionId !== drop.runner.selectionId);
-  }
-
-  if (withStakes.length < minRunners) {
-    log("info",
-      `Skipping ${eventName} — only ${withStakes.length} runner(s) left after removing sub-£${MIN_BET_SIZE} stakes (need ${minRunners})`,
+      `Skipping ${eventName} — ${belowMin.length} runner(s) below £${MIN_BET_SIZE} Betfair minimum (${names}); race does not match strategy`,
     );
     return;
   }
