@@ -15,6 +15,27 @@ interface RunnerBet {
   placedAt: string;
 }
 
+interface MarketRunner {
+  selectionId: number;
+  runnerName: string;
+  status: string;
+  lastPriceTraded: number | null;
+  totalMatched: number | null;
+  bestBackPrice: number | null;
+  bestLayPrice: number | null;
+}
+
+interface MarketDetail {
+  marketId: string;
+  marketName: string;
+  eventName: string;
+  marketStartTime: string;
+  status: string;
+  inPlay: boolean;
+  totalMatched: number;
+  runners: MarketRunner[];
+}
+
 interface DutchRace {
   marketId: string;
   marketName: string;
@@ -37,11 +58,19 @@ export default function BookieBotRace() {
   const [, params] = useRoute("/bookiebot/race/:marketId");
   const marketId = params?.marketId ?? "";
 
-  const { data: bets, isLoading } = useQuery<RunnerBet[]>({
+  const { data: bets, isLoading: betsLoading } = useQuery<RunnerBet[]>({
     queryKey: ["dutch-race-detail", marketId],
     queryFn: () => apiFetch(`/dutch/race/${marketId}`),
     enabled: !!marketId,
     refetchInterval: 30_000,
+  });
+
+  const { data: market } = useQuery<MarketDetail>({
+    queryKey: ["market-detail", marketId],
+    queryFn: () => apiFetch(`/markets/${marketId}`),
+    enabled: !!marketId,
+    refetchInterval: 30_000,
+    retry: 1,
   });
 
   const { data: races } = useQuery<DutchRace[]>({
@@ -55,13 +84,54 @@ export default function BookieBotRace() {
   const winner   = race?.winnerName ?? null;
 
   const totalStaked = bets?.reduce((s, b) => s + b.stakeAmount, 0) ?? 0;
-
-  const sorted = bets ? [...bets].sort((a, b) => b.stakeAmount - a.stakeAmount) : [];
   const raceTime = race ? new Date(race.placedAt) : null;
 
-  const impliedPct = totalStaked > 0
-    ? sorted.map(b => ({ ...b, pct: (b.stakeAmount / totalStaked) * 100 }))
-    : sorted.map(b => ({ ...b, pct: 0 }));
+  // Build a set of backed selectionIds for quick lookup
+  const backedMap = new Map<number, RunnerBet>(
+    (bets ?? []).map(b => [b.selectionId, b])
+  );
+
+  // Build full field: use live market runners if available, fall back to bets only
+  const activeRunners = (market?.runners ?? []).filter(r => r.status === "ACTIVE");
+
+  type FieldRow = {
+    selectionId: number;
+    name: string;
+    odds: number;
+    backed: boolean;
+    bet: RunnerBet | null;
+    pct: number;
+  };
+
+  let field: FieldRow[];
+
+  if (activeRunners.length > 0) {
+    field = activeRunners.map(r => {
+      const odds = r.bestBackPrice ?? r.lastPriceTraded ?? 0;
+      const bet  = backedMap.get(r.selectionId) ?? null;
+      return {
+        selectionId: r.selectionId,
+        name:   r.runnerName,
+        odds:   bet ? bet.backOdds : odds,
+        backed: !!bet,
+        bet,
+        pct: bet ? (bet.stakeAmount / (totalStaked || 1)) * 100 : 0,
+      };
+    }).sort((a, b) => (a.odds || 999) - (b.odds || 999));
+  } else {
+    // Fall back to bets only
+    field = (bets ?? []).map(b => ({
+      selectionId: b.selectionId,
+      name:   b.selectionName,
+      odds:   b.backOdds,
+      backed: true,
+      bet:    b,
+      pct:    (b.stakeAmount / (totalStaked || 1)) * 100,
+    })).sort((a, b) => a.odds - b.odds);
+  }
+
+  const backedCount   = field.filter(r => r.backed).length;
+  const unbacedCount  = field.length - backedCount;
 
   return (
     <div className="space-y-5 -mt-2">
@@ -93,13 +163,17 @@ export default function BookieBotRace() {
 
         <div className="px-5 py-4 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
-            <div className="text-2xl font-bold text-white">{race?.eventName ?? "Loading…"}</div>
-            <div className="text-sm text-white/50 mt-0.5">{race?.marketName}</div>
+            <div className="text-2xl font-bold text-white">{race?.eventName ?? market?.eventName ?? "Loading…"}</div>
+            <div className="text-sm text-white/50 mt-0.5">{race?.marketName ?? market?.marketName}</div>
           </div>
           <div className="flex flex-wrap gap-6 text-right">
             <div>
-              <div className="text-[10px] text-white/40 uppercase tracking-wide">Runners backed</div>
-              <div className="text-xl font-bold text-white">{bets?.length ?? "—"}</div>
+              <div className="text-[10px] text-white/40 uppercase tracking-wide">Field</div>
+              <div className="text-xl font-bold text-white">{field.length || "—"}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-white/40 uppercase tracking-wide">Backed</div>
+              <div className="text-xl font-bold text-emerald-300">{backedCount || "—"}</div>
             </div>
             <div>
               <div className="text-[10px] text-white/40 uppercase tracking-wide">Total outlay</div>
@@ -112,9 +186,7 @@ export default function BookieBotRace() {
                 raceNet > 0 ? "text-emerald-300" :
                 raceNet < 0 ? "text-red-300" : "text-white"
               }`}>
-                {settled
-                  ? `${raceNet >= 0 ? "+" : ""}£${raceNet.toFixed(2)}`
-                  : "Pending"}
+                {settled ? `${raceNet >= 0 ? "+" : ""}£${raceNet.toFixed(2)}` : "Pending"}
               </div>
             </div>
           </div>
@@ -149,11 +221,9 @@ export default function BookieBotRace() {
         </div>
       )}
 
-      {settled && !winner && (
+      {settled && !winner && bets && bets.length > 0 && (
         <div className="rounded-xl border border-muted px-5 py-4 flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
-            raceNet >= 0 ? "bg-emerald-500" : "bg-red-500"
-          }`}>
+          <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${raceNet >= 0 ? "bg-emerald-500" : "bg-red-500"}`}>
             <Trophy className="w-4 h-4 text-white" />
           </div>
           <div className="flex-1">
@@ -166,104 +236,145 @@ export default function BookieBotRace() {
         </div>
       )}
 
-      {/* Equal profit note */}
+      {/* Pending note */}
       {!settled && bets && bets.length > 0 && (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-2 text-sm text-emerald-400/80">
           <Target className="w-4 h-4 flex-shrink-0" />
-          Stakes are dutched — if any backed runner wins you collect the same net profit
+          Stakes dutched — any of the {backedCount} backed runners winning returns equal profit
+          {unbacedCount > 0 && (
+            <span className="text-muted-foreground/60 ml-1">· {unbacedCount} runners not covered</span>
+          )}
         </div>
       )}
 
-      {/* Runner table */}
-      <div className="space-y-2">
-        <div className="text-xs text-muted-foreground uppercase tracking-wide px-1">
-          Backed runners — sorted by stake
+      {/* Full field */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between px-1 mb-2">
+          <div className="text-xs text-muted-foreground uppercase tracking-wide">
+            Full field · sorted by price (shortest first)
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Backed</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-muted inline-block" />Not covered</span>
+          </div>
         </div>
 
-        {isLoading && (
+        {betsLoading && (
           <div className="text-sm text-muted-foreground text-center py-10">Loading…</div>
         )}
 
-        {impliedPct.map((bet, i) => {
-          const isWinner   = bet.selectionName === winner;
-          const isSettled  = bet.status === "WON" || bet.status === "LOST";
-          const betWon     = bet.status === "WON";
+        {field.map((row, i) => {
+          const isWinner   = row.name === winner;
+          const betWon     = row.bet?.status === "WON";
+          const betLost    = row.bet?.status === "LOST";
+          const betSettled = betWon || betLost;
 
           return (
             <div
-              key={bet.id}
+              key={row.selectionId}
               className={`rounded-xl border px-4 py-3 transition-all ${
-                isWinner && raceNet >= 0
-                  ? "border-emerald-500/40 bg-emerald-500/6"
-                  : isWinner && raceNet < 0
-                  ? "border-emerald-500/30 bg-emerald-500/4"
-                  : "border-border/50 bg-card/40"
+                isWinner && raceNet >= 0 && row.backed
+                  ? "border-emerald-500/50 bg-emerald-500/8"
+                  : isWinner && !row.backed
+                  ? "border-red-500/40 bg-red-500/6"
+                  : row.backed
+                  ? "border-border/60 bg-card/50"
+                  : "border-border/25 bg-card/20 opacity-50"
               }`}
             >
-              <div className="flex items-center gap-4">
-                {/* Rank / trophy */}
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${
+              <div className="flex items-center gap-3">
+                {/* Icon */}
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ${
                   isWinner
-                    ? "bg-emerald-500 text-white"
-                    : "bg-muted text-muted-foreground"
+                    ? raceNet >= 0 && row.backed ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+                    : row.backed
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : "bg-muted/60 text-muted-foreground/50"
                 }`}>
                   {isWinner ? <Trophy className="w-3.5 h-3.5" /> : i + 1}
                 </div>
 
-                {/* Name + odds + stake */}
+                {/* Name + odds */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-sm">{bet.selectionName}</span>
-                    {isWinner && (
-                      <span className="text-[10px] uppercase font-bold tracking-wide text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
-                        Won
+                    <span className={`font-semibold text-sm ${row.backed ? "" : "text-muted-foreground/60"}`}>
+                      {row.name}
+                    </span>
+                    {row.backed && !isWinner && (
+                      <span className="text-[9px] uppercase font-bold tracking-wide text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
+                        Backed
                       </span>
                     )}
-                    {isSettled && !isWinner && (
-                      <span className="text-[10px] uppercase font-bold tracking-wide text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded">
+                    {isWinner && row.backed && (
+                      <span className="text-[9px] uppercase font-bold tracking-wide text-white bg-emerald-500 px-1.5 py-0.5 rounded">
+                        Winner ✓
+                      </span>
+                    )}
+                    {isWinner && !row.backed && (
+                      <span className="text-[9px] uppercase font-bold tracking-wide text-white bg-red-500 px-1.5 py-0.5 rounded">
+                        Winner — not covered
+                      </span>
+                    )}
+                    {betSettled && !isWinner && row.backed && (
+                      <span className="text-[9px] uppercase font-bold tracking-wide text-muted-foreground/60 bg-muted/30 px-1.5 py-0.5 rounded">
                         Lost
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    Back @ {bet.backOdds.toFixed(2)} · Stake £{bet.stakeAmount.toFixed(2)}
-                    <span className="ml-2 text-muted-foreground/50">({bet.pct.toFixed(1)}% of outlay)</span>
-                  </div>
 
-                  {/* Stake bar */}
-                  <div className="mt-1.5 h-1 bg-muted/40 rounded-full overflow-hidden w-full max-w-xs">
-                    <div
-                      className="h-full bg-emerald-500/60 rounded-full"
-                      style={{ width: `${bet.pct}%` }}
-                    />
+                  {/* Stake bar (backed only) */}
+                  {row.backed && row.bet && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden flex-1 max-w-[120px]">
+                        <div className="h-full bg-emerald-500/70 rounded-full" style={{ width: `${row.pct}%` }} />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        £{row.bet.stakeAmount.toFixed(2)} stake · {row.pct.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Odds */}
+                <div className="text-center flex-shrink-0 w-16">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Odds</div>
+                  <div className={`text-base font-bold tabular-nums ${row.backed ? "" : "text-muted-foreground/50"}`}>
+                    {row.odds ? row.odds.toFixed(2) : "—"}
                   </div>
                 </div>
 
-                {/* P&L column */}
+                {/* P&L / if-wins */}
                 <div className="text-right flex-shrink-0 min-w-[80px]">
-                  {settled && betWon ? (
+                  {!row.backed ? (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground/50 uppercase tracking-wide">Not backed</div>
+                      {isWinner && (
+                        <div className="text-xs font-bold text-red-400 mt-0.5">-£{totalStaked.toFixed(2)}</div>
+                      )}
+                    </div>
+                  ) : settled && betWon ? (
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Net profit</div>
-                      <div className="text-lg font-bold tabular-nums text-emerald-400">
-                        +£{(bet.actualProfit ?? 0).toFixed(2)}
+                      <div className="text-base font-bold tabular-nums text-emerald-400">
+                        +£{(row.bet!.actualProfit ?? 0).toFixed(2)}
                       </div>
                     </div>
-                  ) : settled && !betWon ? (
+                  ) : settled && betLost ? (
                     <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Lost stake</div>
-                      <div className="text-lg font-bold tabular-nums text-red-400">
-                        -£{bet.stakeAmount.toFixed(2)}
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Lost</div>
+                      <div className="text-base font-bold tabular-nums text-red-400/70">
+                        -£{row.bet!.stakeAmount.toFixed(2)}
                       </div>
                     </div>
-                  ) : (
+                  ) : row.bet ? (
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-wide">If wins</div>
-                      <div className={`text-lg font-bold tabular-nums ${bet.netIfWins >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {bet.netIfWins >= 0 ? "+" : ""}£{Math.abs(bet.netIfWins).toFixed(2)}
+                      <div className={`text-base font-bold tabular-nums ${row.bet.netIfWins >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {row.bet.netIfWins >= 0 ? "+" : ""}£{Math.abs(row.bet.netIfWins).toFixed(2)}
                       </div>
                       <div className="text-[10px] text-muted-foreground/50">race net</div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -271,27 +382,29 @@ export default function BookieBotRace() {
         })}
       </div>
 
-      {/* Summary row */}
+      {/* Summary footer */}
       {bets && bets.length > 0 && (
-        <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-3 flex items-center justify-between">
+        <div className="rounded-xl border border-border/40 bg-card/30 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {raceNet >= 0
               ? <TrendingUp className="w-4 h-4 text-emerald-400" />
               : <TrendingDown className="w-4 h-4 text-red-400" />}
             {settled ? "Settled" : "Pending settlement"}
           </div>
-          <div className="text-right">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Total outlay</div>
-            <div className="text-sm font-bold tabular-nums">£{totalStaked.toFixed(2)}</div>
-          </div>
-          <div className="text-right">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Race net</div>
-            <div className={`text-sm font-bold tabular-nums ${
-              !settled ? "text-muted-foreground" :
-              raceNet > 0 ? "text-emerald-400" :
-              raceNet < 0 ? "text-red-400" : ""
-            }`}>
-              {settled ? `${raceNet >= 0 ? "+" : ""}£${raceNet.toFixed(2)}` : "—"}
+          <div className="flex gap-6 text-right">
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Total outlay</div>
+              <div className="text-sm font-bold tabular-nums">£{totalStaked.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Race net</div>
+              <div className={`text-sm font-bold tabular-nums ${
+                !settled ? "text-muted-foreground" :
+                raceNet > 0 ? "text-emerald-400" :
+                raceNet < 0 ? "text-red-400" : ""
+              }`}>
+                {settled ? `${raceNet >= 0 ? "+" : ""}£${raceNet.toFixed(2)}` : "—"}
+              </div>
             </div>
           </div>
         </div>
