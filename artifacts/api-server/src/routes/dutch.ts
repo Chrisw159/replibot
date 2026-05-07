@@ -126,7 +126,12 @@ router.get("/dutch/races", async (_req, res): Promise<void> => {
       totalStaked: sql<number>`sum(${betsTable.stakeAmount}::float)`,
       netProfit:   sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
       settled:     sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','VOID'))`,
-      winnerName:  sql<string>`max(case when ${betsTable.status} = 'WON' then ${betsTable.selectionName} end)`,
+      winnerName:  sql<string>`coalesce(
+        max(case when ${betsTable.status} = 'WON' then ${betsTable.selectionName} end),
+        max(case when ${betsTable.aiReasoning} like '%||WINNER:%'
+            then split_part(split_part(${betsTable.aiReasoning}, '||WINNER:', 2), '||', 1)
+            end)
+      )`,
     })
     .from(betsTable)
     .where(DUTCH_FILTER)
@@ -159,20 +164,28 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
 
   const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
 
-  // Extract full field snapshot stored in aiReasoning of any bet (||FIELD:[...])
+  // Extract full field snapshot and actual winner from aiReasoning
   type FieldRunner = { selectionId: number; name: string; odds: number | null };
   let fullField: FieldRunner[] | null = null;
+  let actualWinner: string | null = null;
   for (const b of bets) {
     const raw = b.aiReasoning ?? "";
-    const idx = raw.indexOf("||FIELD:");
-    if (idx !== -1) {
-      try { fullField = JSON.parse(raw.slice(idx + 8)) as FieldRunner[]; } catch { /* ignore */ }
-      if (fullField) break;
+    if (!fullField) {
+      const fi = raw.indexOf("||FIELD:");
+      if (fi !== -1) {
+        try { fullField = JSON.parse(raw.slice(fi + 8).split("||")[0]) as FieldRunner[]; } catch { /* ignore */ }
+      }
     }
+    if (!actualWinner) {
+      const wi = raw.indexOf("||WINNER:");
+      if (wi !== -1) actualWinner = raw.slice(wi + 9).split("||")[0].trim() || null;
+    }
+    if (fullField && actualWinner) break;
   }
 
   res.json({
     fullField,
+    actualWinner,
     bets: bets.map(b => {
       const odds  = Number(b.requestedOdds);
       const stake = Number(b.stakeAmount);

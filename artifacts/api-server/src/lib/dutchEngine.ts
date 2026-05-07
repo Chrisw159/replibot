@@ -391,6 +391,26 @@ async function runDutchSettlement(): Promise<void> {
       const settledAt = new Date();
       let raceNet = 0;
 
+      // Resolve winner name from stored fullField snapshot in aiReasoning
+      let winnerName: string | null = null;
+      if (winnerSelectionId != null) {
+        for (const bet of bets) {
+          const raw = bet.aiReasoning ?? "";
+          const idx = raw.indexOf("||FIELD:");
+          if (idx !== -1) {
+            try {
+              const field = JSON.parse(raw.slice(idx + 8)) as Array<{ selectionId: number; name: string }>;
+              const found = field.find(r => r.selectionId === winnerSelectionId);
+              if (found) { winnerName = found.name; break; }
+            } catch { /* ignore */ }
+          }
+        }
+        // Fallback: check if it's one of our backed runners
+        if (!winnerName) {
+          winnerName = bets.find(b => b.selectionId === winnerSelectionId)?.selectionName ?? null;
+        }
+      }
+
       for (const bet of bets) {
         if (bet.status === "UNMATCHED") {
           await db.update(betsTable)
@@ -403,19 +423,21 @@ async function runDutchSettlement(): Promise<void> {
         const odds  = Number(bet.matchedOdds ?? bet.requestedOdds);
         const stake = Number(bet.stakeAmount);
 
-        // BACK bet settlement:
-        // Horse WON  → profit = stake × (odds − 1)
-        // Horse LOST → loss   = −stake
         const actualProfit = selectionWon
           ?   stake * (odds - 1)
           : -(stake);
 
         raceNet += actualProfit;
 
+        // Append winner tag so the race detail page can always show who won
+        const winnerTag = winnerName ? `||WINNER:${winnerName}` : "";
+        const baseReasoning = (bet.aiReasoning ?? "").replace(/\|\|WINNER:[^|]*$/, "");
+
         await db.update(betsTable).set({
           status: selectionWon ? "WON" : "LOST",
           actualProfit: actualProfit.toFixed(2),
           settledAt,
+          aiReasoning: baseReasoning + winnerTag,
         }).where(eq(betsTable.id, bet.id));
       }
 

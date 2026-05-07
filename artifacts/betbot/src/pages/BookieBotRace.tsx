@@ -23,6 +23,7 @@ interface StoredRunner {
 
 interface RaceDetail {
   fullField: StoredRunner[] | null;
+  actualWinner: string | null;
   bets: RunnerBet[];
 }
 
@@ -93,7 +94,9 @@ export default function BookieBotRace() {
   const race     = races?.find(r => r.marketId === marketId);
   const settled  = race?.settled ?? false;
   const raceNet  = race?.netProfit ?? 0;
-  const winner   = race?.winnerName ?? null;
+  // actualWinner from detail is the ground truth — covers unbacked winners too
+  const winner   = detail?.actualWinner ?? race?.winnerName ?? null;
+  const winnerWasBacked = winner != null && bets.some(b => b.selectionName === winner);
 
   const totalStaked = bets.reduce((s, b) => s + b.stakeAmount, 0);
   const raceTime = race ? new Date(race.placedAt) : null;
@@ -225,12 +228,12 @@ export default function BookieBotRace() {
       {/* Winner / result banner */}
       {settled && winner && (
         <div className={`rounded-xl border px-5 py-4 flex items-center gap-3 ${
-          raceNet >= 0
+          winnerWasBacked
             ? "border-emerald-500/40 bg-emerald-500/10"
             : "border-red-500/30 bg-red-500/8"
         }`}>
           <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
-            raceNet >= 0 ? "bg-emerald-500" : "bg-red-500"
+            winnerWasBacked ? "bg-emerald-500" : "bg-red-500"
           }`}>
             <Trophy className="w-4 h-4 text-white" />
           </div>
@@ -238,12 +241,12 @@ export default function BookieBotRace() {
             <div className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Race Winner</div>
             <div className="text-base font-bold">{winner}</div>
             <div className="text-xs text-muted-foreground">
-              {raceNet >= 0 ? "One of our backed runners — we profit" : "Not in our backed runners — we lose outlay"}
+              {winnerWasBacked ? "One of our backed runners — we profit" : "Not in our backed runners — we lose outlay"}
             </div>
           </div>
           <div className="text-right flex-shrink-0">
             <div className="text-xs text-muted-foreground mb-0.5">Race P&L</div>
-            <div className={`text-2xl font-bold tabular-nums ${raceNet >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            <div className={`text-2xl font-bold tabular-nums ${winnerWasBacked ? "text-emerald-400" : "text-red-400"}`}>
               {raceNet >= 0 ? "+" : ""}£{raceNet.toFixed(2)}
             </div>
           </div>
@@ -257,7 +260,7 @@ export default function BookieBotRace() {
           </div>
           <div className="flex-1">
             <div className="text-sm font-medium">Race settled</div>
-            <div className="text-xs text-muted-foreground">Winner not recorded</div>
+            <div className="text-xs text-muted-foreground">Winner not yet recorded</div>
           </div>
           <div className={`text-2xl font-bold tabular-nums ${raceNet >= 0 ? "text-emerald-400" : "text-red-400"}`}>
             {raceNet >= 0 ? "+" : ""}£{raceNet.toFixed(2)}
