@@ -274,9 +274,21 @@ async function runDutchMarket(
     { marketId, totalOutlay, cutoff, targetProfit: Math.round(targetProfit * 100) / 100, summary },
   );
 
+  // Snapshot the full field (all active runners) so settled races can still show it
+  const fullFieldJson = JSON.stringify(
+    marketDetail.runners
+      .filter(r => r.status === "ACTIVE")
+      .map(r => ({
+        selectionId: r.selectionId,
+        name: r.runnerName,
+        odds: r.bestBackPrice ?? r.lastPriceTraded ?? null,
+      }))
+      .sort((a, b) => (a.odds ?? 999) - (b.odds ?? 999)),
+  );
+
   for (const r of withStakes) {
     const reasoning =
-      `[DUTCH] BACK £${r.stake.toFixed(2)} @ ${r.backPrice} · vol share ${(r.volPct * 100).toFixed(1)}% · target profit +£${targetProfit.toFixed(2)}`;
+      `[DUTCH] BACK £${r.stake.toFixed(2)} @ ${r.backPrice} · vol share ${(r.volPct * 100).toFixed(1)}% · target profit +£${targetProfit.toFixed(2)}||FIELD:${fullFieldJson}`;
 
     const potentialProfit = Math.round((r.stake * (r.backPrice - 1)) * 100) / 100;
 

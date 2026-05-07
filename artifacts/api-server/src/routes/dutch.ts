@@ -159,8 +159,21 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
 
   const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
 
-  res.json(
-    bets.map(b => {
+  // Extract full field snapshot stored in aiReasoning of any bet (||FIELD:[...])
+  type FieldRunner = { selectionId: number; name: string; odds: number | null };
+  let fullField: FieldRunner[] | null = null;
+  for (const b of bets) {
+    const raw = b.aiReasoning ?? "";
+    const idx = raw.indexOf("||FIELD:");
+    if (idx !== -1) {
+      try { fullField = JSON.parse(raw.slice(idx + 8)) as FieldRunner[]; } catch { /* ignore */ }
+      if (fullField) break;
+    }
+  }
+
+  res.json({
+    fullField,
+    bets: bets.map(b => {
       const odds  = Number(b.requestedOdds);
       const stake = Number(b.stakeAmount);
       const netIfWins = Math.round((stake * (odds - 1) - (totalStaked - stake)) * 100) / 100;
@@ -174,11 +187,10 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
         potentialProfit: b.potentialProfit !== null ? Number(b.potentialProfit) : null,
         actualProfit:    b.actualProfit    !== null ? Number(b.actualProfit)    : null,
         status:          b.status,
-        aiReasoning:     b.aiReasoning,
         placedAt:        b.placedAt.toISOString(),
       };
     }),
-  );
+  });
 });
 
 router.get("/dutch/logs", async (req, res): Promise<void> => {

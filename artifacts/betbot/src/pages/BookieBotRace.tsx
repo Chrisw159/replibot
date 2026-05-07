@@ -15,6 +15,17 @@ interface RunnerBet {
   placedAt: string;
 }
 
+interface StoredRunner {
+  selectionId: number;
+  name: string;
+  odds: number | null;
+}
+
+interface RaceDetail {
+  fullField: StoredRunner[] | null;
+  bets: RunnerBet[];
+}
+
 interface MarketRunner {
   selectionId: number;
   runnerName: string;
@@ -58,7 +69,7 @@ export default function BookieBotRace() {
   const [, params] = useRoute("/bookiebot/race/:marketId");
   const marketId = params?.marketId ?? "";
 
-  const { data: bets, isLoading: betsLoading } = useQuery<RunnerBet[]>({
+  const { data: detail, isLoading: betsLoading } = useQuery<RaceDetail>({
     queryKey: ["dutch-race-detail", marketId],
     queryFn: () => apiFetch(`/dutch/race/${marketId}`),
     enabled: !!marketId,
@@ -78,20 +89,24 @@ export default function BookieBotRace() {
     queryFn: () => apiFetch("/dutch/races"),
   });
 
+  const bets     = detail?.bets ?? [];
   const race     = races?.find(r => r.marketId === marketId);
   const settled  = race?.settled ?? false;
   const raceNet  = race?.netProfit ?? 0;
   const winner   = race?.winnerName ?? null;
 
-  const totalStaked = bets?.reduce((s, b) => s + b.stakeAmount, 0) ?? 0;
+  const totalStaked = bets.reduce((s, b) => s + b.stakeAmount, 0);
   const raceTime = race ? new Date(race.placedAt) : null;
 
   // Build a set of backed selectionIds for quick lookup
   const backedMap = new Map<number, RunnerBet>(
-    (bets ?? []).map(b => [b.selectionId, b])
+    bets.map(b => [b.selectionId, b])
   );
 
-  // Build full field: use live market runners if available, fall back to bets only
+  // Priority: 1) stored field in DB (works for settled races)
+  //           2) live market runners (works for in-play/upcoming)
+  //           3) bets only (worst case)
+  const storedField  = detail?.fullField ?? null;
   const activeRunners = (market?.runners ?? []).filter(r => r.status === "ACTIVE");
 
   type FieldRow = {
@@ -105,7 +120,21 @@ export default function BookieBotRace() {
 
   let field: FieldRow[];
 
-  if (activeRunners.length > 0) {
+  if (storedField && storedField.length > 0) {
+    // Use stored snapshot — always available, even for settled races
+    field = storedField.map(r => {
+      const bet = backedMap.get(r.selectionId) ?? null;
+      return {
+        selectionId: r.selectionId,
+        name:   r.name,
+        odds:   bet ? bet.backOdds : (r.odds ?? 0),
+        backed: !!bet,
+        bet,
+        pct: bet ? (bet.stakeAmount / (totalStaked || 1)) * 100 : 0,
+      };
+    }).sort((a, b) => (a.odds || 999) - (b.odds || 999));
+  } else if (activeRunners.length > 0) {
+    // Fallback: live market (works for upcoming/in-play)
     field = activeRunners.map(r => {
       const odds = r.bestBackPrice ?? r.lastPriceTraded ?? 0;
       const bet  = backedMap.get(r.selectionId) ?? null;
@@ -119,8 +148,8 @@ export default function BookieBotRace() {
       };
     }).sort((a, b) => (a.odds || 999) - (b.odds || 999));
   } else {
-    // Fall back to bets only
-    field = (bets ?? []).map(b => ({
+    // Last resort: backed runners only
+    field = bets.map(b => ({
       selectionId: b.selectionId,
       name:   b.selectionName,
       odds:   b.backOdds,
