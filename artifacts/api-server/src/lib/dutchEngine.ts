@@ -18,6 +18,13 @@ const MIN_BET_SIZE = 2.0;
 const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
 
+// Skip National Hunt chase races — too many variables (falls, unseated, errors)
+const CHASE_PATTERN = /\bChs\b|Chase/i;
+
+// Known UK/IE all-weather venues — 7f handicaps here tend to be wide-open and hit by longshots
+const AW_VENUE_PATTERN = /chelmsford|kempton|lingfield|southwell|wolverhampton|dundalk/i;
+const SEVEN_FURLONG_PATTERN = /\b7f\b/i;
+
 interface DutchConfig {
   totalOutlay: number;
   topPct: number;
@@ -25,6 +32,9 @@ interface DutchConfig {
   minLiquidity: number;
   countryCodes: string[];
   minRunners: number;
+  maxRunners: number;
+  skipChases: boolean;
+  skipAwSevenFurlong: boolean;
 }
 
 let dutchBotRunning = false;
@@ -40,6 +50,9 @@ let dutchConfig: DutchConfig = {
   minLiquidity: 3000,
   countryCodes: ["GB", "IE"],
   minRunners: 4,
+  maxRunners: 12,
+  skipChases: true,
+  skipAwSevenFurlong: true,
 };
 
 export function isDutchBotRunning(): boolean { return dutchBotRunning; }
@@ -79,9 +92,12 @@ async function loadDutchConfigFromDb(): Promise<void> {
       if (typeof saved.totalOutlay  === "number") dutchConfig.totalOutlay  = saved.totalOutlay;
       if (typeof saved.topPct       === "number") dutchConfig.topPct       = saved.topPct;
       if (typeof saved.minFavPrice  === "number") dutchConfig.minFavPrice  = saved.minFavPrice;
-      if (typeof saved.minLiquidity === "number") dutchConfig.minLiquidity = saved.minLiquidity;
-      if (Array.isArray(saved.countryCodes))      dutchConfig.countryCodes = saved.countryCodes;
-      if (typeof saved.minRunners   === "number") dutchConfig.minRunners   = saved.minRunners;
+      if (typeof saved.minLiquidity      === "number")  dutchConfig.minLiquidity      = saved.minLiquidity;
+      if (Array.isArray(saved.countryCodes))             dutchConfig.countryCodes      = saved.countryCodes;
+      if (typeof saved.minRunners        === "number")  dutchConfig.minRunners        = saved.minRunners;
+      if (typeof saved.maxRunners        === "number")  dutchConfig.maxRunners        = saved.maxRunners;
+      if (typeof saved.skipChases        === "boolean") dutchConfig.skipChases        = saved.skipChases;
+      if (typeof saved.skipAwSevenFurlong === "boolean") dutchConfig.skipAwSevenFurlong = saved.skipAwSevenFurlong;
       logger.info({ dutchConfig }, "[DUTCH] Loaded config from DB");
     }
   } catch (err) {
@@ -130,6 +146,14 @@ async function runDutchCycle(): Promise<number> {
     const candidates = inWindow.filter(m => {
       if (processingMarkets.has(m.marketId)) return false;
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
+      if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) {
+        log("info", `Skipping ${m.eventName} — National Hunt chase (${m.marketName})`);
+        return false;
+      }
+      if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) {
+        log("info", `Skipping ${m.eventName} — 7f all-weather flat (${m.marketName})`);
+        return false;
+      }
       return true;
     });
 
@@ -210,6 +234,13 @@ async function runDutchMarket(
   if (eligible.length < dutchConfig.minRunners) {
     log("info",
       `Skipping ${eventName} — only ${eligible.length} eligible runners, need ${dutchConfig.minRunners}`,
+    );
+    return;
+  }
+
+  if (eligible.length > dutchConfig.maxRunners) {
+    log("info",
+      `Skipping ${eventName} — ${eligible.length} runners exceeds max ${dutchConfig.maxRunners}`,
     );
     return;
   }
