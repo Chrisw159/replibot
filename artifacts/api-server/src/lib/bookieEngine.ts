@@ -294,6 +294,14 @@ async function runBookieMarket(
   }));
 
   const worstCase = Math.min(...raceNets.map(r => r.raceNetIfWins));
+  const bestCase  = Math.max(...raceNets.map(r => r.raceNetIfWins));
+
+  if (bestCase < 0) {
+    log("info",
+      `Skipping ${eventName} — every outcome is a loss (best case: £${bestCase.toFixed(2)}); race does not match strategy`,
+    );
+    return;
+  }
 
   const summary = withStakes
     .map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)} @ ${r.layPrice} (vol £${r.volume.toFixed(0)})`)
