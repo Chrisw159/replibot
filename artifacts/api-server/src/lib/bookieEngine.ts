@@ -255,19 +255,54 @@ async function runBookieMarket(
   //   totalStake × (maxRatio − 1) = maxRaceNetLoss
   //   totalStake = maxRaceNetLoss / (maxRatio − 1)
   //
-  // If maxRatio ≤ 1, every outcome is profitable — cap stake at £10,000.
+  // Betfair minimum bet is £2. If any runner's calculated stake falls below that,
+  // we drop it from the lay list and recalculate from scratch with the remaining
+  // runners. We keep iterating until all stakes are ≥ £2 or fewer than minRunners
+  // remain (in which case we skip the race entirely).
 
-  const { maxRaceNetLoss } = bookieConfig;
+  const { maxRaceNetLoss, minRunners } = bookieConfig;
+  const MIN_BET_SIZE = 2.0;
 
-  const maxRatio = Math.max(...runners.map(r => (r.volume * r.layPrice) / totalVolume));
-  const totalStake = maxRatio > 1
-    ? Math.min(Math.floor((maxRaceNetLoss / (maxRatio - 1)) * 100) / 100, 10_000)
-    : 10_000;
+  type LayRunner = typeof runners[0] & { stake: number };
 
-  const withStakes = runners.map(r => ({
-    ...r,
-    stake: Math.round(totalStake * (r.volume / totalVolume) * 100) / 100,
-  }));
+  let working = runners as Array<typeof runners[0]>;
+  let withStakes: LayRunner[] = [];
+  let totalStake = 0;
+
+  while (working.length >= minRunners) {
+    const vol = working.reduce((s, r) => s + r.volume, 0);
+    const ratio = Math.max(...working.map(r => (r.volume * r.layPrice) / vol));
+    const ts = ratio > 1
+      ? Math.min(Math.floor((maxRaceNetLoss / (ratio - 1)) * 100) / 100, 10_000)
+      : 10_000;
+
+    const staked: LayRunner[] = working.map(r => ({
+      ...r,
+      stake: Math.round(ts * (r.volume / vol) * 100) / 100,
+    }));
+
+    const tooSmall = staked.filter(r => r.stake < MIN_BET_SIZE);
+
+    if (tooSmall.length === 0) {
+      withStakes = staked;
+      totalStake = ts;
+      break;
+    }
+
+    // Drop the runner with the smallest stake and retry
+    const drop = tooSmall.reduce((a, b) => a.stake < b.stake ? a : b);
+    log("info",
+      `${eventName} — dropping ${drop.runner.runnerName} (stake £${drop.stake.toFixed(2)} < £${MIN_BET_SIZE} Betfair minimum), recalculating`,
+    );
+    working = working.filter(r => r.runner.selectionId !== drop.runner.selectionId);
+  }
+
+  if (withStakes.length < minRunners) {
+    log("info",
+      `Skipping ${eventName} — only ${withStakes.length} runner(s) left after removing sub-£${MIN_BET_SIZE} stakes (need ${minRunners})`,
+    );
+    return;
+  }
 
   // Race P&L if runner i wins:
   //   = sum of all other stakes collected − liability on winner
@@ -286,9 +321,12 @@ async function runBookieMarket(
     .map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)} @ ${r.layPrice} (vol £${r.volume.toFixed(0)})`)
     .join(" | ");
 
+  const finalTotalVolume = withStakes.reduce((s, r) => s + r.volume, 0);
+  const finalMaxRatio = Math.max(...withStakes.map(r => (r.volume * r.layPrice) / finalTotalVolume));
+
   log("info",
     `LAYING ${withStakes.length} runners in ${eventName} — total stake £${totalStake.toFixed(2)} · worst-case -£${Math.abs(worstCase).toFixed(2)}${paperTrading ? " [PAPER]" : ""}`,
-    { marketId, totalStake, runners: withStakes.length, worstCase, maxRatio, summary },
+    { marketId, totalStake, runners: withStakes.length, worstCase, maxRatio: finalMaxRatio, summary },
   );
 
   for (const r of withStakes) {
@@ -297,7 +335,7 @@ async function runBookieMarket(
       ? `${net.raceNetIfWins >= 0 ? "+" : ""}£${net.raceNetIfWins.toFixed(2)}`
       : "unknown";
     const reasoning =
-      `[BOOKIE] LAY £${r.stake.toFixed(2)} @ ${r.layPrice} · vol share ${((r.volume / totalVolume) * 100).toFixed(1)}% · race net if wins: ${netStr}`;
+      `[BOOKIE] LAY £${r.stake.toFixed(2)} @ ${r.layPrice} · vol share ${((r.volume / finalTotalVolume) * 100).toFixed(1)}% · race net if wins: ${netStr}`;
 
     if (paperTrading) {
       await db.insert(betsTable).values({
