@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Play, Square, RefreshCw,
@@ -41,6 +41,13 @@ interface DutchRace {
   winnerName: string | null;
 }
 
+interface LogEntry {
+  id: number;
+  level: string;
+  message: string;
+  createdAt: string;
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -57,8 +64,15 @@ function fmtProfit(n: number, settled: boolean) {
   return { text: "£0.00", cls: "text-muted-foreground" };
 }
 
+function levelColor(level: string) {
+  if (level === "error") return "text-red-400";
+  if (level === "warn")  return "text-amber-400";
+  return "text-emerald-400/80";
+}
+
 export default function BookieBot() {
   const qc = useQueryClient();
+  const consoleRef = useRef<HTMLDivElement>(null);
 
   const { data: status, isLoading } = useQuery<DutchStatus>({
     queryKey: ["dutch-status"],
@@ -72,13 +86,32 @@ export default function BookieBot() {
     refetchInterval: 30_000,
   });
 
+  const { data: logs } = useQuery<LogEntry[]>({
+    queryKey: ["dutch-logs"],
+    queryFn: () => apiFetch("/dutch/logs?limit=100"),
+    refetchInterval: 10_000,
+  });
+
+  // Auto-scroll console to bottom when new logs arrive
+  useEffect(() => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  }, [logs]);
+
   const startMutation = useMutation({
     mutationFn: () => apiFetch<DutchStatus>("/dutch/start", { method: "POST" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dutch-status"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dutch-status"] });
+      qc.invalidateQueries({ queryKey: ["dutch-logs"] });
+    },
   });
   const stopMutation = useMutation({
     mutationFn: () => apiFetch<DutchStatus>("/dutch/stop", { method: "POST" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dutch-status"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dutch-status"] });
+      qc.invalidateQueries({ queryKey: ["dutch-logs"] });
+    },
   });
   const paperMutation = useMutation({
     mutationFn: (v: boolean) =>
@@ -109,6 +142,7 @@ export default function BookieBot() {
 
   const profitToday    = status?.profitToday    ?? 0;
   const totalNetProfit = status?.totalNetProfit ?? 0;
+  const sortedLogs = logs ? [...logs].reverse() : [];
 
   return (
     <div className="space-y-6">
@@ -180,8 +214,9 @@ export default function BookieBot() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Race history */}
-        <div className="lg:col-span-2">
+        {/* Left: race history + console */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Race history */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Race History</CardTitle>
@@ -221,9 +256,41 @@ export default function BookieBot() {
               )}
             </CardContent>
           </Card>
+
+          {/* System console */}
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm">System Console</CardTitle>
+              <Button variant="ghost" size="sm" className="h-6 text-xs text-muted-foreground"
+                onClick={() => qc.invalidateQueries({ queryKey: ["dutch-logs"] })}>
+                <RefreshCw className="w-3 h-3 mr-1" />Refresh
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div
+                ref={consoleRef}
+                className="h-64 overflow-y-auto font-mono text-[11px] bg-black/40 rounded-b-lg px-4 py-3 space-y-0.5"
+              >
+                {!sortedLogs.length ? (
+                  <div className="text-muted-foreground/50 pt-2">No log entries yet...</div>
+                ) : (
+                  sortedLogs.map(l => {
+                    const t = new Date(l.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                    return (
+                      <div key={l.id} className="flex gap-2 leading-5">
+                        <span className="text-muted-foreground/40 flex-shrink-0 w-20">{t}</span>
+                        <span className={`flex-shrink-0 w-8 uppercase ${levelColor(l.level)}`}>{l.level.slice(0, 4)}</span>
+                        <span className="text-muted-foreground/90 break-all">{l.message}</span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Config panel */}
+        {/* Right: config panel */}
         <div className="space-y-4">
           {/* Paper trading */}
           <Card>
