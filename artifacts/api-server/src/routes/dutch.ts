@@ -10,6 +10,8 @@ import {
   setDutchConfig,
   saveDutchConfigToDb,
 } from "../lib/dutchEngine";
+import { getMarketSettlement } from "../lib/betfair";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -181,6 +183,33 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
       if (wi !== -1) actualWinner = raw.slice(wi + 9).split("||")[0].trim() || null;
     }
     if (fullField && actualWinner) break;
+  }
+
+  // Live Betfair fallback: if race is settled but we have no winner stored, ask Betfair now
+  // and backfill the DB so subsequent loads are instant
+  const isSettled = bets.some(b => ["WON", "LOST", "VOID"].includes(b.status));
+  if (!actualWinner && isSettled) {
+    try {
+      const settlement = await getMarketSettlement(marketId);
+      if (settlement?.settled && settlement.winnerSelectionId != null) {
+        const winId = settlement.winnerSelectionId;
+        // Resolve name from fullField first, then from our own bets
+        actualWinner =
+          fullField?.find(r => r.selectionId === winId)?.name ??
+          bets.find(b => b.selectionId === winId)?.selectionName ??
+          null;
+        // Backfill ||WINNER: tag into every bet for this market so we don't need Betfair again
+        if (actualWinner) {
+          const tag = `||WINNER:${actualWinner}`;
+          for (const bet of bets) {
+            const base = (bet.aiReasoning ?? "").replace(/\|\|WINNER:[^|]*$/, "");
+            await db.update(betsTable)
+              .set({ aiReasoning: base + tag })
+              .where(eq(betsTable.id, bet.id));
+          }
+        }
+      }
+    } catch { /* non-fatal — we'll try again next load */ }
   }
 
   res.json({
