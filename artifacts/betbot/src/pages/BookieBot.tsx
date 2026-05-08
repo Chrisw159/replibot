@@ -169,6 +169,42 @@ export default function BookieBot() {
   const totalNetProfit = status?.totalNetProfit ?? 0;
   const sortedLogs = logs ? [...logs].reverse() : [];
 
+  const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const toggleDay = (d: string) =>
+    setCollapsedDays(prev => {
+      const next = new Set(prev);
+      next.has(d) ? next.delete(d) : next.add(d);
+      return next;
+    });
+
+  // Group race history by local calendar date, newest first
+  const racesByDay: { date: string; label: string; races: DutchRace[]; dayPnl: number }[] = [];
+  if (races && races.length > 0) {
+    const map = new Map<string, DutchRace[]>();
+    for (const race of races) {
+      const d = new Date(race.placedAt).toLocaleDateString("en-CA");
+      const list = map.get(d) ?? [];
+      list.push(race);
+      map.set(d, list);
+    }
+    const sorted = [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+    for (const [date, dayRaces] of sorted) {
+      const isToday = date === today;
+      const label = isToday
+        ? "Today"
+        : new Date(date + "T12:00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+      const dayPnl = dayRaces.reduce((s, r) => s + (r.settled ? r.netProfit : 0), 0);
+      racesByDay.push({ date, label, races: dayRaces, dayPnl });
+      // Collapse older days by default (only on first render — don't reset if user toggled)
+      if (!isToday) {
+        setCollapsedDays(prev => prev.has(date) === false && !prev.has(`__seen_${date}`)
+          ? new Set([...prev, date, `__seen_${date}`])
+          : prev);
+      }
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -321,37 +357,57 @@ export default function BookieBot() {
               <CardTitle className="text-sm">Race History</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              {!races || races.length === 0 ? (
+              {racesByDay.length === 0 ? (
                 <div className="px-5 py-8 text-center text-sm text-muted-foreground">
                   No races yet — start the bot to begin
                 </div>
               ) : (
                 <div className="divide-y divide-border/50">
-                  {races.map(race => {
-                    const p = fmtProfit(race.netProfit, race.settled);
-                    const t = new Date(race.placedAt);
+                  {racesByDay.map(({ date, label, races: dayRaces, dayPnl }) => {
+                    const collapsed = collapsedDays.has(date);
+                    const pnlCls = dayPnl > 0 ? "text-emerald-400" : dayPnl < 0 ? "text-red-400" : "text-muted-foreground";
+                    const pnlStr = dayPnl > 0 ? `+£${dayPnl.toFixed(2)}` : dayPnl < 0 ? `-£${Math.abs(dayPnl).toFixed(2)}` : "£0.00";
                     return (
-                      <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
-                        <div className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 cursor-pointer transition-colors group">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm truncate group-hover:text-foreground">{race.eventName}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {race.marketName} · {race.betCount} backed · £{race.totalStaked.toFixed(2)} outlay
-                              {" · "}{t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </div>
-                            {race.winnerName && (
-                              <div className="text-xs text-emerald-400/80 mt-0.5">Winner: {race.winnerName}</div>
-                            )}
-                          </div>
-                          <div className="text-right flex-shrink-0">
-                            <div className={`text-sm font-bold tabular-nums ${p.cls}`}>{p.text}</div>
-                            {race.settled
-                              ? <div className="text-[10px] text-muted-foreground">Settled</div>
-                              : <div className="text-[10px] text-amber-400/70">Pending</div>}
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground flex-shrink-0" />
-                        </div>
-                      </Link>
+                      <div key={date}>
+                        {/* Day header — always visible */}
+                        <button
+                          onClick={() => toggleDay(date)}
+                          className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-muted/20 transition-colors text-left"
+                        >
+                          <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground/60 flex-shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`} />
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex-1">{label}</span>
+                          <span className="text-xs text-muted-foreground/60">{dayRaces.length} race{dayRaces.length !== 1 ? "s" : ""}</span>
+                          <span className={`text-xs font-bold tabular-nums ml-3 ${pnlCls}`}>{pnlStr}</span>
+                        </button>
+                        {/* Race rows — hidden when collapsed */}
+                        {!collapsed && dayRaces.map(race => {
+                          const p = fmtProfit(race.netProfit, race.settled);
+                          const t = new Date(race.placedAt);
+                          return (
+                            <Link key={race.marketId} href={`/bookiebot/race/${race.marketId}`}>
+                              <div className="flex items-center gap-3 px-5 py-3 hover:bg-muted/30 cursor-pointer transition-colors group border-t border-border/30">
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-sm truncate group-hover:text-foreground">{race.eventName}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {race.marketName} · {race.betCount} backed · £{race.totalStaked.toFixed(2)} outlay
+                                    {" · "}{t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                  </div>
+                                  {race.winnerName && (
+                                    <div className="text-xs text-emerald-400/80 mt-0.5">Winner: {race.winnerName}</div>
+                                  )}
+                                </div>
+                                <div className="text-right flex-shrink-0">
+                                  <div className={`text-sm font-bold tabular-nums ${p.cls}`}>{p.text}</div>
+                                  {race.settled
+                                    ? <div className="text-[10px] text-muted-foreground">Settled</div>
+                                    : <div className="text-[10px] text-amber-400/70">Pending</div>}
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground flex-shrink-0" />
+                              </div>
+                            </Link>
+                          );
+                        })}
+                      </div>
                     );
                   })}
                 </div>
