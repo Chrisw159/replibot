@@ -4,6 +4,22 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+// Dev-only plugin: disable browser caching so Safari/Chrome always fetch the
+// latest assets during development. Gated on NODE_ENV so it never runs in prod.
+const noCacheInDev = () => ({
+  name: "no-cache-in-dev",
+  configureServer(server: { middlewares: { use: (fn: (req: unknown, res: { setHeader: (k: string, v: string) => void }, next: () => void) => void) => void } }) {
+    if (process.env.NODE_ENV === "production") return;
+    server.middlewares.use((_req, res, next) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Surrogate-Control", "no-store");
+      next();
+    });
+  },
+});
+
 const rawPort = process.env.PORT;
 
 if (!rawPort) {
@@ -29,6 +45,7 @@ if (!basePath) {
 export default defineConfig({
   base: basePath,
   plugins: [
+    noCacheInDev(),
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),
