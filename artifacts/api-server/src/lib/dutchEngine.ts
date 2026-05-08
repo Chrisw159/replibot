@@ -106,10 +106,18 @@ async function loadDutchConfigFromDb(): Promise<void> {
   }
 }
 
+interface ScheduleRunner {
+  name: string;
+  price: number;
+  backed: boolean;
+  stake?: number;
+  netProfit?: number;
+}
+
 async function updateScheduleEntry(
   marketId: string,
   status: string,
-  opts?: { skipReason?: string; runnerCount?: number },
+  opts?: { skipReason?: string; runnerCount?: number; runners?: ScheduleRunner[] },
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   try {
@@ -118,6 +126,7 @@ async function updateScheduleEntry(
         status,
         skipReason:  opts?.skipReason  ?? null,
         ...(opts?.runnerCount != null ? { runnerCount: opts.runnerCount } : {}),
+        ...(opts?.runners       != null ? { runnersJson: opts.runners as unknown as Record<string, unknown>[] } : {}),
         updatedAt:   new Date(),
       })
       .where(sql`${dutchScheduleTable.marketId} = ${marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
@@ -235,12 +244,40 @@ async function runDutchMarket(
   const marketDetail = await getMarketDetail(marketId);
   if (!marketDetail) return;
 
+  // Helper: snapshot all active runners for the schedule entry
+  const buildSnapshot = (
+    eligibleRunners: typeof marketDetail.runners,
+    backedEntries?: { runner: { selectionId: string; runnerName: string }; backPrice: number; stake: number }[],
+    outlay?: number,
+  ): ScheduleRunner[] =>
+    eligibleRunners
+      .filter(r => r.status === "ACTIVE" && r.bestBackPrice != null)
+      .map(r => {
+        const be = backedEntries?.find(b => b.runner.selectionId === r.selectionId);
+        return be
+          ? {
+              name: r.runnerName,
+              price: r.bestBackPrice!,
+              backed: true,
+              stake: be.stake,
+              netProfit: Math.round((be.stake * be.backPrice - (outlay ?? 0)) * 100) / 100,
+            }
+          : {
+              name: r.runnerName,
+              price: r.bestBackPrice!,
+              backed: false,
+              netProfit: outlay != null ? -outlay : undefined,
+            };
+      })
+      .sort((a, b) => a.price - b.price);
+
   if (marketDetail.totalMatched < dutchConfig.minLiquidity) {
     log("info",
       `Skipping ${eventName} — liquidity £${marketDetail.totalMatched.toFixed(0)} < £${dutchConfig.minLiquidity}`,
     );
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `Low liquidity — £${marketDetail.totalMatched.toFixed(0)} matched (min £${dutchConfig.minLiquidity})`,
+      runners: buildSnapshot(marketDetail.runners),
     });
     return;
   }
@@ -260,6 +297,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `Only ${eligible.length} runners — need at least ${dutchConfig.minRunners}`,
       runnerCount: eligible.length,
+      runners: buildSnapshot(eligible),
     });
     return;
   }
@@ -271,6 +309,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `${eligible.length} runners — exceeds max of ${dutchConfig.maxRunners}`,
       runnerCount: eligible.length,
+      runners: buildSnapshot(eligible),
     });
     return;
   }
@@ -284,6 +323,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `Favourite at ${shortestPrice} — minimum is ${dutchConfig.minFavPrice}`,
       runnerCount: eligible.length,
+      runners: buildSnapshot(eligible),
     });
     return;
   }
@@ -315,6 +355,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: "Market overround too tight — no profit margin",
       runnerCount: eligible.length,
+      runners: buildSnapshot(eligible),
     });
     return;
   }
@@ -333,6 +374,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `${belowMin.length} runner(s) below Betfair's £${MIN_BET_SIZE} minimum stake`,
       runnerCount: eligible.length,
+      runners: buildSnapshot(eligible, withStakes, dutchConfig.totalOutlay),
     });
     return;
   }
@@ -409,8 +451,11 @@ async function runDutchMarket(
       });
     }
   }
-  // Mark race as bet-placed in the schedule
-  void updateScheduleEntry(marketId, "BET_PLACED", { runnerCount: withStakes.length });
+  // Mark race as bet-placed in the schedule with full runner snapshot
+  void updateScheduleEntry(marketId, "BET_PLACED", {
+    runnerCount: eligible.length,
+    runners: buildSnapshot(eligible, withStakes, dutchConfig.totalOutlay),
+  });
 }
 
 export async function runScheduleScan(): Promise<void> {

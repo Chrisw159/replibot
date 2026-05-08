@@ -50,6 +50,14 @@ interface LogEntry {
   createdAt: string;
 }
 
+interface ScheduleRunner {
+  name: string;
+  price: number;
+  backed: boolean;
+  stake?: number;
+  netProfit?: number;
+}
+
 interface ScheduleEntry {
   id: number;
   marketId: string;
@@ -60,6 +68,7 @@ interface ScheduleEntry {
   status: string;
   skipReason: string | null;
   scheduledDate: string;
+  runnersJson: ScheduleRunner[] | null;
 }
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -103,7 +112,7 @@ export default function BookieBot() {
   const { data: schedule, isFetching: scheduleFetching } = useQuery<ScheduleEntry[]>({
     queryKey: ["dutch-schedule"],
     queryFn: () => apiFetch("/dutch/schedule"),
-    refetchInterval: 60_000,
+    refetchInterval: 20_000,
   });
 
   const refreshScheduleMutation = useMutation({
@@ -367,14 +376,75 @@ export default function BookieBot() {
                       </button>
                       {/* Expanded detail */}
                       {isExpanded && (
-                        <div className="px-5 pb-3 pt-0.5 bg-muted/10 border-t border-border/20">
-                          <p className={`text-xs leading-relaxed ${entry.status === "SKIPPED" ? "text-orange-300/80" : entry.status === "BET_PLACED" ? "text-emerald-400/80" : "text-muted-foreground"}`}>
+                        <div className="px-5 pb-4 pt-2 bg-muted/10 border-t border-border/20">
+                          {/* Status / reason line */}
+                          <p className={`text-xs leading-relaxed mb-2 ${entry.status === "SKIPPED" ? "text-orange-300/80" : entry.status === "BET_PLACED" ? "text-emerald-400/80" : "text-muted-foreground"}`}>
                             {detailLine}
                           </p>
-                          <div className="flex gap-4 mt-1.5 text-[10px] text-muted-foreground/60">
+
+                          {/* Runner table — shown once the bot has processed this race */}
+                          {entry.runnersJson && entry.runnersJson.length > 0 ? (
+                            <div className="rounded-md border border-border/30 overflow-hidden mt-1">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b border-border/30 bg-muted/20">
+                                    <th className="text-left px-3 py-1.5 font-medium text-muted-foreground">Runner</th>
+                                    <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">Price</th>
+                                    {entry.status === "BET_PLACED" && (
+                                      <>
+                                        <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">Stake</th>
+                                        <th className="text-right px-3 py-1.5 font-medium text-muted-foreground">Net if wins</th>
+                                      </>
+                                    )}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/20">
+                                  {entry.runnersJson.map((r, i) => (
+                                    <tr
+                                      key={i}
+                                      className={r.backed ? "bg-emerald-500/5" : ""}
+                                    >
+                                      <td className="px-3 py-1.5 flex items-center gap-1.5">
+                                        {r.backed && (
+                                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+                                        )}
+                                        <span className={r.backed ? "text-emerald-300 font-medium" : "text-muted-foreground"}>
+                                          {r.name}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                                        {r.price.toFixed(2)}
+                                      </td>
+                                      {entry.status === "BET_PLACED" && (
+                                        <>
+                                          <td className="px-3 py-1.5 text-right tabular-nums">
+                                            {r.stake != null
+                                              ? <span className="text-emerald-400">£{r.stake.toFixed(2)}</span>
+                                              : <span className="text-muted-foreground/40">—</span>}
+                                          </td>
+                                          <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                                            {r.netProfit != null ? (
+                                              r.netProfit >= 0
+                                                ? <span className="text-emerald-400">+£{r.netProfit.toFixed(2)}</span>
+                                                : <span className="text-red-400">-£{Math.abs(r.netProfit).toFixed(2)}</span>
+                                            ) : <span className="text-muted-foreground/40">—</span>}
+                                          </td>
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : entry.status === "SCHEDULED" ? (
+                            <p className="text-[10px] text-muted-foreground/50 italic">
+                              Runner details will appear when the bot checks this race (1–4 min before start)
+                            </p>
+                          ) : null}
+
+                          <div className="flex gap-4 mt-2 text-[10px] text-muted-foreground/50">
                             {entry.runnerCount != null && <span>{entry.runnerCount} runners</span>}
                             <span>{t.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} · {timeStr}</span>
-                            <span className="capitalize">{entry.status.toLowerCase().replace("_", " ")}</span>
                           </div>
                         </div>
                       )}
