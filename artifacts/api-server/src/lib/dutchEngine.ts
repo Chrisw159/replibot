@@ -338,8 +338,24 @@ async function runDutchMarket(
     }))
     .sort((a, b) => b.volPct - a.volPct);
 
-  const cutoff = Math.max(1, Math.ceil(ranked.length * dutchConfig.topPct));
-  const backed = ranked.slice(0, cutoff);
+  // Base the 40% cutoff on the TOTAL active field (including runners above the odds cap
+  // that we can't bet, since they still occupy a place in the field)
+  const totalActiveRunners = marketDetail.runners.filter(r => r.status === "ACTIVE").length;
+  const cutoff = Math.max(1, Math.min(
+    Math.ceil(totalActiveRunners * dutchConfig.topPct),
+    ranked.length,
+  ));
+  let backed = ranked.slice(0, cutoff);
+
+  // Coverage floor: if our backed runners' share of implied probability is below 35%,
+  // add one more runner to ensure meaningful market coverage
+  const coverage = backed.reduce((s, r) => s + r.volPct, 0);
+  if (coverage < 0.35 && backed.length < ranked.length) {
+    backed = ranked.slice(0, backed.length + 1);
+    log("info",
+      `Coverage ${(coverage * 100).toFixed(1)}% below 35% floor — adding extra runner (now ${backed.length}/${ranked.length} eligible)`,
+    );
+  }
 
   // Dutch stake formula:
   //   S = sum(1/backPrice_i) for backed horses
