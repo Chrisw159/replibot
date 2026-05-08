@@ -342,6 +342,7 @@ export async function listMarkets(params: {
   marketType?: string;
   limit?: number;
   hoursAhead?: number;
+  includeRunners?: boolean;
 }): Promise<BetfairMarket[]> {
   interface MarketCatalogueResult {
     marketId: string;
@@ -387,7 +388,7 @@ export async function listMarkets(params: {
         "EVENT_TYPE",
         "MARKET_START_TIME",
         "MARKET_DESCRIPTION",
-        "RUNNERS",
+        ...(params.includeRunners ? ["RUNNERS"] : []),
       ],
       maxResults,
       sort: "FIRST_TO_START",

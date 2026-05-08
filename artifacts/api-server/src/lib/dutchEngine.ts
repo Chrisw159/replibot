@@ -422,11 +422,12 @@ export async function runScheduleScan(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
 
     const markets = await listMarkets({
-      eventTypeId:  "7",
-      countryCodes: dutchConfig.countryCodes,
-      marketType:   "WIN",
-      hoursAhead:   24,
-      limit:        200,
+      eventTypeId:    "7",
+      countryCodes:   dutchConfig.countryCodes,
+      marketType:     "WIN",
+      hoursAhead:     24,
+      limit:          100,
+      includeRunners: true,
     });
 
     // Apply same static + runner-count filters as the betting cycle
