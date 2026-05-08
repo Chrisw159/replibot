@@ -186,6 +186,7 @@ export interface BetfairMarket {
   totalMatched: number;
   status: string;
   inPlay: boolean;
+  runnerCount?: number;
 }
 
 export interface BetfairRunner {
@@ -351,6 +352,7 @@ export async function listMarkets(params: {
     marketStartTime?: string;
     totalMatched?: number;
     marketCatalogueDescription?: { marketStatus?: string };
+    runners?: { selectionId: number; runnerName: string; sortPriority?: number }[];
   }
 
   const filter: Record<string, unknown> = {};
@@ -385,6 +387,7 @@ export async function listMarkets(params: {
         "EVENT_TYPE",
         "MARKET_START_TIME",
         "MARKET_DESCRIPTION",
+        "RUNNERS",
       ],
       maxResults,
       sort: "FIRST_TO_START",
@@ -410,6 +413,7 @@ export async function listMarkets(params: {
     totalMatched: m.totalMatched ?? 0,
     status: m.marketCatalogueDescription?.marketStatus ?? "OPEN",
     inPlay: false,
+    runnerCount: m.runners?.length,
   }));
 }
 

@@ -429,14 +429,20 @@ export async function runScheduleScan(): Promise<void> {
       limit:        200,
     });
 
-    // Apply same static filters as the betting cycle
+    // Apply same static + runner-count filters as the betting cycle
     const filtered = markets.filter(m => {
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) return false;
       // Only today's races (UTC date)
       const raceDate = new Date(m.marketStartTime).toISOString().slice(0, 10);
-      return raceDate === today;
+      if (raceDate !== today) return false;
+      // Filter by runner count if available from catalogue
+      if (m.runnerCount != null) {
+        if (m.runnerCount < dutchConfig.minRunners) return false;
+        if (m.runnerCount > dutchConfig.maxRunners) return false;
+      }
+      return true;
     });
 
     // Fetch existing schedule entries for today to avoid overwriting settled statuses
@@ -454,6 +460,7 @@ export async function runScheduleScan(): Promise<void> {
           eventName:       m.eventName,
           marketName:      m.marketName,
           marketStartTime: new Date(m.marketStartTime),
+          runnerCount:     m.runnerCount ?? null,
           status:          "SCHEDULED",
           scheduledDate:   today,
         });

@@ -171,6 +171,13 @@ export default function BookieBot() {
 
   const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
   const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
+  const [expandedRaces, setExpandedRaces] = useState<Set<number>>(new Set());
+  const toggleRace = (id: number) =>
+    setExpandedRaces(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const toggleDay = (d: string) =>
     setCollapsedDays(prev => {
       const next = new Set(prev);
@@ -315,38 +322,62 @@ export default function BookieBot() {
                 .map(entry => {
                   const t = new Date(entry.marketStartTime);
                   const timeStr = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                  const venue = entry.eventName.replace(/^\d{2}:\d{2}\s+/, "").split(" ")[0];
-                  let icon, badge;
+                  const venue = entry.eventName.replace(/^\d{2}:\d{2}\s+/, "");
+                  const isExpanded = expandedRaces.has(entry.id);
+                  const isMuted = entry.status === "MISSED";
+
+                  let icon, badge, detailLine;
                   if (entry.status === "BET_PLACED") {
                     icon = <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />;
                     badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">BET</span>;
+                    detailLine = "Bets placed — awaiting settlement";
                   } else if (entry.status === "SKIPPED") {
                     icon = <XCircle className="w-4 h-4 text-orange-400/70 flex-shrink-0" />;
                     badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400/80">SKIP</span>;
+                    detailLine = entry.skipReason ?? "Skipped by bot";
                   } else if (entry.status === "MISSED") {
                     icon = <HelpCircle className="w-4 h-4 text-muted-foreground/50 flex-shrink-0" />;
                     badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground">MISS</span>;
+                    detailLine = "Race started before bot could check it";
                   } else {
                     icon = <Clock className="w-4 h-4 text-muted-foreground/60 flex-shrink-0" />;
                     badge = null;
+                    detailLine = "Waiting — bot will check 1–5 min before start";
                   }
-                  const isMuted = entry.status === "MISSED";
+
                   return (
-                    <div key={entry.id} className={`flex items-center gap-3 px-5 py-2.5 ${isMuted ? "opacity-40" : ""}`}>
-                      {icon}
-                      <div className="w-12 text-xs tabular-nums text-muted-foreground flex-shrink-0">{timeStr}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-sm font-medium truncate ${isMuted ? "text-muted-foreground" : ""}`}>
-                          {venue} — {entry.marketName}
+                    <div key={entry.id} className={`border-b border-border/30 last:border-0 ${isMuted ? "opacity-40" : ""}`}>
+                      {/* Row header — click to expand */}
+                      <button
+                        onClick={() => toggleRace(entry.id)}
+                        className="w-full flex items-center gap-3 px-5 py-2.5 hover:bg-muted/20 transition-colors text-left"
+                      >
+                        {icon}
+                        <div className="w-11 text-xs tabular-nums text-muted-foreground flex-shrink-0">{timeStr}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-sm font-medium truncate ${isMuted ? "text-muted-foreground" : ""}`}>
+                            {venue} — {entry.marketName}
+                          </div>
                         </div>
-                        {entry.skipReason && (
-                          <div className="text-xs text-muted-foreground/70 truncate">{entry.skipReason}</div>
+                        {entry.runnerCount != null && (
+                          <div className="text-xs text-muted-foreground/60 flex-shrink-0">{entry.runnerCount}r</div>
                         )}
-                      </div>
-                      {entry.runnerCount != null && (
-                        <div className="text-xs text-muted-foreground flex-shrink-0">{entry.runnerCount}r</div>
+                        {badge}
+                        <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                      </button>
+                      {/* Expanded detail */}
+                      {isExpanded && (
+                        <div className="px-5 pb-3 pt-0.5 bg-muted/10 border-t border-border/20">
+                          <p className={`text-xs leading-relaxed ${entry.status === "SKIPPED" ? "text-orange-300/80" : entry.status === "BET_PLACED" ? "text-emerald-400/80" : "text-muted-foreground"}`}>
+                            {detailLine}
+                          </p>
+                          <div className="flex gap-4 mt-1.5 text-[10px] text-muted-foreground/60">
+                            {entry.runnerCount != null && <span>{entry.runnerCount} runners</span>}
+                            <span>{t.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} · {timeStr}</span>
+                            <span className="capitalize">{entry.status.toLowerCase().replace("_", " ")}</span>
+                          </div>
+                        </div>
                       )}
-                      {badge}
                     </div>
                   );
                 })}
