@@ -16,7 +16,7 @@ const MAX_ODDS = 50;
 const MIN_BET_SIZE = 2.0;
 
 const NON_WIN_PATTERN =
-  /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
+  /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|trained\s+winner|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
 
 // Skip National Hunt chase races — too many variables (falls, unseated, errors)
 const CHASE_PATTERN = /\bChs\b|Chase/i;
@@ -440,7 +440,21 @@ export async function runScheduleScan(): Promise<void> {
       return raceDate === today;
     });
 
-    // Fetch existing schedule entries for today to avoid overwriting settled statuses
+    const filteredIds = new Set(filtered.map(m => m.marketId));
+
+    // Delete any SCHEDULED rows for today that are no longer in the valid filtered set
+    // (e.g. filter pattern was updated, or Betfair reclassified the market)
+    await db.delete(dutchScheduleTable)
+      .where(
+        sql`${dutchScheduleTable.scheduledDate} = ${today}
+          AND ${dutchScheduleTable.status} = 'SCHEDULED'
+          AND ${dutchScheduleTable.marketId} NOT IN (${sql.join(
+            filtered.length ? filtered.map(m => sql`${m.marketId}`) : [sql`''`],
+            sql`, `
+          )})`
+      );
+
+    // Fetch remaining entries to avoid re-inserting already-processed races
     const existing = await db
       .select({ marketId: dutchScheduleTable.marketId, status: dutchScheduleTable.status })
       .from(dutchScheduleTable)
@@ -465,25 +479,17 @@ export async function runScheduleScan(): Promise<void> {
 
     // Mark SCHEDULED races whose start time has passed by >10 min as MISSED
     const now = Date.now();
-    const filteredIds = new Set(filtered.map(m => m.marketId));
     let missed = 0;
     for (const e of existing) {
       if (e.status !== "SCHEDULED") continue;
       const mkt = filtered.find(m => m.marketId === e.marketId);
-      const startMs = mkt
-        ? new Date(mkt.marketStartTime).getTime()
-        : 0;
-      if (startMs > 0 && startMs < now - 10 * 60_000) {
+      if (!mkt) continue;
+      const startMs = new Date(mkt.marketStartTime).getTime();
+      if (startMs < now - 10 * 60_000) {
         await db.update(dutchScheduleTable)
           .set({ status: "MISSED", updatedAt: new Date() })
           .where(sql`${dutchScheduleTable.marketId} = ${e.marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
         missed++;
-      }
-      // Remove entries for races that are no longer in our filtered list (e.g. filter changed)
-      if (!filteredIds.has(e.marketId) && startMs === 0) {
-        await db.update(dutchScheduleTable)
-          .set({ status: "FILTERED_OUT", updatedAt: new Date() })
-          .where(sql`${dutchScheduleTable.marketId} = ${e.marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
       }
     }
 
