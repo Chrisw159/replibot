@@ -16,7 +16,7 @@ const MIN_ODDS = 1.5;
 const MAX_ODDS = 300; // runners above 300/1 are excluded from the lay field; race still runs without them
 
 const NON_WIN_PATTERN =
-  /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
+  /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
 
 interface BookieConfig {
   // Maximum net loss allowed for any single race outcome.

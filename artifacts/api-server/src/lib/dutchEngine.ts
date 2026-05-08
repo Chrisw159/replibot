@@ -16,7 +16,7 @@ const MAX_ODDS = 50;
 const MIN_BET_SIZE = 2.0;
 
 const NON_WIN_PATTERN =
-  /each.?way|forecast|\(f\/c\)|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|jockey.*champion|specials/i;
+  /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
 
 // Skip National Hunt chase races — too many variables (falls, unseated, errors)
 const CHASE_PATTERN = /\bChs\b|Chase/i;
