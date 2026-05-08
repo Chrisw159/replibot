@@ -1,36 +1,31 @@
 import { Link, useLocation } from "wouter";
-import { useGetBotStatus, useGetBotConfig, getGetBotStatusQueryKey } from "@workspace/api-client-react";
-import { 
-  Activity, 
-  BarChart2, 
-  Settings, 
-  Target, 
-  List, 
-  TrendingUp,
-  Power,
-  PowerOff,
-  Zap,
-  Scale,
-  Layers,
-} from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Settings, Power, PowerOff, Layers } from "lucide-react";
+
+interface DutchStatus {
+  isRunning?: boolean;
+  paperTradingMode?: boolean;
+}
+
+async function fetchDutchStatus(): Promise<DutchStatus> {
+  const res = await fetch("/api/dutch/status");
+  if (!res.ok) return {};
+  return res.json();
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { data: botStatus } = useGetBotStatus({ query: { refetchInterval: 5000, queryKey: getGetBotStatusQueryKey() } });
-  const { data: config } = useGetBotConfig();
+  const { data: status } = useQuery<DutchStatus>({
+    queryKey: ["dutch-status"],
+    queryFn: fetchDutchStatus,
+    refetchInterval: 5000,
+  });
 
-  const isRunning = botStatus?.isRunning;
-  const isPaperTrading = botStatus?.paperTradingMode || config?.paperTradingMode;
+  const isRunning = status?.isRunning ?? false;
+  const isPaperTrading = status?.paperTradingMode ?? true;
 
   const navItems = [
-    { href: "/", label: "Dashboard", icon: BarChart2 },
-    { href: "/markets", label: "Markets", icon: Activity },
-    { href: "/strategies", label: "Strategies", icon: Target },
-    { href: "/bets", label: "Bets", icon: List },
-    { href: "/bot", label: "Bot Control", icon: TrendingUp },
-    { href: "/goalbot", label: "Goal Bot", icon: Zap },
-    { href: "/bookiebot", label: "Bookie Bot", icon: Scale },
-    { href: "/dutchingbot", label: "Dutching Bot", icon: Layers },
+    { href: "/", label: "Dutching Bot", icon: Layers },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
@@ -51,19 +46,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
           )}
         </div>
-        
+
         <div className="p-4 flex-1 overflow-y-auto">
           <nav className="space-y-1">
             {navItems.map((item) => {
-              const active = location === item.href;
+              const active = item.href === "/" ? location === "/" : location.startsWith(item.href);
               const Icon = item.icon;
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    active 
-                      ? "bg-sidebar-primary/10 text-sidebar-primary" 
+                    active
+                      ? "bg-sidebar-primary/10 text-sidebar-primary"
                       : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
                   }`}
                 >

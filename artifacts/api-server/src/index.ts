@@ -1,7 +1,5 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startBot } from "./lib/botEngine";
-import { startBookieBot } from "./lib/bookieEngine";
 import { startDutchBot } from "./lib/dutchEngine";
 import { db, botConfigTable } from "@workspace/db";
 
@@ -27,24 +25,18 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  // Auto-resume bots if they were running before the server restarted
+  // Auto-resume the Dutch bot if it was running before the server restarted.
+  // (Legacy AI bot and Bookie bot have been retired — only the Combo-strategy
+  // Dutch bot is exposed in the UI.)
   void (async () => {
     try {
       const [config] = await db.select().from(botConfigTable).limit(1);
-      if (config?.isRunning) {
-        logger.info("Auto-resuming AI bot after server restart");
-        await startBot();
-      }
-      if (config?.bookieIsRunning) {
-        logger.info("Auto-resuming Bookie Bot after server restart");
-        await startBookieBot();
-      }
       if (config?.dutchIsRunning) {
         logger.info("Auto-resuming Dutch Bot after server restart");
         await startDutchBot();
       }
     } catch (err) {
-      logger.error({ err }, "Failed to auto-resume bots on startup");
+      logger.error({ err }, "Failed to auto-resume Dutch Bot on startup");
     }
   })();
 });

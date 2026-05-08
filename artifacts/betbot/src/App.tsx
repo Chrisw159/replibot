@@ -5,16 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/Layout";
 
-// Pages
-import Dashboard from "@/pages/Dashboard";
-import Markets from "@/pages/Markets";
-import Strategies from "@/pages/Strategies";
-import Bets from "@/pages/Bets";
-import BotControl from "@/pages/BotControl";
 import Settings from "@/pages/Settings";
-import GoalBot from "@/pages/GoalBot";
-import BookieBot from "@/pages/BookieBot";
-import BookieBotRace from "@/pages/BookieBotRace";
 import DutchingBot from "@/pages/DutchingBot";
 import DutchingBotRace from "@/pages/DutchingBotRace";
 
@@ -24,16 +15,8 @@ function Router() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/markets" component={Markets} />
-        <Route path="/strategies" component={Strategies} />
-        <Route path="/bets" component={Bets} />
-        <Route path="/bot" component={BotControl} />
-        <Route path="/goalbot" component={GoalBot} />
-        <Route path="/bookiebot/race/:marketId" component={BookieBotRace} />
-        <Route path="/bookiebot" component={BookieBot} />
+        <Route path="/" component={DutchingBot} />
         <Route path="/dutchingbot/race/:marketId" component={DutchingBotRace} />
-        <Route path="/dutchingbot" component={DutchingBot} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>
