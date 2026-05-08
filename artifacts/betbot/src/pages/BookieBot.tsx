@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -179,8 +179,8 @@ export default function BookieBot() {
     });
 
   // Group race history by local calendar date, newest first
-  const racesByDay: { date: string; label: string; races: DutchRace[]; dayPnl: number }[] = [];
-  if (races && races.length > 0) {
+  const racesByDay = useMemo(() => {
+    if (!races || races.length === 0) return [];
     const map = new Map<string, DutchRace[]>();
     for (const race of races) {
       const d = new Date(race.placedAt).toLocaleDateString("en-CA");
@@ -188,22 +188,29 @@ export default function BookieBot() {
       list.push(race);
       map.set(d, list);
     }
-    const sorted = [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-    for (const [date, dayRaces] of sorted) {
-      const isToday = date === today;
-      const label = isToday
-        ? "Today"
-        : new Date(date + "T12:00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
-      const dayPnl = dayRaces.reduce((s, r) => s + (r.settled ? r.netProfit : 0), 0);
-      racesByDay.push({ date, label, races: dayRaces, dayPnl });
-      // Collapse older days by default (only on first render — don't reset if user toggled)
-      if (!isToday) {
-        setCollapsedDays(prev => prev.has(date) === false && !prev.has(`__seen_${date}`)
-          ? new Set([...prev, date, `__seen_${date}`])
-          : prev);
+    return [...map.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([date, dayRaces]) => ({
+        date,
+        label: date === today
+          ? "Today"
+          : new Date(date + "T12:00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
+        races: dayRaces,
+        dayPnl: dayRaces.reduce((s, r) => s + (r.settled ? r.netProfit : 0), 0),
+      }));
+  }, [races, today]);
+
+  // Collapse all non-today days on first load
+  useEffect(() => {
+    if (racesByDay.length === 0) return;
+    setCollapsedDays(prev => {
+      const next = new Set(prev);
+      for (const { date } of racesByDay) {
+        if (date !== today && !next.has(date)) next.add(date);
       }
-    }
-  }
+      return next;
+    });
+  }, [racesByDay, today]);
 
   return (
     <div className="space-y-6">
