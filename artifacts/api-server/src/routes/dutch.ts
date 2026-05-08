@@ -126,14 +126,24 @@ router.get("/dutch/races", async (_req, res): Promise<void> => {
       eventName:   betsTable.eventName,
       placedAt:    sql<string>`min(${betsTable.placedAt})`,
       betCount:    sql<number>`count(*)::int`,
-      totalStaked: sql<number>`sum(${betsTable.stakeAmount}::float)`,
+      // For LAY bets, the actual money at risk is liability = stake*(odds-1).
+      // For BACK bets it's just the stake.
+      totalStaked: sql<number>`sum(case
+        when ${betsTable.betType} = 'LAY'
+          then ${betsTable.stakeAmount}::float * (${betsTable.requestedOdds}::float - 1)
+        else ${betsTable.stakeAmount}::float
+      end)`,
       netProfit:   sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
       settled:     sql<boolean>`bool_and(${betsTable.status} in ('WON','LOST','VOID'))`,
+      // Race winner — prefer the ||WINNER: tag (always correct, including for LAY-only
+      // races where status=WON means the horse LOST). Fall back to the WON-bet's name
+      // for legacy BACK-only races that pre-date the tag.
       winnerName:  sql<string>`coalesce(
-        max(case when ${betsTable.status} = 'WON' then ${betsTable.selectionName} end),
         max(case when ${betsTable.aiReasoning} like '%||WINNER:%'
             then split_part(split_part(${betsTable.aiReasoning}, '||WINNER:', 2), '||', 1)
-            end)
+            end),
+        max(case when ${betsTable.status} = 'WON' AND coalesce(${betsTable.betType}, 'BACK') = 'BACK'
+            then ${betsTable.selectionName} end)
       )`,
     })
     .from(betsTable)
@@ -164,8 +174,6 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
     .from(betsTable)
     .where(sql`${betsTable.marketId} = ${marketId} AND ${DUTCH_FILTER}`)
     .orderBy(desc(betsTable.stakeAmount));
-
-  const totalStaked = bets.reduce((s, b) => s + Number(b.stakeAmount), 0);
 
   // Extract full field snapshot and actual winner from aiReasoning
   type FieldRunner = { selectionId: number; name: string; odds: number | null };
@@ -219,11 +227,28 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
     bets: bets.map(b => {
       const odds  = Number(b.requestedOdds);
       const stake = Number(b.stakeAmount);
-      const netIfWins = Math.round((stake * (odds - 1) - (totalStaked - stake)) * 100) / 100;
+      // Race net P&L if THIS selection wins:
+      //   For each bet: BACK on this  → +stake*(odds-1)
+      //                 BACK on other → -stake
+      //                 LAY on this   → -stake*(odds-1)  [= -liability]
+      //                 LAY on other  → +stake
+      let netIfWins = 0;
+      for (const other of bets) {
+        const oStake = Number(other.stakeAmount);
+        const oOdds  = Number(other.requestedOdds);
+        const isThis = other.id === b.id;
+        if (other.betType === "LAY") {
+          netIfWins += isThis ? -(oStake * (oOdds - 1)) : oStake;
+        } else {
+          netIfWins += isThis ?  (oStake * (oOdds - 1)) : -oStake;
+        }
+      }
+      netIfWins = Math.round(netIfWins * 100) / 100;
       return {
         id:            b.id,
         selectionId:   b.selectionId,
         selectionName: b.selectionName,
+        betType:       (b.betType ?? "BACK") as "BACK" | "LAY",
         backOdds:      odds,
         stakeAmount:   stake,
         netIfWins,

@@ -12,29 +12,35 @@ import {
 const DUTCH_STRATEGY_NAME = "Dutch Bot";
 const MIN_MINS_BEFORE_START = 1;
 const MAX_MINS_BEFORE_START = 4;
-const MAX_ODDS = 50;
 const MIN_BET_SIZE = 2.0;
 
 const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|trained\s+winner|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
 
-// Skip National Hunt chase races — too many variables (falls, unseated, errors)
+// Legacy filters — kept for back-compat but defaulted OFF after backtest evidence
+// showed Chases / AW races / Maidens are the MOST profitable subsets for the
+// Combo strategy (lay favs in chaotic races where outsiders win more often).
 const CHASE_PATTERN = /\bChs\b|Chase/i;
-
-// Known UK/IE all-weather venues — 7f handicaps here tend to be wide-open and hit by longshots
 const AW_VENUE_PATTERN = /chelmsford|kempton|lingfield|southwell|wolverhampton|dundalk/i;
 const SEVEN_FURLONG_PATTERN = /\b7f\b/i;
 
+// Combo strategy thresholds
+const BACK_FAV_MAX_ODDS = 2.5;   // fav < 2.5 → BACK fav
+const LAY_FAV_MIN_ODDS  = 3.0;   // fav 3.0 to 5.0 → LAY fav
+const LAY_FAV_MAX_ODDS  = 5.0;
+const LAY_TOP2_MIN_FAV  = 5.0;   // fav ≥ 5.0 → LAY top 2
+const MAX_LAY_ODDS      = 8.0;   // never lay above 8.0 (liability gets crushing)
+
 interface DutchConfig {
-  totalOutlay: number;
-  topPct: number;
-  minFavPrice: number;
+  totalOutlay: number;       // £ per race (back stake or total lay liability)
+  topPct: number;            // legacy, unused by combo strategy
+  minFavPrice: number;       // legacy, unused by combo strategy
   minLiquidity: number;
   countryCodes: string[];
   minRunners: number;
   maxRunners: number;
-  skipChases: boolean;
-  skipAwSevenFurlong: boolean;
+  skipChases: boolean;       // legacy, default OFF (backtest: chases +21.9% ROI)
+  skipAwSevenFurlong: boolean; // legacy, default OFF (backtest: AW +16.8% ROI)
 }
 
 let dutchBotRunning = false;
@@ -50,10 +56,10 @@ let dutchConfig: DutchConfig = {
   minFavPrice: 2.0,
   minLiquidity: 3000,
   countryCodes: ["GB", "IE"],
-  minRunners: 4,
-  maxRunners: 12,
-  skipChases: true,
-  skipAwSevenFurlong: true,
+  minRunners: 5,
+  maxRunners: 15,
+  skipChases: false,
+  skipAwSevenFurlong: false,
 };
 
 export function isDutchBotRunning(): boolean { return dutchBotRunning; }
@@ -93,11 +99,11 @@ async function loadDutchConfigFromDb(): Promise<void> {
       if (typeof saved.totalOutlay  === "number") dutchConfig.totalOutlay  = saved.totalOutlay;
       if (typeof saved.topPct       === "number") dutchConfig.topPct       = saved.topPct;
       if (typeof saved.minFavPrice  === "number") dutchConfig.minFavPrice  = saved.minFavPrice;
-      if (typeof saved.minLiquidity      === "number")  dutchConfig.minLiquidity      = saved.minLiquidity;
-      if (Array.isArray(saved.countryCodes))             dutchConfig.countryCodes      = saved.countryCodes;
-      if (typeof saved.minRunners        === "number")  dutchConfig.minRunners        = saved.minRunners;
-      if (typeof saved.maxRunners        === "number")  dutchConfig.maxRunners        = saved.maxRunners;
-      if (typeof saved.skipChases        === "boolean") dutchConfig.skipChases        = saved.skipChases;
+      if (typeof saved.minLiquidity === "number") dutchConfig.minLiquidity = saved.minLiquidity;
+      if (Array.isArray(saved.countryCodes))      dutchConfig.countryCodes = saved.countryCodes;
+      if (typeof saved.minRunners   === "number") dutchConfig.minRunners   = saved.minRunners;
+      if (typeof saved.maxRunners   === "number") dutchConfig.maxRunners   = saved.maxRunners;
+      if (typeof saved.skipChases   === "boolean") dutchConfig.skipChases   = saved.skipChases;
       if (typeof saved.skipAwSevenFurlong === "boolean") dutchConfig.skipAwSevenFurlong = saved.skipAwSevenFurlong;
       logger.info({ dutchConfig }, "[DUTCH] Loaded config from DB");
     }
@@ -109,15 +115,17 @@ async function loadDutchConfigFromDb(): Promise<void> {
 interface ScheduleRunner {
   name: string;
   price: number;
-  backed: boolean;
-  stake?: number;
-  netProfit?: number;
+  backed: boolean;            // true if we placed a bet on this runner (BACK or LAY)
+  betType?: "BACK" | "LAY";   // direction of our bet
+  stake?: number;             // Betfair "size" (backer's stake)
+  liability?: number;         // for LAY bets: stake * (odds-1)
+  netProfit?: number;         // expected race net P&L if THIS runner wins
 }
 
 async function updateScheduleEntry(
   marketId: string,
   status: string,
-  opts?: { skipReason?: string; runnerCount?: number; runners?: ScheduleRunner[] },
+  opts?: { skipReason?: string; runnerCount?: number; runners?: ScheduleRunner[]; mode?: string },
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   try {
@@ -126,7 +134,7 @@ async function updateScheduleEntry(
         status,
         skipReason:  opts?.skipReason  ?? null,
         ...(opts?.runnerCount != null ? { runnerCount: opts.runnerCount } : {}),
-        ...(opts?.runners       != null ? { runnersJson: opts.runners as unknown as Record<string, unknown>[] } : {}),
+        ...(opts?.runners      != null ? { runnersJson: opts.runners as unknown as Record<string, unknown>[] } : {}),
         updatedAt:   new Date(),
       })
       .where(sql`${dutchScheduleTable.marketId} = ${marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
@@ -175,11 +183,11 @@ async function runDutchCycle(): Promise<number> {
       if (processingMarkets.has(m.marketId)) return false;
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) {
-        log("info", `Skipping ${m.eventName} — National Hunt chase (${m.marketName})`);
+        log("info", `Skipping ${m.eventName} — chase (legacy filter on)`);
         return false;
       }
       if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) {
-        log("info", `Skipping ${m.eventName} — 7f all-weather flat (${m.marketName})`);
+        log("info", `Skipping ${m.eventName} — 7f AW (legacy filter on)`);
         return false;
       }
       return true;
@@ -232,6 +240,123 @@ async function scheduleNextCycle(): Promise<void> {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+//  COMBO STRATEGY
+//  Backtested on 159 real UK/IE races (Sporting Life, May 8-11 2024) + 38 of
+//  our own paper-traded races (May 4-8 2026). Net result on each sample:
+//    Combined backtest:  +£489 / +6.8% ROI / 65% win rate
+//    Cross-validation:   +£97  / +5.1% ROI / 79% win rate
+//  Old "Hybrid Fav" lost £917 / £421 respectively on the same data.
+//
+//  Three rules driven by the favourite's price:
+//    • fav <  2.5            → BACK favourite £totalOutlay      (heavy fav, +EV)
+//    • fav 3.0 – 5.0         → LAY favourite, £totalOutlay liab  (sweet-spot)
+//    • fav ≥  5.0            → LAY top 2 runners, £half liab each (open race)
+//    • fav 2.5 – 3.0 or fav>8 → SKIP (no edge, or liability too high)
+// ────────────────────────────────────────────────────────────────────────────
+
+type ComboMode = "BACK_FAV" | "LAY_FAV" | "LAY_TOP2" | "SKIP";
+
+interface ComboPlan {
+  mode: ComboMode;
+  bets: Array<{
+    selectionId: number;
+    runnerName: string;
+    backPrice: number;
+    side: "BACK" | "LAY";
+    stake: number;       // Betfair "size" (backer's stake)
+    liability: number;   // money at risk if our side loses
+    profitIfWins: number;// what we net if THIS runner wins the race
+  }>;
+  reason: string;
+}
+
+function planCombo(
+  eligible: Array<{ selectionId: number; runnerName: string; bestBackPrice: number }>,
+  outlay: number,
+): ComboPlan {
+  if (eligible.length === 0) {
+    return { mode: "SKIP", bets: [], reason: "No eligible runners" };
+  }
+
+  const sorted = [...eligible].sort((a, b) => a.bestBackPrice - b.bestBackPrice);
+  const fav = sorted[0];
+
+  // BACK heavy favourite
+  if (fav.bestBackPrice < BACK_FAV_MAX_ODDS) {
+    const stake = Math.round(outlay * 100) / 100;
+    return {
+      mode: "BACK_FAV",
+      bets: [{
+        selectionId: fav.selectionId,
+        runnerName:  fav.runnerName,
+        backPrice:   fav.bestBackPrice,
+        side:        "BACK",
+        stake,
+        liability:   stake,
+        profitIfWins: Math.round((stake * (fav.bestBackPrice - 1)) * 100) / 100,
+      }],
+      reason: `BACK heavy favourite at ${fav.bestBackPrice}`,
+    };
+  }
+
+  // LAY favourite (sweet spot)
+  if (fav.bestBackPrice >= LAY_FAV_MIN_ODDS && fav.bestBackPrice < LAY_FAV_MAX_ODDS) {
+    const layPrice  = fav.bestBackPrice;
+    const liability = Math.round(outlay * 100) / 100;
+    const stake     = Math.round((liability / (layPrice - 1)) * 100) / 100;
+    return {
+      mode: "LAY_FAV",
+      bets: [{
+        selectionId:  fav.selectionId,
+        runnerName:   fav.runnerName,
+        backPrice:    layPrice,
+        side:         "LAY",
+        stake,
+        liability,
+        profitIfWins: -liability, // if this runner wins, we lose liability
+      }],
+      reason: `LAY favourite — sweet-spot band ${LAY_FAV_MIN_ODDS}-${LAY_FAV_MAX_ODDS}`,
+    };
+  }
+
+  // LAY top 2 (open race, no clear fav)
+  if (fav.bestBackPrice >= LAY_TOP2_MIN_FAV) {
+    const top2 = sorted.slice(0, 2).filter(r => r.bestBackPrice <= MAX_LAY_ODDS);
+    if (top2.length < 2) {
+      return {
+        mode: "SKIP",
+        bets: [],
+        reason: `Top-2 lay aborted — second selection above max-lay ${MAX_LAY_ODDS}`,
+      };
+    }
+    const liabPer = Math.round((outlay / 2) * 100) / 100;
+    return {
+      mode: "LAY_TOP2",
+      bets: top2.map(r => {
+        const stake = Math.round((liabPer / (r.bestBackPrice - 1)) * 100) / 100;
+        return {
+          selectionId:  r.selectionId,
+          runnerName:   r.runnerName,
+          backPrice:    r.bestBackPrice,
+          side:         "LAY" as const,
+          stake,
+          liability:    liabPer,
+          profitIfWins: -liabPer,
+        };
+      }),
+      reason: `LAY top 2 — open race, fav ${fav.bestBackPrice}`,
+    };
+  }
+
+  // 2.5 ≤ fav < 3.0 — no edge zone
+  return {
+    mode: "SKIP",
+    bets: [],
+    reason: `Favourite at ${fav.bestBackPrice.toFixed(2)} — neutral zone (no edge)`,
+  };
+}
+
 async function runDutchMarket(
   marketId: string,
   eventName: string,
@@ -247,29 +372,41 @@ async function runDutchMarket(
   // Helper: snapshot all active runners for the schedule entry
   const buildSnapshot = (
     eligibleRunners: typeof marketDetail.runners,
-    backedEntries?: { runner: { selectionId: string; runnerName: string }; backPrice: number; stake: number }[],
-    outlay?: number,
-  ): ScheduleRunner[] =>
-    eligibleRunners
+    plan?: ComboPlan,
+  ): ScheduleRunner[] => {
+    const planMap = new Map(plan?.bets.map(b => [String(b.selectionId), b]) ?? []);
+    // Net P&L if THIS runner wins:
+    //   sum over our bets:
+    //     BACK on this runner won  → +stake*(price-1)
+    //     BACK on other runner lost → -stake
+    //     LAY on this runner lost  → -liability
+    //     LAY on other runner won  → +stake
+    const netIfWins = (winnerSelId: string): number => {
+      let net = 0;
+      for (const b of plan?.bets ?? []) {
+        const isThis = String(b.selectionId) === winnerSelId;
+        if (b.side === "BACK") net += isThis ? b.stake * (b.backPrice - 1) : -b.stake;
+        else                   net += isThis ? -b.liability                : b.stake;
+      }
+      return Math.round(net * 100) / 100;
+    };
+
+    return eligibleRunners
       .filter(r => r.status === "ACTIVE" && r.bestBackPrice != null)
       .map(r => {
-        const be = backedEntries?.find(b => String(b.runner.selectionId) === String(r.selectionId));
-        return be
-          ? {
-              name: r.runnerName,
-              price: r.bestBackPrice!,
-              backed: true,
-              stake: be.stake,
-              netProfit: Math.round((be.stake * be.backPrice - (outlay ?? 0)) * 100) / 100,
-            }
-          : {
-              name: r.runnerName,
-              price: r.bestBackPrice!,
-              backed: false,
-              netProfit: outlay != null ? -outlay : undefined,
-            };
+        const planned = planMap.get(String(r.selectionId));
+        return {
+          name: r.runnerName,
+          price: r.bestBackPrice!,
+          backed: !!planned,
+          betType: planned?.side,
+          stake: planned?.stake,
+          liability: planned?.liability,
+          netProfit: plan && plan.bets.length > 0 ? netIfWins(String(r.selectionId)) : undefined,
+        } as ScheduleRunner;
       })
       .sort((a, b) => a.price - b.price);
+  };
 
   if (marketDetail.totalMatched < dutchConfig.minLiquidity) {
     log("info",
@@ -282,18 +419,12 @@ async function runDutchMarket(
     return;
   }
 
-  // Only ACTIVE runners with a valid back price within our odds cap
-  const eligible = marketDetail.runners.filter(r =>
-    r.status === "ACTIVE" &&
-    r.bestBackPrice != null &&
-    r.bestBackPrice >= 1.01 &&
-    r.bestBackPrice <= MAX_ODDS,
-  );
+  // Eligible runners — must be active with a back price > 1.01
+  const eligible = marketDetail.runners
+    .filter(r => r.status === "ACTIVE" && r.bestBackPrice != null && r.bestBackPrice >= 1.01);
 
   if (eligible.length < dutchConfig.minRunners) {
-    log("info",
-      `Skipping ${eventName} — only ${eligible.length} eligible runners, need ${dutchConfig.minRunners}`,
-    );
+    log("info", `Skipping ${eventName} — only ${eligible.length} runners (min ${dutchConfig.minRunners})`);
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `Only ${eligible.length} runners — need at least ${dutchConfig.minRunners}`,
       runnerCount: eligible.length,
@@ -303,168 +434,48 @@ async function runDutchMarket(
   }
 
   if (eligible.length > dutchConfig.maxRunners) {
-    log("info",
-      `Skipping ${eventName} — ${eligible.length} runners exceeds max ${dutchConfig.maxRunners}`,
-    );
+    log("info", `Skipping ${eventName} — ${eligible.length} runners exceeds max ${dutchConfig.maxRunners}`);
     void updateScheduleEntry(marketId, "SKIPPED", {
-      skipReason: `${eligible.length} runners — exceeds max of ${dutchConfig.maxRunners}`,
+      skipReason: `${eligible.length} runners — exceeds max of ${dutchConfig.maxRunners} (large fields are noise)`,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible),
     });
     return;
   }
 
-  // --- Favourite handling — three zones ---
-  // 1. fav < minFavPrice (default 2.0 / evens)  → skip entirely
-  // 2. minFavPrice ≤ fav < 4.0 (hybrid zone)    → breakeven stake on fav,
-  //                                                 Dutch the remaining outlay across the rest
-  // 3. fav ≥ 4.0 (normal zone)                  → standard Dutch across all backed runners
-  const HYBRID_FAV_THRESHOLD = 4.0;
-  const shortestPrice = Math.min(...eligible.map(r => r.bestBackPrice!));
+  // Plan the combo bet
+  const plan = planCombo(
+    eligible.map(r => ({
+      selectionId: r.selectionId,
+      runnerName:  r.runnerName,
+      bestBackPrice: r.bestBackPrice!,
+    })),
+    dutchConfig.totalOutlay,
+  );
 
-  if (shortestPrice < dutchConfig.minFavPrice) {
-    log("info",
-      `Skipping ${eventName} — favourite at ${shortestPrice} is under evens (min ${dutchConfig.minFavPrice})`,
-    );
+  if (plan.mode === "SKIP") {
+    log("info", `Skipping ${eventName} — ${plan.reason}`);
     void updateScheduleEntry(marketId, "SKIPPED", {
-      skipReason: `Favourite at ${shortestPrice} — under evens, skipping`,
+      skipReason: plan.reason,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible),
     });
     return;
   }
 
-  const hybridMode = shortestPrice < HYBRID_FAV_THRESHOLD;
-
-  // Rank by implied probability (1/backPrice) descending — best proxy for market volume
-  const impliedSum = eligible.reduce((s, r) => s + 1 / r.bestBackPrice!, 0);
-  const ranked = eligible
-    .map(r => ({
-      runner: r,
-      backPrice: r.bestBackPrice!,
-      volPct: (1 / r.bestBackPrice!) / impliedSum,
-      breakevenBet: false,
-    }))
-    .sort((a, b) => b.volPct - a.volPct);
-
-  // Base the 40% cutoff on the TOTAL active field (including runners above the odds cap
-  // that we can't bet, since they still occupy a place in the field)
-  const totalActiveRunners = marketDetail.runners.filter(r => r.status === "ACTIVE").length;
-  const cutoff = Math.max(1, Math.min(
-    Math.ceil(totalActiveRunners * dutchConfig.topPct),
-    ranked.length,
-  ));
-  let backed = ranked.slice(0, cutoff);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let withStakes: any[];
-  let targetProfit: number;
-  let totalOutlay: number;
-
-  if (hybridMode) {
-    // Hybrid mode: fav (ranked[0]) gets a breakeven stake so the race nets £0 if it wins.
-    // The remaining outlay is Dutch-spread across the next (cutoff-1) runners for profit.
-    const fav = ranked[0];
-    const favStake = Math.round((dutchConfig.totalOutlay / fav.backPrice) * 100) / 100;
-    const remaining  = Math.round((dutchConfig.totalOutlay - favStake) * 100) / 100;
-
-    const others = backed.slice(1); // fav occupies slot 0
-    if (others.length === 0) {
-      log("info", `Skipping ${eventName} — not enough runners for hybrid breakeven mode`);
-      void updateScheduleEntry(marketId, "SKIPPED", {
-        skipReason: "Not enough runners for breakeven + Dutch spread",
-        runnerCount: eligible.length,
-        runners: buildSnapshot(eligible),
-      });
-      return;
-    }
-
-    const S_others = others.reduce((s, r) => s + 1 / r.backPrice, 0);
-    // Correct formula: when a Dutch-spread runner wins you receive remaining/S_others back
-    // but you lose the full totalOutlay (incl. fav breakeven stake), so actual net is:
-    targetProfit = Math.round((remaining / S_others - dutchConfig.totalOutlay) * 100) / 100;
-    totalOutlay   = dutchConfig.totalOutlay;
-
-    if (targetProfit <= 0) {
-      log("info", `Skipping ${eventName} — overround too tight in hybrid mode, target profit ≤ 0`);
-      void updateScheduleEntry(marketId, "SKIPPED", {
-        skipReason: "Market overround too tight — no profit margin",
-        runnerCount: eligible.length,
-        runners: buildSnapshot(eligible),
-      });
-      return;
-    }
-
-    withStakes = [
-      { ...fav, stake: favStake, breakevenBet: true },
-      ...others.map(r => ({
-        ...r,
-        stake: Math.round((remaining / (S_others * r.backPrice)) * 100) / 100,
-      })),
-    ];
-
-    log("info",
-      `BACKING (HYBRID) ${withStakes.length} runners in ${eventName} — ` +
-      `${fav.runner.runnerName} £${favStake} @ ${fav.backPrice} [BREAKEVEN] · ` +
-      `remaining £${remaining} Dutch across ${others.length} · ` +
-      `target profit +£${targetProfit.toFixed(2)} if non-fav wins${paperTrading ? " [PAPER]" : ""}`,
-      { marketId, totalOutlay, favStake, remaining, targetProfit, hybridMode: true },
-    );
-  } else {
-    // Normal Dutch mode — coverage floor applies
-    const coverage = backed.reduce((s, r) => s + r.volPct, 0);
-    if (coverage < 0.35 && backed.length < ranked.length) {
-      backed = ranked.slice(0, backed.length + 1);
-      log("info",
-        `Coverage ${(coverage * 100).toFixed(1)}% below 35% floor — adding extra runner (now ${backed.length}/${ranked.length} eligible)`,
-      );
-    }
-
-    const S = backed.reduce((s, r) => s + 1 / r.backPrice, 0);
-    targetProfit = Math.round(dutchConfig.totalOutlay * (1 - S) / S * 100) / 100;
-    totalOutlay  = dutchConfig.totalOutlay;
-
-    if (targetProfit <= 0) {
-      log("info",
-        `Skipping ${eventName} — market overround too tight, target profit £${targetProfit.toFixed(2)} ≤ 0`,
-      );
-      void updateScheduleEntry(marketId, "SKIPPED", {
-        skipReason: "Market overround too tight — no profit margin",
-        runnerCount: eligible.length,
-        runners: buildSnapshot(eligible),
-      });
-      return;
-    }
-
-    withStakes = backed.map(r => ({
-      ...r,
-      stake: Math.round((dutchConfig.totalOutlay / (S * r.backPrice)) * 100) / 100,
-    }));
-
-    const summary = withStakes
-      .map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)} @ ${r.backPrice}`)
-      .join(" | ");
-    log("info",
-      `BACKING (DUTCH) ${withStakes.length}/${ranked.length} runners in ${eventName} — outlay £${totalOutlay.toFixed(2)} · target profit +£${targetProfit.toFixed(2)}${paperTrading ? " [PAPER]" : ""}`,
-      { marketId, totalOutlay, cutoff, targetProfit, summary },
-    );
-  }
-
-  // Betfair minimum bet check (applies to both modes)
-  const belowMin = withStakes.filter(r => r.stake < MIN_BET_SIZE);
-  if (belowMin.length > 0) {
-    log("info",
-      `Skipping ${eventName} — ${belowMin.length} runner(s) below £${MIN_BET_SIZE} minimum: ${belowMin.map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)}`).join(", ")}`,
-    );
+  // Min stake check (Betfair £2 min)
+  const tooSmall = plan.bets.filter(b => b.stake < MIN_BET_SIZE);
+  if (tooSmall.length > 0) {
+    log("info", `Skipping ${eventName} — ${tooSmall.length} bet(s) below £${MIN_BET_SIZE}: ${tooSmall.map(b => `${b.runnerName} £${b.stake.toFixed(2)}`).join(", ")}`);
     void updateScheduleEntry(marketId, "SKIPPED", {
-      skipReason: `${belowMin.length} runner(s) below Betfair's £${MIN_BET_SIZE} minimum stake`,
+      skipReason: `Bet size below Betfair £${MIN_BET_SIZE} minimum`,
       runnerCount: eligible.length,
-      runners: buildSnapshot(eligible, withStakes, dutchConfig.totalOutlay),
+      runners: buildSnapshot(eligible, plan),
     });
     return;
   }
 
-  // Snapshot the full field (all active runners) so settled races can still show it
+  // Snapshot the full field for settlement-time winner resolution
   const fullFieldJson = JSON.stringify(
     marketDetail.runners
       .filter(r => r.status === "ACTIVE")
@@ -476,12 +487,16 @@ async function runDutchMarket(
       .sort((a, b) => (a.odds ?? 999) - (b.odds ?? 999)),
   );
 
-  for (const r of withStakes) {
-    const reasoning = r.breakevenBet
-      ? `[DUTCH-BEP] BREAKEVEN £${r.stake.toFixed(2)} @ ${r.backPrice} — nets £0 if wins, +£${targetProfit.toFixed(2)} if other backed wins||FIELD:${fullFieldJson}`
-      : `[DUTCH${hybridMode ? "-BEP" : ""}] BACK £${r.stake.toFixed(2)} @ ${r.backPrice} · vol share ${(r.volPct * 100).toFixed(1)}% · target profit +£${targetProfit.toFixed(2)}||FIELD:${fullFieldJson}`;
+  const summary = plan.bets
+    .map(b => `${b.side} ${b.runnerName} £${b.stake.toFixed(2)} @ ${b.backPrice} (liab £${b.liability.toFixed(2)})`)
+    .join(" | ");
+  log("info",
+    `${plan.mode} ${eventName} — ${plan.reason} · ${summary}${paperTrading ? " [PAPER]" : ""}`,
+    { marketId, mode: plan.mode, summary },
+  );
 
-    const potentialProfit = Math.round((r.stake * (r.backPrice - 1)) * 100) / 100;
+  for (const b of plan.bets) {
+    const reasoning = `[${plan.mode}] ${b.side} £${b.stake.toFixed(2)} @ ${b.backPrice} · liab £${b.liability.toFixed(2)} · ${plan.reason}||FIELD:${fullFieldJson}`;
 
     if (paperTrading) {
       await db.insert(betsTable).values({
@@ -490,24 +505,28 @@ async function runDutchMarket(
         marketId,
         marketName,
         eventName,
-        selectionId: r.runner.selectionId,
-        selectionName: r.runner.runnerName,
-        betType: "BACK",
-        requestedOdds: r.backPrice.toFixed(2),
-        matchedOdds: r.backPrice.toFixed(2),
-        stakeAmount: r.stake.toFixed(2),
-        potentialProfit: potentialProfit.toFixed(2),
+        selectionId: b.selectionId,
+        selectionName: b.runnerName,
+        betType: b.side,
+        requestedOdds: b.backPrice.toFixed(2),
+        matchedOdds: b.backPrice.toFixed(2),
+        stakeAmount: b.stake.toFixed(2),
+        // For BACK: profit if THIS runner wins. For LAY: profit if THIS runner LOSES (= stake).
+        potentialProfit: (b.side === "BACK"
+          ? b.stake * (b.backPrice - 1)
+          : b.stake
+        ).toFixed(2),
         status: "MATCHED",
         aiReasoning: reasoning,
-        betId: `DUTCH-PAPER-${Date.now()}-${r.runner.selectionId}`,
+        betId: `DUTCH-PAPER-${Date.now()}-${b.selectionId}`,
       });
     } else {
       const result = await placeBet({
         marketId,
-        selectionId: r.runner.selectionId,
-        betType: "BACK",
-        price: r.backPrice,
-        size: r.stake,
+        selectionId: b.selectionId,
+        betType: b.side,
+        price: b.backPrice,
+        size: b.stake,
       });
       await db.insert(betsTable).values({
         strategyId: null,
@@ -515,22 +534,27 @@ async function runDutchMarket(
         marketId,
         marketName,
         eventName,
-        selectionId: r.runner.selectionId,
-        selectionName: r.runner.runnerName,
-        betType: "BACK",
-        requestedOdds: r.backPrice.toFixed(2),
-        stakeAmount: r.stake.toFixed(2),
-        potentialProfit: potentialProfit.toFixed(2),
+        selectionId: b.selectionId,
+        selectionName: b.runnerName,
+        betType: b.side,
+        requestedOdds: b.backPrice.toFixed(2),
+        stakeAmount: b.stake.toFixed(2),
+        potentialProfit: (b.side === "BACK"
+          ? b.stake * (b.backPrice - 1)
+          : b.stake
+        ).toFixed(2),
         status: result.status === "PLACED" ? "PLACED" : "CANCELLED",
         aiReasoning: reasoning,
-        betId: result.betId ?? `DUTCH-${Date.now()}-${r.runner.selectionId}`,
+        betId: result.betId ?? `DUTCH-${Date.now()}-${b.selectionId}`,
       });
     }
   }
-  // Mark race as bet-placed in the schedule with full runner snapshot
+
+  // Mark race as bet-placed in the schedule with full snapshot
   void updateScheduleEntry(marketId, "BET_PLACED", {
     runnerCount: eligible.length,
-    runners: buildSnapshot(eligible, withStakes, dutchConfig.totalOutlay),
+    runners: buildSnapshot(eligible, plan),
+    mode: plan.mode,
   });
 }
 
@@ -550,21 +574,18 @@ export async function runScheduleScan(): Promise<void> {
       limit:        100,
     });
 
-    // Apply same static filters as the betting cycle (name-based only — runner counts
-    // are filled in later when the bot processes each race within its 5-min window)
+    // Apply same static filters as the betting cycle (name-based only)
     const filtered = markets.filter(m => {
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) return false;
-      // Only today's races (UTC date)
       const raceDate = new Date(m.marketStartTime).toISOString().slice(0, 10);
       return raceDate === today;
     });
 
     const filteredIds = new Set(filtered.map(m => m.marketId));
 
-    // Delete any SCHEDULED rows for today that are no longer in the valid filtered set
-    // (e.g. filter pattern was updated, or Betfair reclassified the market)
+    // Delete any SCHEDULED rows that are no longer valid
     await db.delete(dutchScheduleTable)
       .where(
         sql`${dutchScheduleTable.scheduledDate} = ${today}
@@ -575,7 +596,6 @@ export async function runScheduleScan(): Promise<void> {
           )})`
       );
 
-    // Fetch remaining entries to avoid re-inserting already-processed races
     const existing = await db
       .select({ marketId: dutchScheduleTable.marketId, status: dutchScheduleTable.status })
       .from(dutchScheduleTable)
@@ -614,6 +634,8 @@ export async function runScheduleScan(): Promise<void> {
       }
     }
 
+    // Suppress unused-var warning when filtered list is empty
+    void filteredIds;
     log("info", `Schedule scan complete — ${filtered.length} qualifying races, ${added} new, ${missed} marked missed`);
   } catch (err) {
     log("error", `Schedule scan error: ${String(err)}`);
@@ -627,10 +649,9 @@ export async function startDutchBot(): Promise<void> {
   dutchStartedAt = new Date();
   db.update(botConfigTable).set({ dutchIsRunning: true })
     .catch((err: unknown) => logger.error({ err }, "[DUTCH] Failed to persist dutchIsRunning=true"));
-  log("info", "Dutch Bot started");
+  log("info", "Dutch Bot started — Combo strategy (BACK fav<2.5 / LAY fav 3-5 / LAY top2 if fav≥5)");
   void scheduleNextCycle();
   dutchSettlementInterval = setInterval(() => { void runDutchSettlement(); }, 2 * 60_000);
-  // Run an immediate schedule scan then refresh every hour
   void runScheduleScan();
   dutchScanInterval = setInterval(() => { void runScheduleScan(); }, 60 * 60_000);
 }
@@ -639,9 +660,9 @@ export async function stopDutchBot(): Promise<void> {
   if (!dutchBotRunning) return;
   dutchBotRunning = false;
   dutchStartedAt = null;
-  if (dutchBotInterval)     { clearTimeout(dutchBotInterval);      dutchBotInterval     = null; }
+  if (dutchBotInterval)        { clearTimeout(dutchBotInterval);     dutchBotInterval     = null; }
   if (dutchSettlementInterval) { clearInterval(dutchSettlementInterval); dutchSettlementInterval = null; }
-  if (dutchScanInterval)    { clearInterval(dutchScanInterval);    dutchScanInterval    = null; }
+  if (dutchScanInterval)       { clearInterval(dutchScanInterval);    dutchScanInterval    = null; }
   db.update(botConfigTable).set({ dutchIsRunning: false })
     .catch((err: unknown) => logger.error({ err }, "[DUTCH] Failed to persist dutchIsRunning=false"));
   log("info", "Dutch Bot stopped");
@@ -691,7 +712,6 @@ async function runDutchSettlement(): Promise<void> {
             } catch { /* ignore */ }
           }
         }
-        // Fallback: check if it's one of our backed runners
         if (!winnerName) {
           winnerName = bets.find(b => b.selectionId === winnerSelectionId)?.selectionName ?? null;
         }
@@ -708,19 +728,24 @@ async function runDutchSettlement(): Promise<void> {
         const selectionWon = bet.selectionId === winnerSelectionId;
         const odds  = Number(bet.matchedOdds ?? bet.requestedOdds);
         const stake = Number(bet.stakeAmount);
+        const isLay = bet.betType === "LAY";
 
-        const actualProfit = selectionWon
-          ?   stake * (odds - 1)
-          : -(stake);
+        // BACK: win → +stake*(odds-1), lose → -stake
+        // LAY:  selection wins → -stake*(odds-1) [liability], selection loses → +stake
+        const actualProfit = isLay
+          ? (selectionWon ? -(stake * (odds - 1)) :  stake)
+          : (selectionWon ?  (stake * (odds - 1)) : -stake);
+
+        // Our bet WON if: BACK and selection won, OR LAY and selection lost
+        const ourBetWon = isLay ? !selectionWon : selectionWon;
 
         raceNet += actualProfit;
 
-        // Append winner tag so the race detail page can always show who won
         const winnerTag = winnerName ? `||WINNER:${winnerName}` : "";
         const baseReasoning = (bet.aiReasoning ?? "").replace(/\|\|WINNER:[^|]*$/, "");
 
         await db.update(betsTable).set({
-          status: selectionWon ? "WON" : "LOST",
+          status: ourBetWon ? "WON" : "LOST",
           actualProfit: actualProfit.toFixed(2),
           settledAt,
           aiReasoning: baseReasoning + winnerTag,

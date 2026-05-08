@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   TrendingUp, TrendingDown, Trophy, Clock,
-  ChevronRight, CircleOff, CheckCircle2,
+  ChevronRight, ChevronDown, CircleOff, CheckCircle2,
+  CalendarClock, ArrowDownCircle, ArrowUpCircle, MinusCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -28,6 +29,28 @@ interface DutchRace {
   winnerName: string | null;
 }
 
+interface ScheduleRunner {
+  name: string;
+  price: number;
+  backed: boolean;
+  betType?: "BACK" | "LAY";
+  stake?: number;
+  liability?: number;
+  netProfit?: number;
+}
+
+interface DutchScheduleEntry {
+  id: number;
+  marketId: string;
+  eventName: string;
+  marketName: string;
+  marketStartTime: string;
+  runnerCount: number | null;
+  status: string;          // SCHEDULED | BET_PLACED | SKIPPED | MISSED
+  skipReason: string | null;
+  runnersJson: ScheduleRunner[] | null;
+}
+
 interface DutchLog {
   id: number;
   level: string;
@@ -41,23 +64,40 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function fmt(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
-function fmtDate(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+function statusBadge(status: string) {
+  switch (status) {
+    case "BET_PLACED":
+      return <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px]">Bet placed</Badge>;
+    case "SKIPPED":
+      return <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/30 text-[10px]">Skipped</Badge>;
+    case "MISSED":
+      return <Badge className="bg-red-500/10 text-red-400/70 border-red-500/20 text-[10px]">Missed</Badge>;
+    default:
+      return <Badge className="bg-muted text-muted-foreground text-[10px]">Scheduled</Badge>;
+  }
 }
 
 export default function DutchingBot() {
   const [logs, setLogs] = useState<DutchLog[]>([]);
+  const [openSchedule, setOpenSchedule] = useState<Set<string>>(new Set());
 
   const { data: stats } = useQuery<DutchStats>({
     queryKey: ["dutch-status"],
     queryFn: () => apiFetch("/dutch/status"),
     refetchInterval: 5000,
+  });
+
+  const { data: schedule, isLoading: scheduleLoading } = useQuery<DutchScheduleEntry[]>({
+    queryKey: ["dutch-schedule"],
+    queryFn: () => apiFetch("/dutch/schedule"),
+    refetchInterval: 30_000,
   });
 
   const { data: races, isLoading: racesLoading } = useQuery<DutchRace[]>({
@@ -79,12 +119,26 @@ export default function DutchingBot() {
     return () => clearInterval(interval);
   }, [fetchLogs]);
 
+  const toggleSchedule = (marketId: string) => {
+    setOpenSchedule(prev => {
+      const next = new Set(prev);
+      if (next.has(marketId)) next.delete(marketId); else next.add(marketId);
+      return next;
+    });
+  };
+
   const todayP = stats?.profitToday ?? 0;
   const allP   = stats?.totalNetProfit ?? 0;
 
   const won  = races?.filter(r => r.settled && r.netProfit > 0).length ?? 0;
   const lost = races?.filter(r => r.settled && r.netProfit <= 0).length ?? 0;
   const pending = races?.filter(r => !r.settled).length ?? 0;
+
+  // Schedule counts
+  const sched      = schedule?.length ?? 0;
+  const placed     = schedule?.filter(s => s.status === "BET_PLACED").length ?? 0;
+  const skipped    = schedule?.filter(s => s.status === "SKIPPED").length ?? 0;
+  const upcoming   = schedule?.filter(s => s.status === "SCHEDULED").length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -93,10 +147,10 @@ export default function DutchingBot() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             Dutching Bot
-            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-xs">BACK strategy</Badge>
+            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-xs">Combo strategy</Badge>
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Backs multiple runners proportionally so any winner returns the same profit
+            BACK heavy favs (&lt;2.5) · LAY mid-favs (3.0–5.0) · LAY top 2 in open races (fav≥5.0)
           </p>
         </div>
       </div>
@@ -123,9 +177,9 @@ export default function DutchingBot() {
             colour: "text-foreground",
           },
           {
-            label: "Bets placed",
-            value: String(stats?.betsToday ?? 0),
-            sub: "today",
+            label: "Schedule today",
+            value: String(sched),
+            sub: `${placed} bet · ${skipped} skipped · ${upcoming} upcoming`,
             colour: "text-foreground",
           },
         ].map(({ label, value, sub, colour }) => (
@@ -137,13 +191,164 @@ export default function DutchingBot() {
         ))}
       </div>
 
-      {/* ── Race history + logs side-by-side ── */}
+      {/* ── TOP: Today's schedule (expandable rows) ── */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <CalendarClock className="w-4 h-4" />
+            Today's Race Schedule
+          </h2>
+          {schedule && (
+            <span className="text-xs text-muted-foreground">
+              {sched} races · {placed} bet · {skipped} skipped · {upcoming} upcoming
+            </span>
+          )}
+        </div>
+
+        {scheduleLoading && (
+          <div className="text-sm text-muted-foreground py-8 text-center">Loading schedule…</div>
+        )}
+
+        {!scheduleLoading && schedule?.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border/60 py-10 text-center text-muted-foreground text-sm">
+            <CalendarClock className="w-7 h-7 mx-auto mb-2 opacity-20" />
+            No races scheduled yet — start the bot to populate today's schedule
+          </div>
+        )}
+
+        <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
+          {schedule?.map(s => {
+            const isOpen = openSchedule.has(s.marketId);
+            const runners = s.runnersJson ?? [];
+            const hasBets = s.status === "BET_PLACED" && runners.some(r => r.backed);
+            return (
+              <div
+                key={s.marketId}
+                className={`rounded-lg border transition-all ${
+                  s.status === "BET_PLACED" ? "border-blue-500/30 bg-blue-500/5" :
+                  s.status === "SKIPPED"    ? "border-amber-500/15 bg-amber-500/3" :
+                  s.status === "MISSED"     ? "border-red-500/10 bg-red-500/3 opacity-70" :
+                  "border-border/50 bg-card/40"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleSchedule(s.marketId)}
+                  className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-accent/30 transition-colors rounded-lg"
+                >
+                  {isOpen
+                    ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                    : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                  <div className="text-xs tabular-nums text-muted-foreground w-12 flex-shrink-0">
+                    {fmtTime(s.marketStartTime)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground truncate">{s.eventName}</span>
+                      <span className="text-[11px] text-muted-foreground truncate">· {s.marketName}</span>
+                    </div>
+                    {s.skipReason && !isOpen && (
+                      <div className="text-[10px] text-amber-400/70 mt-0.5 truncate">{s.skipReason}</div>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground flex-shrink-0">
+                    {s.runnerCount ? `${s.runnerCount} runners` : "—"}
+                  </div>
+                  {statusBadge(s.status)}
+                </button>
+
+                {isOpen && (
+                  <div className="px-4 pb-3 pt-1 border-t border-border/30 mt-1 space-y-2">
+                    {s.skipReason && (
+                      <div className="text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded px-3 py-1.5">
+                        <strong>Skipped:</strong> {s.skipReason}
+                      </div>
+                    )}
+
+                    {runners.length === 0 ? (
+                      <div className="text-xs text-muted-foreground py-2 italic">
+                        No runner snapshot yet — race not yet processed
+                      </div>
+                    ) : (
+                      <div className="space-y-1 mt-2">
+                        <div className="grid grid-cols-12 gap-2 text-[10px] text-muted-foreground uppercase tracking-wide pb-1 px-2">
+                          <div className="col-span-1">#</div>
+                          <div className="col-span-5">Runner</div>
+                          <div className="col-span-2 text-right">Odds</div>
+                          <div className="col-span-2 text-right">Action</div>
+                          <div className="col-span-2 text-right">Net if wins</div>
+                        </div>
+                        {runners.map((r, i) => (
+                          <div
+                            key={`${s.marketId}-${i}`}
+                            className={`grid grid-cols-12 gap-2 text-xs py-1.5 px-2 rounded ${
+                              r.backed
+                                ? r.betType === "LAY"
+                                  ? "bg-red-500/8 border border-red-500/20"
+                                  : "bg-emerald-500/8 border border-emerald-500/20"
+                                : "bg-card/30"
+                            }`}
+                          >
+                            <div className="col-span-1 text-muted-foreground tabular-nums">{i + 1}</div>
+                            <div className="col-span-5 truncate font-medium">{r.name}</div>
+                            <div className="col-span-2 text-right tabular-nums">{r.price.toFixed(2)}</div>
+                            <div className="col-span-2 text-right">
+                              {r.backed ? (
+                                r.betType === "LAY" ? (
+                                  <span className="inline-flex items-center gap-0.5 text-red-400 font-semibold">
+                                    <ArrowDownCircle className="w-3 h-3" />
+                                    LAY £{r.stake?.toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-0.5 text-emerald-400 font-semibold">
+                                    <ArrowUpCircle className="w-3 h-3" />
+                                    BACK £{r.stake?.toFixed(2)}
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-muted-foreground/60 inline-flex items-center gap-0.5">
+                                  <MinusCircle className="w-3 h-3" />no bet
+                                </span>
+                              )}
+                            </div>
+                            <div className={`col-span-2 text-right tabular-nums ${
+                              r.netProfit == null ? "text-muted-foreground" :
+                              r.netProfit > 0 ? "text-emerald-400" :
+                              r.netProfit < 0 ? "text-red-400" :
+                              "text-muted-foreground"
+                            }`}>
+                              {r.netProfit == null
+                                ? "—"
+                                : `${r.netProfit >= 0 ? "+" : ""}£${r.netProfit.toFixed(2)}`}
+                            </div>
+                          </div>
+                        ))}
+                        {hasBets && (
+                          <Link href={`/dutchingbot/race/${s.marketId}`}>
+                            <button className="text-xs text-blue-400 hover:text-blue-300 mt-1 inline-flex items-center gap-1">
+                              View settled result <ChevronRight className="w-3 h-3" />
+                            </button>
+                          </Link>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ── BOTTOM: Race history + log feed ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* Race history (2/3 width) */}
         <div className="lg:col-span-2 space-y-2">
           <div className="flex items-center justify-between mb-1">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Race History</h2>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              Bets Placed — Race History
+            </h2>
             {races && (
               <span className="text-xs text-muted-foreground">
                 {won} won · {lost} lost · {pending} pending
@@ -158,7 +363,7 @@ export default function DutchingBot() {
           {!racesLoading && races?.length === 0 && (
             <div className="rounded-xl border border-dashed border-border/60 py-16 text-center text-muted-foreground text-sm">
               <CircleOff className="w-8 h-8 mx-auto mb-3 opacity-20" />
-              No Dutch races yet — the bot will place bets when the main bot is running and a Dutch strategy is active
+              No bets placed yet — the bot will trade races as they enter the 1-4 minute window
             </div>
           )}
 
@@ -175,7 +380,6 @@ export default function DutchingBot() {
                   "border-border/60 bg-card/50 hover:bg-card"
                 }`}>
                   <div className="px-4 py-3 flex items-center gap-3">
-                    {/* Icon */}
                     <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
                       isWin  ? "bg-emerald-500/20" :
                       isLoss ? "bg-red-500/20" :
@@ -189,7 +393,6 @@ export default function DutchingBot() {
                       }
                     </div>
 
-                    {/* Event info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-semibold text-sm text-foreground truncate">{race.eventName}</span>
@@ -202,15 +405,14 @@ export default function DutchingBot() {
                       <div className="text-xs text-muted-foreground flex items-center gap-2">
                         <span>{race.marketName}</span>
                         <span>·</span>
-                        <span>{fmt(race.placedAt)} {fmtDate(race.placedAt)}</span>
+                        <span>{fmtTime(race.placedAt)} {fmtDate(race.placedAt)}</span>
                         <span>·</span>
-                        <span>{race.betCount} runners</span>
+                        <span>{race.betCount} {race.betCount === 1 ? "bet" : "bets"}</span>
                         <span>·</span>
                         <span>£{race.totalStaked.toFixed(2)} staked</span>
                       </div>
                     </div>
 
-                    {/* P&L + status */}
                     <div className="text-right flex-shrink-0 flex items-center gap-3">
                       {race.settled ? (
                         <div>
@@ -261,12 +463,12 @@ export default function DutchingBot() {
             )}
           </div>
 
-          {/* How it works */}
           <div className="rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-xs text-muted-foreground space-y-2">
-            <p className="font-semibold text-foreground/70">How Dutching works</p>
-            <p>Stakes are split across multiple runners so that <span className="text-foreground/80">any one of them winning returns the same net profit</span>, regardless of which one wins.</p>
-            <p>The bot filters out outsiders above the odds cap, checks book percentage, and only bets when AI approves the race.</p>
-            <p>Worst case: all covered runners lose → you lose the total staked. Best case: any runner wins → fixed profit.</p>
+            <p className="font-semibold text-foreground/70">Combo strategy</p>
+            <p><strong className="text-emerald-400">Heavy fav (&lt;2.5):</strong> back £outlay on the favourite — wins ~67% of the time.</p>
+            <p><strong className="text-red-400">Mid fav (3.0–5.0):</strong> lay the favourite — actual wins (~18%) below implied (~25%).</p>
+            <p><strong className="text-red-400">Open race (fav≥5.0):</strong> lay top 2 with half-liability each.</p>
+            <p className="text-[10px] mt-2">Backtested on 197 real UK/IE races — net +£586 vs old Hybrid Fav -£1,338.</p>
           </div>
         </div>
       </div>
