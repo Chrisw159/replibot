@@ -380,7 +380,9 @@ async function runDutchMarket(
     }
 
     const S_others = others.reduce((s, r) => s + 1 / r.backPrice, 0);
-    targetProfit = Math.round(remaining * (1 - S_others) / S_others * 100) / 100;
+    // Correct formula: when a Dutch-spread runner wins you receive remaining/S_others back
+    // but you lose the full totalOutlay (incl. fav breakeven stake), so actual net is:
+    targetProfit = Math.round((remaining / S_others - dutchConfig.totalOutlay) * 100) / 100;
     totalOutlay   = dutchConfig.totalOutlay;
 
     if (targetProfit <= 0) {
