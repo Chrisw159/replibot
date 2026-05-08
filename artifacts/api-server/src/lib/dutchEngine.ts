@@ -422,28 +422,22 @@ export async function runScheduleScan(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
 
     const markets = await listMarkets({
-      eventTypeId:    "7",
-      countryCodes:   dutchConfig.countryCodes,
-      marketType:     "WIN",
-      hoursAhead:     24,
-      limit:          100,
-      includeRunners: true,
+      eventTypeId:  "7",
+      countryCodes: dutchConfig.countryCodes,
+      marketType:   "WIN",
+      hoursAhead:   24,
+      limit:        100,
     });
 
-    // Apply same static + runner-count filters as the betting cycle
+    // Apply same static filters as the betting cycle (name-based only — runner counts
+    // are filled in later when the bot processes each race within its 5-min window)
     const filtered = markets.filter(m => {
       if (NON_WIN_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) return false;
       if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) return false;
       // Only today's races (UTC date)
       const raceDate = new Date(m.marketStartTime).toISOString().slice(0, 10);
-      if (raceDate !== today) return false;
-      // Filter by runner count if available from catalogue
-      if (m.runnerCount != null) {
-        if (m.runnerCount < dutchConfig.minRunners) return false;
-        if (m.runnerCount > dutchConfig.maxRunners) return false;
-      }
-      return true;
+      return raceDate === today;
     });
 
     // Fetch existing schedule entries for today to avoid overwriting settled statuses
