@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   TrendingUp, TrendingDown, Trophy, Clock,
   ChevronRight, ChevronDown, CircleOff, CheckCircle2,
   CalendarClock, ArrowDownCircle, ArrowUpCircle, MinusCircle,
+  Play, Square, Loader2, AlertCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -14,6 +15,8 @@ interface DutchStats {
   profitToday: number;
   totalRaces: number;
   totalNetProfit: number;
+  isRunning?: boolean;
+  startedAt?: string | null;
 }
 
 interface DutchRace {
@@ -58,8 +61,11 @@ interface DutchLog {
   createdAt: string;
 }
 
-async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`/api${path}`);
+async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(opts?.headers ?? {}) },
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<T>;
 }
@@ -85,14 +91,35 @@ function statusBadge(status: string) {
 }
 
 export default function DutchingBot() {
+  const qc = useQueryClient();
   const [logs, setLogs] = useState<DutchLog[]>([]);
   const [openSchedule, setOpenSchedule] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { data: stats } = useQuery<DutchStats>({
     queryKey: ["dutch-status"],
     queryFn: () => apiFetch("/dutch/status"),
     refetchInterval: 5000,
   });
+
+  const startMutation = useMutation({
+    mutationFn: () => apiFetch<DutchStats>("/dutch/start", { method: "POST" }),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: ["dutch-status"] });
+    },
+    onError: (e: Error) => setActionError(e.message || "Failed to start bot"),
+  });
+  const stopMutation = useMutation({
+    mutationFn: () => apiFetch<DutchStats>("/dutch/stop", { method: "POST" }),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: ["dutch-status"] });
+    },
+    onError: (e: Error) => setActionError(e.message || "Failed to stop bot"),
+  });
+  const isRunning   = stats?.isRunning ?? false;
+  const actionBusy  = startMutation.isPending || stopMutation.isPending;
 
   const { data: schedule, isLoading: scheduleLoading } = useQuery<DutchScheduleEntry[]>({
     queryKey: ["dutch-schedule"],
@@ -143,7 +170,7 @@ export default function DutchingBot() {
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             Dutching Bot
@@ -152,6 +179,44 @@ export default function DutchingBot() {
           <p className="text-muted-foreground text-sm mt-1">
             BACK heavy favs (&lt;2.5) · LAY mid-favs (3.0–5.0) · LAY top 2 in open races (fav≥5.0)
           </p>
+        </div>
+
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"}`} />
+              {isRunning
+                ? <span className="text-emerald-400">Running{stats?.startedAt ? ` since ${fmtTime(stats.startedAt)}` : ""}</span>
+                : <span className="text-muted-foreground">Stopped</span>}
+            </div>
+            {isRunning ? (
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => stopMutation.mutate()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+              >
+                {actionBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
+                Stop bot
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => startMutation.mutate()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+              >
+                {actionBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+                Start bot
+              </button>
+            )}
+          </div>
+          {actionError && (
+            <div className="inline-flex items-center gap-1.5 text-xs text-red-400 max-w-xs text-right">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate" title={actionError}>{actionError}</span>
+            </div>
+          )}
         </div>
       </div>
 
