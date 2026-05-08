@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import {
   Play, Square, RefreshCw,
   TrendingUp, TrendingDown, CircleDot, ChevronRight,
+  CalendarDays, CheckCircle2, XCircle, Clock, HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +50,18 @@ interface LogEntry {
   createdAt: string;
 }
 
+interface ScheduleEntry {
+  id: number;
+  marketId: string;
+  eventName: string;
+  marketName: string;
+  marketStartTime: string;
+  runnerCount: number | null;
+  status: string;
+  skipReason: string | null;
+  scheduledDate: string;
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -85,6 +98,17 @@ export default function BookieBot() {
     queryKey: ["dutch-races"],
     queryFn: () => apiFetch("/dutch/races"),
     refetchInterval: 30_000,
+  });
+
+  const { data: schedule, isFetching: scheduleFetching } = useQuery<ScheduleEntry[]>({
+    queryKey: ["dutch-schedule"],
+    queryFn: () => apiFetch("/dutch/schedule"),
+    refetchInterval: 60_000,
+  });
+
+  const refreshScheduleMutation = useMutation({
+    mutationFn: () => apiFetch<ScheduleEntry[]>("/dutch/schedule/refresh", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dutch-schedule"] }),
   });
 
   const { data: logs } = useQuery<LogEntry[]>({
@@ -213,6 +237,80 @@ export default function BookieBot() {
           </Card>
         ))}
       </div>
+
+      {/* Today's Race Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-muted-foreground" />
+              Today's Race Card
+              {schedule && (
+                <span className="text-muted-foreground font-normal text-xs ml-1">
+                  ({schedule.filter(e => e.status !== "FILTERED_OUT").length} races)
+                </span>
+              )}
+            </CardTitle>
+            <Button
+              variant="ghost" size="sm"
+              onClick={() => refreshScheduleMutation.mutate()}
+              disabled={refreshScheduleMutation.isPending || scheduleFetching}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshScheduleMutation.isPending || scheduleFetching ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {!schedule || schedule.filter(e => e.status !== "FILTERED_OUT").length === 0 ? (
+            <div className="px-5 py-6 text-center text-sm text-muted-foreground">
+              No races scheduled yet — click refresh or start the bot
+            </div>
+          ) : (
+            <div className="divide-y divide-border/50 max-h-80 overflow-y-auto">
+              {schedule
+                .filter(e => e.status !== "FILTERED_OUT")
+                .map(entry => {
+                  const t = new Date(entry.marketStartTime);
+                  const timeStr = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                  const venue = entry.eventName.replace(/^\d{2}:\d{2}\s+/, "").split(" ")[0];
+                  let icon, badge;
+                  if (entry.status === "BET_PLACED") {
+                    icon = <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />;
+                    badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">BET</span>;
+                  } else if (entry.status === "SKIPPED") {
+                    icon = <XCircle className="w-4 h-4 text-orange-400/70 flex-shrink-0" />;
+                    badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400/80">SKIP</span>;
+                  } else if (entry.status === "MISSED") {
+                    icon = <HelpCircle className="w-4 h-4 text-muted-foreground/50 flex-shrink-0" />;
+                    badge = <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground">MISS</span>;
+                  } else {
+                    icon = <Clock className="w-4 h-4 text-muted-foreground/60 flex-shrink-0" />;
+                    badge = null;
+                  }
+                  const isMuted = entry.status === "MISSED";
+                  return (
+                    <div key={entry.id} className={`flex items-center gap-3 px-5 py-2.5 ${isMuted ? "opacity-40" : ""}`}>
+                      {icon}
+                      <div className="w-12 text-xs tabular-nums text-muted-foreground flex-shrink-0">{timeStr}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-medium truncate ${isMuted ? "text-muted-foreground" : ""}`}>
+                          {venue} — {entry.marketName}
+                        </div>
+                        {entry.skipReason && (
+                          <div className="text-xs text-muted-foreground/70 truncate">{entry.skipReason}</div>
+                        )}
+                      </div>
+                      {entry.runnerCount != null && (
+                        <div className="text-xs text-muted-foreground flex-shrink-0">{entry.runnerCount}r</div>
+                      )}
+                      {badge}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: race history + console */}

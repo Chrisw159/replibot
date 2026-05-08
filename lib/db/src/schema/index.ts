@@ -5,3 +5,4 @@ export * from "./botLogs";
 export * from "./raceRunners";
 export * from "./aiInsights";
 export * from "./goalSignals";
+export * from "./dutchSchedule";

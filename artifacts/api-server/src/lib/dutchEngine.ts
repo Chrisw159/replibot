@@ -1,5 +1,5 @@
 import { logger } from "./logger";
-import { db, betsTable, botLogsTable, botConfigTable } from "@workspace/db";
+import { db, betsTable, botLogsTable, botConfigTable, dutchScheduleTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import {
   getSession,
@@ -40,6 +40,7 @@ interface DutchConfig {
 let dutchBotRunning = false;
 let dutchBotInterval: ReturnType<typeof setTimeout> | null = null;
 let dutchSettlementInterval: ReturnType<typeof setInterval> | null = null;
+let dutchScanInterval: ReturnType<typeof setInterval> | null = null;
 let dutchStartedAt: Date | null = null;
 const processingMarkets = new Set<string>();
 
@@ -103,6 +104,24 @@ async function loadDutchConfigFromDb(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "[DUTCH] Failed to load config from DB — using defaults");
   }
+}
+
+async function updateScheduleEntry(
+  marketId: string,
+  status: string,
+  opts?: { skipReason?: string; runnerCount?: number },
+): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    await db.update(dutchScheduleTable)
+      .set({
+        status,
+        skipReason:  opts?.skipReason  ?? null,
+        ...(opts?.runnerCount != null ? { runnerCount: opts.runnerCount } : {}),
+        updatedAt:   new Date(),
+      })
+      .where(sql`${dutchScheduleTable.marketId} = ${marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
+  } catch { /* non-fatal */ }
 }
 
 function log(level: string, message: string, metadata?: Record<string, unknown>): void {
@@ -220,6 +239,9 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — liquidity £${marketDetail.totalMatched.toFixed(0)} < £${dutchConfig.minLiquidity}`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: `Low liquidity — £${marketDetail.totalMatched.toFixed(0)} matched (min £${dutchConfig.minLiquidity})`,
+    });
     return;
   }
 
@@ -235,6 +257,10 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — only ${eligible.length} eligible runners, need ${dutchConfig.minRunners}`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: `Only ${eligible.length} runners — need at least ${dutchConfig.minRunners}`,
+      runnerCount: eligible.length,
+    });
     return;
   }
 
@@ -242,6 +268,10 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — ${eligible.length} runners exceeds max ${dutchConfig.maxRunners}`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: `${eligible.length} runners — exceeds max of ${dutchConfig.maxRunners}`,
+      runnerCount: eligible.length,
+    });
     return;
   }
 
@@ -251,6 +281,10 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — favourite at ${shortestPrice} is under ${dutchConfig.minFavPrice} (${dutchConfig.minFavPrice - 1}/1)`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: `Favourite at ${shortestPrice} — minimum is ${dutchConfig.minFavPrice}`,
+      runnerCount: eligible.length,
+    });
     return;
   }
 
@@ -278,6 +312,10 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — market overround too tight, target profit £${targetProfit.toFixed(2)} ≤ 0`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: "Market overround too tight — no profit margin",
+      runnerCount: eligible.length,
+    });
     return;
   }
 
@@ -292,6 +330,10 @@ async function runDutchMarket(
     log("info",
       `Skipping ${eventName} — ${belowMin.length} runner(s) below £${MIN_BET_SIZE} minimum: ${belowMin.map(r => `${r.runner.runnerName} £${r.stake.toFixed(2)}`).join(", ")}`,
     );
+    void updateScheduleEntry(marketId, "SKIPPED", {
+      skipReason: `${belowMin.length} runner(s) below Betfair's £${MIN_BET_SIZE} minimum stake`,
+      runnerCount: eligible.length,
+    });
     return;
   }
 
@@ -367,6 +409,86 @@ async function runDutchMarket(
       });
     }
   }
+  // Mark race as bet-placed in the schedule
+  void updateScheduleEntry(marketId, "BET_PLACED", { runnerCount: withStakes.length });
+}
+
+export async function runScheduleScan(): Promise<void> {
+  if (!getSession()) {
+    log("info", "Schedule scan skipped — not connected to Betfair");
+    return;
+  }
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const markets = await listMarkets({
+      eventTypeId:  "7",
+      countryCodes: dutchConfig.countryCodes,
+      marketType:   "WIN",
+      hoursAhead:   24,
+      limit:        200,
+    });
+
+    // Apply same static filters as the betting cycle
+    const filtered = markets.filter(m => {
+      if (NON_WIN_PATTERN.test(m.marketName)) return false;
+      if (dutchConfig.skipChases && CHASE_PATTERN.test(m.marketName)) return false;
+      if (dutchConfig.skipAwSevenFurlong && SEVEN_FURLONG_PATTERN.test(m.marketName) && AW_VENUE_PATTERN.test(m.eventName)) return false;
+      // Only today's races (UTC date)
+      const raceDate = new Date(m.marketStartTime).toISOString().slice(0, 10);
+      return raceDate === today;
+    });
+
+    // Fetch existing schedule entries for today to avoid overwriting settled statuses
+    const existing = await db
+      .select({ marketId: dutchScheduleTable.marketId, status: dutchScheduleTable.status })
+      .from(dutchScheduleTable)
+      .where(sql`${dutchScheduleTable.scheduledDate} = ${today}`);
+    const existingMap = new Map(existing.map(e => [e.marketId, e.status]));
+
+    let added = 0;
+    for (const m of filtered) {
+      if (!existingMap.has(m.marketId)) {
+        await db.insert(dutchScheduleTable).values({
+          marketId:        m.marketId,
+          eventName:       m.eventName,
+          marketName:      m.marketName,
+          marketStartTime: new Date(m.marketStartTime),
+          status:          "SCHEDULED",
+          scheduledDate:   today,
+        });
+        added++;
+      }
+    }
+
+    // Mark SCHEDULED races whose start time has passed by >10 min as MISSED
+    const now = Date.now();
+    const filteredIds = new Set(filtered.map(m => m.marketId));
+    let missed = 0;
+    for (const e of existing) {
+      if (e.status !== "SCHEDULED") continue;
+      const mkt = filtered.find(m => m.marketId === e.marketId);
+      const startMs = mkt
+        ? new Date(mkt.marketStartTime).getTime()
+        : 0;
+      if (startMs > 0 && startMs < now - 10 * 60_000) {
+        await db.update(dutchScheduleTable)
+          .set({ status: "MISSED", updatedAt: new Date() })
+          .where(sql`${dutchScheduleTable.marketId} = ${e.marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
+        missed++;
+      }
+      // Remove entries for races that are no longer in our filtered list (e.g. filter changed)
+      if (!filteredIds.has(e.marketId) && startMs === 0) {
+        await db.update(dutchScheduleTable)
+          .set({ status: "FILTERED_OUT", updatedAt: new Date() })
+          .where(sql`${dutchScheduleTable.marketId} = ${e.marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
+      }
+    }
+
+    log("info", `Schedule scan complete — ${filtered.length} qualifying races, ${added} new, ${missed} marked missed`);
+  } catch (err) {
+    log("error", `Schedule scan error: ${String(err)}`);
+  }
 }
 
 export async function startDutchBot(): Promise<void> {
@@ -379,14 +501,18 @@ export async function startDutchBot(): Promise<void> {
   log("info", "Dutch Bot started");
   void scheduleNextCycle();
   dutchSettlementInterval = setInterval(() => { void runDutchSettlement(); }, 2 * 60_000);
+  // Run an immediate schedule scan then refresh every hour
+  void runScheduleScan();
+  dutchScanInterval = setInterval(() => { void runScheduleScan(); }, 60 * 60_000);
 }
 
 export async function stopDutchBot(): Promise<void> {
   if (!dutchBotRunning) return;
   dutchBotRunning = false;
   dutchStartedAt = null;
-  if (dutchBotInterval) { clearTimeout(dutchBotInterval); dutchBotInterval = null; }
+  if (dutchBotInterval)     { clearTimeout(dutchBotInterval);      dutchBotInterval     = null; }
   if (dutchSettlementInterval) { clearInterval(dutchSettlementInterval); dutchSettlementInterval = null; }
+  if (dutchScanInterval)    { clearInterval(dutchScanInterval);    dutchScanInterval    = null; }
   db.update(botConfigTable).set({ dutchIsRunning: false })
     .catch((err: unknown) => logger.error({ err }, "[DUTCH] Failed to persist dutchIsRunning=false"));
   log("info", "Dutch Bot stopped");

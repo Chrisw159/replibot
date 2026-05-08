@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { sql, desc } from "drizzle-orm";
-import { db, betsTable, botConfigTable, botLogsTable } from "@workspace/db";
+import { db, betsTable, botConfigTable, botLogsTable, dutchScheduleTable } from "@workspace/db";
 import {
   startDutchBot,
   stopDutchBot,
@@ -9,6 +9,7 @@ import {
   getDutchConfig,
   setDutchConfig,
   saveDutchConfigToDb,
+  runScheduleScan,
 } from "../lib/dutchEngine";
 import { getMarketSettlement } from "../lib/betfair";
 import { eq } from "drizzle-orm";
@@ -233,6 +234,29 @@ router.get("/dutch/race/:marketId", async (req, res): Promise<void> => {
       };
     }),
   });
+});
+
+router.get("/dutch/schedule", async (req, res): Promise<void> => {
+  const date = typeof req.query.date === "string"
+    ? req.query.date
+    : new Date().toISOString().slice(0, 10);
+  const entries = await db
+    .select()
+    .from(dutchScheduleTable)
+    .where(sql`${dutchScheduleTable.scheduledDate} = ${date}`)
+    .orderBy(dutchScheduleTable.marketStartTime);
+  res.json(entries);
+});
+
+router.post("/dutch/schedule/refresh", async (_req, res): Promise<void> => {
+  await runScheduleScan();
+  const date = new Date().toISOString().slice(0, 10);
+  const entries = await db
+    .select()
+    .from(dutchScheduleTable)
+    .where(sql`${dutchScheduleTable.scheduledDate} = ${date}`)
+    .orderBy(dutchScheduleTable.marketStartTime);
+  res.json(entries);
 });
 
 router.get("/dutch/logs", async (req, res): Promise<void> => {
