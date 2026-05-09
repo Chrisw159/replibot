@@ -161,6 +161,10 @@ export default function DutchingBot() {
   const lost = races?.filter(r => r.settled && r.netProfit <= 0).length ?? 0;
   const pending = races?.filter(r => !r.settled).length ?? 0;
 
+  // Map marketId → settlement info from races (for inline P&L on schedule rows)
+  const raceByMarket = new Map<string, DutchRace>();
+  races?.forEach(r => raceByMarket.set(r.marketId, r));
+
   // Schedule counts
   const sched      = schedule?.length ?? 0;
   const placed     = schedule?.filter(s => s.status === "BET_PLACED").length ?? 0;
@@ -319,6 +323,28 @@ export default function DutchingBot() {
                   <div className="text-[10px] text-muted-foreground flex-shrink-0">
                     {s.runnerCount ? `${s.runnerCount} runners` : "—"}
                   </div>
+                  {(() => {
+                    const race = raceByMarket.get(s.marketId);
+                    if (race?.settled) {
+                      const p = race.netProfit;
+                      const positive = p > 0;
+                      return (
+                        <span
+                          className={`text-xs font-semibold tabular-nums px-2 py-0.5 rounded-md flex-shrink-0 ${
+                            positive
+                              ? "text-emerald-400 bg-emerald-500/10 border border-emerald-500/30"
+                              : p < 0
+                                ? "text-red-400 bg-red-500/10 border border-red-500/30"
+                                : "text-muted-foreground bg-muted/30 border border-border/40"
+                          }`}
+                          title={race.winnerName ? `Winner: ${race.winnerName}` : undefined}
+                        >
+                          {positive ? "+" : ""}£{p.toFixed(2)}
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                   {statusBadge(s.status)}
                 </button>
 
