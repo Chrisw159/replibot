@@ -164,9 +164,16 @@ async function apiRequest<T>(
 
   if (data[0]?.error) {
     const errMsg = data[0].error.message ?? String(data[0].error.code);
-    // DSC-0018 = session token expired — clear so auto-connect triggers next cycle
-    if (errMsg.includes("DSC-0018")) {
-      logger.warn("Betfair session expired (DSC-0018) — clearing session for re-auth");
+    // DSC-0018 = session token expired
+    // ANGX-0003 / NO_SESSION / INVALID_SESSION_INFORMATION = session no longer valid
+    // Clear so auto-connect triggers a fresh login on the next cycle.
+    if (
+      errMsg.includes("DSC-0018") ||
+      errMsg.includes("ANGX-0003") ||
+      errMsg.includes("NO_SESSION") ||
+      errMsg.includes("INVALID_SESSION_INFORMATION")
+    ) {
+      logger.warn({ errMsg }, "Betfair session no longer valid — clearing session for re-auth");
       currentSession = null;
     }
     throw new Error(`Betfair API error: ${errMsg}`);

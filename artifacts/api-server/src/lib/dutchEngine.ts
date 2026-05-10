@@ -689,9 +689,16 @@ async function runDutchSettlement(): Promise<void> {
       byMarket.set(bet.marketId, list);
     }
 
+    const { getMarketSettlement } = await import("./betfair");
     for (const [marketId, bets] of byMarket) {
-      const { getMarketSettlement } = await import("./betfair");
-      const settlement = await getMarketSettlement(marketId);
+      let settlement: Awaited<ReturnType<typeof getMarketSettlement>> = null;
+      try {
+        settlement = await getMarketSettlement(marketId);
+      } catch (err) {
+        // One bad market must NOT abort the whole settlement run.
+        logger.warn({ err, marketId }, "[DUTCH] Settlement lookup failed — will retry next cycle");
+        continue;
+      }
       if (!settlement?.settled) continue;
 
       const winnerSelectionId = settlement.winnerSelectionId;
