@@ -10,6 +10,7 @@ import {
   setDutchConfig,
   saveDutchConfigToDb,
   runScheduleScan,
+  PHASE1_CUTOVER_ISO,
 } from "../lib/dutchEngine";
 import { getMarketSettlement } from "../lib/betfair";
 import { eq } from "drizzle-orm";
@@ -21,6 +22,7 @@ const DUTCH_FILTER = sql`${betsTable.strategyName} = 'Dutch Bot'`;
 async function getDutchStats() {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  const cutover = new Date(PHASE1_CUTOVER_ISO);
 
   const [today] = await db
     .select({
@@ -39,12 +41,53 @@ async function getDutchStats() {
     .from(betsTable)
     .where(DUTCH_FILTER);
 
+  // Phase 1 split — bets placed strictly BEFORE the cutover vs at-or-after.
+  // Only counts settled bets so paper P&L is comparable.
+  const SETTLED = sql`${betsTable.status} IN ('WON','LOST','VOID')`;
+  const [pre] = await db
+    .select({
+      races:    sql<number>`count(distinct ${betsTable.marketId})::int`,
+      bets:     sql<number>`count(*)::int`,
+      net:      sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
+      winRaces: sql<number>`count(distinct case when ${betsTable.actualProfit}::float > 0 then ${betsTable.marketId} end)::int`,
+    })
+    .from(betsTable)
+    .where(sql`${DUTCH_FILTER} AND ${SETTLED} AND ${betsTable.placedAt} < ${cutover}`);
+  const [post] = await db
+    .select({
+      races:    sql<number>`count(distinct ${betsTable.marketId})::int`,
+      bets:     sql<number>`count(*)::int`,
+      net:      sql<number>`coalesce(sum(${betsTable.actualProfit}), 0)::float`,
+      winRaces: sql<number>`count(distinct case when ${betsTable.actualProfit}::float > 0 then ${betsTable.marketId} end)::int`,
+    })
+    .from(betsTable)
+    .where(sql`${DUTCH_FILTER} AND ${SETTLED} AND ${betsTable.placedAt} >= ${cutover}`);
+
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const buildPhase = (row: typeof pre) => {
+    const races = row?.races ?? 0;
+    const net   = round2(row?.net ?? 0);
+    return {
+      races,
+      bets: row?.bets ?? 0,
+      net,
+      avgPerRace: races > 0 ? round2(net / races) : 0,
+      winRaces: row?.winRaces ?? 0,
+      winRate: races > 0 ? Math.round(((row?.winRaces ?? 0) / races) * 100) : 0,
+    };
+  };
+
   return {
     racesToday:     today?.racesToday     ?? 0,
     betsToday:      today?.betsToday      ?? 0,
-    profitToday:    Math.round((today?.profitToday    ?? 0) * 100) / 100,
+    profitToday:    round2(today?.profitToday    ?? 0),
     totalRaces:     allTime?.totalRaces     ?? 0,
-    totalNetProfit: Math.round((allTime?.totalNetProfit ?? 0) * 100) / 100,
+    totalNetProfit: round2(allTime?.totalNetProfit ?? 0),
+    phase1: {
+      cutoverIso: PHASE1_CUTOVER_ISO,
+      before: buildPhase(pre),
+      since:  buildPhase(post),
+    },
   };
 }
 

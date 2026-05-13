@@ -24,12 +24,22 @@ const CHASE_PATTERN = /\bChs\b|Chase/i;
 const AW_VENUE_PATTERN = /chelmsford|kempton|lingfield|southwell|wolverhampton|dundalk/i;
 const SEVEN_FURLONG_PATTERN = /\b7f\b/i;
 
-// Combo strategy thresholds
-const BACK_FAV_MAX_ODDS = 2.5;   // fav < 2.5 → BACK fav
-const LAY_FAV_MIN_ODDS  = 3.0;   // fav 3.0 to 5.0 → LAY fav
-const LAY_FAV_MAX_ODDS  = 5.0;
-const LAY_TOP2_MIN_FAV  = 5.0;   // fav ≥ 5.0 → LAY top 2
-const MAX_LAY_ODDS      = 8.0;   // never lay above 8.0 (liability gets crushing)
+// Combo strategy thresholds — PHASE 1 (cutover 2026-05-13 ~17:00 UTC)
+// Tightened based on 152-race lifetime review (was +£166 baseline; phase 1 simulated +£571).
+const BACK_FAV_MIN_ODDS    = 1.5;   // skip <1.5 (75% strike but math doesn't pay)
+const BACK_FAV_DEAD_LO     = 1.8;   // dead zone — 1.8-2.0 was 45%/-£74
+const BACK_FAV_DEAD_HI     = 2.0;
+const BACK_FAV_MAX_ODDS    = 2.5;   // fav < 2.5 → BACK fav
+const LAY_FAV_MIN_ODDS     = 3.0;   // fav 3.0 to 3.6 → LAY fav (was 3.0-5.0)
+const LAY_FAV_MAX_ODDS     = 3.6;   // tightened from 5.0 — 3.6-5.0 lost lifetime
+const LAY_TOP2_MIN_FAV     = 5.0;   // fav ≥ 5.0 → LAY top 2
+const MAX_LAY_ODDS         = 8.0;   // never lay above 8.0 (liability gets crushing)
+// LAY_FAV in Group/Listed: 0/2 wins, -£100. Always skip.
+const LAY_FAV_RACE_BLOCKLIST = /\b(Grp|Group|Listed)\b/i;
+
+// Phase 1 cutover — bets placed at/after this point use the tightened ruleset.
+// Used by /dutch/status to split lifetime P&L into "before" and "since" buckets.
+export const PHASE1_CUTOVER_ISO = "2026-05-13T17:00:00.000Z";
 
 interface DutchConfig {
   totalOutlay: number;       // £ per race (back stake or total lay liability)
@@ -274,6 +284,7 @@ interface ComboPlan {
 function planCombo(
   eligible: Array<{ selectionId: number; runnerName: string; bestBackPrice: number }>,
   outlay: number,
+  marketName: string = "",
 ): ComboPlan {
   if (eligible.length === 0) {
     return { mode: "SKIP", bets: [], reason: "No eligible runners" };
@@ -282,8 +293,22 @@ function planCombo(
   const sorted = [...eligible].sort((a, b) => a.bestBackPrice - b.bestBackPrice);
   const fav = sorted[0];
 
-  // BACK heavy favourite
+  // BACK heavy favourite — phase 1: skip <1.5 and the 1.8-2.0 dead zone
   if (fav.bestBackPrice < BACK_FAV_MAX_ODDS) {
+    if (fav.bestBackPrice < BACK_FAV_MIN_ODDS) {
+      return {
+        mode: "SKIP",
+        bets: [],
+        reason: `Phase 1: BACK_FAV skipped — fav ${fav.bestBackPrice.toFixed(2)} < ${BACK_FAV_MIN_ODDS} (negative EV at heavy odds)`,
+      };
+    }
+    if (fav.bestBackPrice >= BACK_FAV_DEAD_LO && fav.bestBackPrice < BACK_FAV_DEAD_HI) {
+      return {
+        mode: "SKIP",
+        bets: [],
+        reason: `Phase 1: BACK_FAV skipped — fav ${fav.bestBackPrice.toFixed(2)} in dead zone ${BACK_FAV_DEAD_LO}-${BACK_FAV_DEAD_HI} (45% strike historically)`,
+      };
+    }
     const stake = Math.round(outlay * 100) / 100;
     return {
       mode: "BACK_FAV",
@@ -300,8 +325,15 @@ function planCombo(
     };
   }
 
-  // LAY favourite (sweet spot)
+  // LAY favourite (sweet spot — phase 1 narrowed to 3.0-3.6, skip Group/Listed)
   if (fav.bestBackPrice >= LAY_FAV_MIN_ODDS && fav.bestBackPrice < LAY_FAV_MAX_ODDS) {
+    if (LAY_FAV_RACE_BLOCKLIST.test(marketName)) {
+      return {
+        mode: "SKIP",
+        bets: [],
+        reason: `Phase 1: LAY_FAV skipped — Group/Listed race "${marketName}" (0/2 historically, -£100)`,
+      };
+    }
     const layPrice  = fav.bestBackPrice;
     const liability = Math.round(outlay * 100) / 100;
     const stake     = Math.round((liability / (layPrice - 1)) * 100) / 100;
@@ -451,6 +483,7 @@ async function runDutchMarket(
       bestBackPrice: r.bestBackPrice!,
     })),
     dutchConfig.totalOutlay,
+    marketName,
   );
 
   if (plan.mode === "SKIP") {
@@ -649,7 +682,7 @@ export async function startDutchBot(): Promise<void> {
   dutchStartedAt = new Date();
   db.update(botConfigTable).set({ dutchIsRunning: true })
     .catch((err: unknown) => logger.error({ err }, "[DUTCH] Failed to persist dutchIsRunning=true"));
-  log("info", "Dutch Bot started — Combo strategy (BACK fav<2.5 / LAY fav 3-5 / LAY top2 if fav≥5)");
+  log("info", `Dutch Bot started — PHASE 1 (BACK fav 1.5-1.8 & 2.0-2.5 / LAY fav 3.0-3.6 ex Group/Listed / LAY top2 if fav≥5) — cutover ${PHASE1_CUTOVER_ISO}`);
   void scheduleNextCycle();
   dutchSettlementInterval = setInterval(() => { void runDutchSettlement(); }, 2 * 60_000);
   void runScheduleScan();

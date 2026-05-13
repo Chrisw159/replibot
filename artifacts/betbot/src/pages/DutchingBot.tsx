@@ -9,6 +9,15 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
+interface PhaseStats {
+  races: number;
+  bets: number;
+  net: number;
+  avgPerRace: number;
+  winRaces: number;
+  winRate: number;
+}
+
 interface DutchStats {
   racesToday: number;
   betsToday: number;
@@ -17,6 +26,11 @@ interface DutchStats {
   totalNetProfit: number;
   isRunning?: boolean;
   startedAt?: string | null;
+  phase1?: {
+    cutoverIso: string;
+    before: PhaseStats;
+    since:  PhaseStats;
+  };
 }
 
 interface DutchRace {
@@ -178,10 +192,10 @@ export default function DutchingBot() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             Dutching Bot
-            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-xs">Combo strategy</Badge>
+            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-xs">Phase 1</Badge>
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            BACK heavy favs (&lt;2.5) · LAY mid-favs (3.0–5.0) · LAY top 2 in open races (fav≥5.0)
+            BACK fav 1.5–1.8 &amp; 2.0–2.5 · LAY fav 3.0–3.6 (skip Group/Listed) · LAY top 2 if fav ≥ 5.0
           </p>
         </div>
 
@@ -259,6 +273,69 @@ export default function DutchingBot() {
           </div>
         ))}
       </div>
+
+      {/* ── Phase 1 before/since comparison ── */}
+      {stats?.phase1 && (() => {
+        const before = stats.phase1.before;
+        const since  = stats.phase1.since;
+        const cutover = new Date(stats.phase1.cutoverIso);
+        const cutoverLabel = `${cutover.toLocaleDateString([], { day: "numeric", month: "short" })} ${cutover.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        const colorOf = (n: number) => n > 0 ? "text-emerald-400" : n < 0 ? "text-red-400" : "text-foreground";
+        const fmt = (n: number) => `${n >= 0 ? "+" : ""}£${n.toFixed(2)}`;
+        const phaseCard = (title: string, badge: string, badgeCls: string, p: PhaseStats) => (
+          <div className="rounded-xl border border-border/60 bg-card/60 px-5 py-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">{title}</div>
+              <Badge className={`${badgeCls} text-[10px]`}>{badge}</Badge>
+            </div>
+            <div className={`text-3xl font-bold tabular-nums ${colorOf(p.net)}`}>{fmt(p.net)}</div>
+            <div className="grid grid-cols-3 gap-3 text-xs pt-1 border-t border-border/40">
+              <div>
+                <div className="text-muted-foreground">Races</div>
+                <div className="font-semibold tabular-nums">{p.races}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Avg/race</div>
+                <div className={`font-semibold tabular-nums ${colorOf(p.avgPerRace)}`}>{fmt(p.avgPerRace)}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Win rate</div>
+                <div className="font-semibold tabular-nums">{p.winRaces}/{p.races} ({p.winRate}%)</div>
+              </div>
+            </div>
+          </div>
+        );
+        const delta = since.avgPerRace - before.avgPerRace;
+        return (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Phase 1 strategy change · cutover {cutoverLabel}
+              </h2>
+              {since.races > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  Since-cutover avg/race vs before:{" "}
+                  <span className={`font-semibold ${colorOf(delta)}`}>{fmt(delta)}</span>
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {phaseCard("Before cutover", "Old combo", "bg-muted text-muted-foreground border-border", before)}
+              {phaseCard(
+                "Since cutover",
+                since.races === 0 ? "Awaiting first settlement" : "Phase 1 live",
+                since.races === 0 ? "bg-muted text-muted-foreground border-border" : "bg-blue-500/15 text-blue-400 border-blue-500/30",
+                since,
+              )}
+            </div>
+            {since.races < 30 && (
+              <p className="text-xs text-muted-foreground italic">
+                Sample is small ({since.races} race{since.races === 1 ? "" : "s"} since cutover). Need ~30+ races before drawing conclusions.
+              </p>
+            )}
+          </section>
+        );
+      })()}
 
       {/* ── TOP: Today's schedule (expandable rows) ── */}
       <section className="space-y-2">
