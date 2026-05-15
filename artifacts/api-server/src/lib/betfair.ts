@@ -585,6 +585,110 @@ export interface MarketSettlement {
   winnerSelectionId?: number;
 }
 
+export interface RunnerResult {
+  selectionId: number;
+  status: string; // "WINNER" | "LOSER" | "REMOVED" | "ACTIVE"
+  bsp: number | null; // actualSP — null if not yet posted or removed
+}
+
+export interface MarketResult {
+  marketId: string;
+  status: string; // "OPEN" | "SUSPENDED" | "CLOSED"
+  closed: boolean;
+  totalMatched: number;
+  winnerSelectionId: number | null;
+  runners: RunnerResult[];
+}
+
+/**
+ * Fetch CLOSED-market result data: status + per-runner BSP + WINNER/LOSER status.
+ * Used by runScheduleSettlement to record race outcomes for every UK/IE race
+ * the bot evaluated — regardless of whether a bet was placed.
+ */
+export async function getMarketResultWithBSP(marketId: string): Promise<MarketResult | null> {
+  interface BookResult {
+    marketId?: string;
+    status?: string;
+    totalMatched?: number;
+    runners?: Array<{
+      selectionId: number;
+      status: string;
+      sp?: { actualSP?: number | string };
+    }>;
+  }
+
+  try {
+    const results = await apiRequest<BookResult[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketBook",
+      {
+        marketIds: [marketId],
+        priceProjection: { priceData: ["SP_AVAILABLE"] },
+      }
+    );
+
+    const book = results?.[0];
+    if (!book) return null;
+
+    const status = book.status ?? "OPEN";
+    const winner = book.runners?.find(r => r.status === "WINNER") ?? null;
+
+    return {
+      marketId,
+      status,
+      closed: status === "CLOSED",
+      totalMatched: book.totalMatched ?? 0,
+      winnerSelectionId: winner?.selectionId ?? null,
+      runners: (book.runners ?? []).map(r => {
+        const raw = r.sp?.actualSP;
+        const num = typeof raw === "number" ? raw : raw != null ? Number(raw) : NaN;
+        return {
+          selectionId: r.selectionId,
+          status: r.status,
+          bsp: Number.isFinite(num) ? num : null,
+        };
+      }),
+    };
+  } catch (err) {
+    logger.warn({ err, marketId }, "Could not fetch market result with BSP");
+    return null;
+  }
+}
+
+/**
+ * Lightweight per-runner name lookup used by schedule settlement when our
+ * decision-time snapshot is missing names (e.g. races that never reached the
+ * 1–4 min betting window). One catalogue call per market.
+ */
+export async function getMarketRunnerNames(
+  marketId: string,
+): Promise<Map<number, string> | null> {
+  interface CatalogueResult {
+    runners?: Array<{ selectionId: number; runnerName?: string }>;
+  }
+  try {
+    const results = await apiRequest<CatalogueResult[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketCatalogue",
+      {
+        filter: { marketIds: [marketId] },
+        marketProjection: ["RUNNER_METADATA"],
+        maxResults: 1,
+      }
+    );
+    const cat = results?.[0];
+    if (!cat?.runners) return null;
+    const map = new Map<number, string>();
+    for (const r of cat.runners) {
+      if (r.runnerName) map.set(r.selectionId, r.runnerName);
+    }
+    return map;
+  } catch (err) {
+    logger.warn({ err, marketId }, "Could not fetch runner names");
+    return null;
+  }
+}
+
 export async function getMarketSettlement(marketId: string): Promise<MarketSettlement | null> {
   interface BookResult {
     marketId?: string;

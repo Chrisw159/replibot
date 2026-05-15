@@ -123,19 +123,30 @@ async function loadDutchConfigFromDb(): Promise<void> {
 }
 
 interface ScheduleRunner {
+  selectionId: number;        // Betfair selection ID (for result resolution)
   name: string;
-  price: number;
+  price: number;              // best back price at decision time
+  lastPriceTraded?: number;   // last traded price at decision time
   backed: boolean;            // true if we placed a bet on this runner (BACK or LAY)
   betType?: "BACK" | "LAY";   // direction of our bet
   stake?: number;             // Betfair "size" (backer's stake)
   liability?: number;         // for LAY bets: stake * (odds-1)
   netProfit?: number;         // expected race net P&L if THIS runner wins
+  // Filled in by runScheduleSettlement once the market closes:
+  bsp?: number;               // Betfair Starting Price (actualSP)
+  finalStatus?: "WINNER" | "LOSER" | "REMOVED";
 }
 
 async function updateScheduleEntry(
   marketId: string,
   status: string,
-  opts?: { skipReason?: string; runnerCount?: number; runners?: ScheduleRunner[]; mode?: string },
+  opts?: {
+    skipReason?: string;
+    runnerCount?: number;
+    runners?: ScheduleRunner[];
+    mode?: string;
+    totalMatched?: number;
+  },
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   try {
@@ -145,6 +156,7 @@ async function updateScheduleEntry(
         skipReason:  opts?.skipReason  ?? null,
         ...(opts?.runnerCount != null ? { runnerCount: opts.runnerCount } : {}),
         ...(opts?.runners      != null ? { runnersJson: opts.runners as unknown as Record<string, unknown>[] } : {}),
+        ...(opts?.totalMatched != null ? { totalMatched: opts.totalMatched.toFixed(2) } : {}),
         updatedAt:   new Date(),
       })
       .where(sql`${dutchScheduleTable.marketId} = ${marketId} AND ${dutchScheduleTable.scheduledDate} = ${today}`);
@@ -428,8 +440,10 @@ async function runDutchMarket(
       .map(r => {
         const planned = planMap.get(String(r.selectionId));
         return {
+          selectionId: r.selectionId,
           name: r.runnerName,
           price: r.bestBackPrice!,
+          lastPriceTraded: r.lastPriceTraded,
           backed: !!planned,
           betType: planned?.side,
           stake: planned?.stake,
@@ -447,6 +461,7 @@ async function runDutchMarket(
     void updateScheduleEntry(marketId, "SKIPPED", {
       skipReason: `Low liquidity — £${marketDetail.totalMatched.toFixed(0)} matched (min £${dutchConfig.minLiquidity})`,
       runners: buildSnapshot(marketDetail.runners),
+      totalMatched: marketDetail.totalMatched,
     });
     return;
   }
@@ -461,6 +476,7 @@ async function runDutchMarket(
       skipReason: `Only ${eligible.length} runners — need at least ${dutchConfig.minRunners}`,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible),
+      totalMatched: marketDetail.totalMatched,
     });
     return;
   }
@@ -471,6 +487,7 @@ async function runDutchMarket(
       skipReason: `${eligible.length} runners — exceeds max of ${dutchConfig.maxRunners} (large fields are noise)`,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible),
+      totalMatched: marketDetail.totalMatched,
     });
     return;
   }
@@ -492,6 +509,7 @@ async function runDutchMarket(
       skipReason: plan.reason,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible),
+      totalMatched: marketDetail.totalMatched,
     });
     return;
   }
@@ -504,6 +522,7 @@ async function runDutchMarket(
       skipReason: `Bet size below Betfair £${MIN_BET_SIZE} minimum`,
       runnerCount: eligible.length,
       runners: buildSnapshot(eligible, plan),
+      totalMatched: marketDetail.totalMatched,
     });
     return;
   }
@@ -588,6 +607,7 @@ async function runDutchMarket(
     runnerCount: eligible.length,
     runners: buildSnapshot(eligible, plan),
     mode: plan.mode,
+    totalMatched: marketDetail.totalMatched,
   });
 }
 
@@ -684,7 +704,10 @@ export async function startDutchBot(): Promise<void> {
     .catch((err: unknown) => logger.error({ err }, "[DUTCH] Failed to persist dutchIsRunning=true"));
   log("info", `Dutch Bot started — PHASE 1 (BACK fav 1.5-1.8 & 2.0-2.5 / LAY fav 3.0-3.6 ex Group/Listed / LAY top2 if fav≥5) — cutover ${PHASE1_CUTOVER_ISO}`);
   void scheduleNextCycle();
-  dutchSettlementInterval = setInterval(() => { void runDutchSettlement(); }, 2 * 60_000);
+  dutchSettlementInterval = setInterval(() => {
+    void runDutchSettlement();
+    void runScheduleSettlement();
+  }, 2 * 60_000);
   void runScheduleScan();
   dutchScanInterval = setInterval(() => { void runScheduleScan(); }, 60 * 60_000);
 }
@@ -800,6 +823,138 @@ async function runDutchSettlement(): Promise<void> {
     }
   } catch (err) {
     log("error", `Settlement error: ${String(err)}`);
+  }
+}
+
+/**
+ * Record race outcomes for EVERY UK/IE race the bot saw today (and the last
+ * 48 h), not just the ones we bet on. For each schedule row without a winner
+ * yet, fetch listMarketBook with SP_AVAILABLE and write:
+ *   - dutch_schedule: winner_selection_id, winner_name, total_matched, result_recorded_at
+ *   - runners_json: enrich each runner with { bsp, finalStatus }
+ *
+ * This builds the strategy-tweak dataset: every race we passed over (skipped,
+ * missed, low-liquidity, etc.) ends up with full outcome data we can mine.
+ */
+let scheduleSettlementInFlight = false;
+
+async function runScheduleSettlement(): Promise<void> {
+  if (!getSession()) return;
+  if (scheduleSettlementInFlight) {
+    logger.info("[DUTCH] Schedule settlement already running — skipping this tick");
+    return;
+  }
+  scheduleSettlementInFlight = true;
+  try {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const now    = new Date();
+    const rows = await db
+      .select({
+        id:              dutchScheduleTable.id,
+        marketId:        dutchScheduleTable.marketId,
+        runnersJson:     dutchScheduleTable.runnersJson,
+        marketStartTime: dutchScheduleTable.marketStartTime,
+        totalMatched:    dutchScheduleTable.totalMatched,
+      })
+      .from(dutchScheduleTable)
+      .where(
+        sql`${dutchScheduleTable.winnerSelectionId} IS NULL
+            AND ${dutchScheduleTable.marketStartTime} >= ${cutoff}
+            AND ${dutchScheduleTable.marketStartTime} <= ${now}`,
+      );
+    if (rows.length === 0) return;
+
+    const { getMarketResultWithBSP } = await import("./betfair");
+    let recorded = 0;
+
+    for (const row of rows) {
+      let result: Awaited<ReturnType<typeof getMarketResultWithBSP>> = null;
+      try {
+        result = await getMarketResultWithBSP(row.marketId);
+      } catch (err) {
+        logger.warn({ err, marketId: row.marketId }, "[DUTCH] schedule-settle lookup failed");
+        continue;
+      }
+      if (!result || !result.closed || result.winnerSelectionId == null) continue;
+
+      // Enrich runners_json with per-runner BSP + finalStatus
+      const bspMap = new Map(result.runners.map(r => [r.selectionId, r]));
+      const existing = (row.runnersJson as ScheduleRunner[] | null) ?? [];
+      const enriched: ScheduleRunner[] = existing.map(r => {
+        const res = r.selectionId != null ? bspMap.get(r.selectionId) : undefined;
+        return {
+          ...r,
+          bsp:         res?.bsp ?? r.bsp,
+          finalStatus: (res?.status as ScheduleRunner["finalStatus"]) ?? r.finalStatus,
+        };
+      });
+
+      // Add any runners that weren't in our decision-time snapshot (e.g. SCHEDULED
+      // rows that never reached the betting window — we still want BSPs for them).
+      const seen = new Set(enriched.map(r => r.selectionId));
+      const missing = result.runners.filter(r => !seen.has(r.selectionId));
+
+      // If we have to add runners, or any existing runner lacks a real name,
+      // fetch the catalogue once so the dataset has human-readable names.
+      const needsNames =
+        missing.length > 0 ||
+        enriched.some(r => !r.name || /^Selection \d+$/.test(r.name));
+      let nameMap: Map<number, string> | null = null;
+      if (needsNames) {
+        const { getMarketRunnerNames } = await import("./betfair");
+        nameMap = await getMarketRunnerNames(row.marketId);
+      }
+
+      if (nameMap) {
+        for (let i = 0; i < enriched.length; i++) {
+          const r = enriched[i];
+          if (!r.name || /^Selection \d+$/.test(r.name)) {
+            const realName = nameMap.get(r.selectionId);
+            if (realName) enriched[i] = { ...r, name: realName };
+          }
+        }
+      }
+      for (const res of missing) {
+        enriched.push({
+          selectionId: res.selectionId,
+          name: nameMap?.get(res.selectionId) ?? `Selection ${res.selectionId}`,
+          price: 0,
+          backed: false,
+          bsp: res.bsp ?? undefined,
+          finalStatus: res.status as ScheduleRunner["finalStatus"],
+        });
+      }
+
+      const winnerName = enriched.find(r => r.selectionId === result!.winnerSelectionId)?.name ?? null;
+
+      // Only fill totalMatched from settlement if we never captured a live
+      // decision-time value. CLOSED-market totalMatched is often 0 and we want
+      // to preserve the real liquidity recorded during runDutchMarket.
+      const haveLiveLiquidity = row.totalMatched != null && Number(row.totalMatched) > 0;
+      const settlementHasValue = result.totalMatched > 0;
+
+      await db.update(dutchScheduleTable)
+        .set({
+          runnersJson:        enriched as unknown as Record<string, unknown>[],
+          winnerSelectionId:  result.winnerSelectionId,
+          winnerName,
+          ...(!haveLiveLiquidity && settlementHasValue
+            ? { totalMatched: result.totalMatched.toFixed(2) }
+            : {}),
+          resultRecordedAt:   new Date(),
+          updatedAt:          new Date(),
+        })
+        .where(eq(dutchScheduleTable.id, row.id));
+      recorded++;
+    }
+
+    if (recorded > 0) {
+      log("info", `Schedule settlement — recorded results for ${recorded}/${rows.length} race(s)`);
+    }
+  } catch (err) {
+    log("error", `Schedule settlement error: ${String(err)}`);
+  } finally {
+    scheduleSettlementInFlight = false;
   }
 }
 
