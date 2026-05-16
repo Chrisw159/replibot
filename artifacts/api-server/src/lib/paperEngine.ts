@@ -314,9 +314,9 @@ async function runPaperMarket(
 
 async function runPaperSettlement(): Promise<void> {
   if (!getSession()) return;
-  // Settle paper bets for both strategies in one pass
-  const anyRunning = state.back_fav.running || state.lay_short_fav.running;
-  if (!anyRunning) return;
+  // Settle paper bets for both strategies in one pass. We deliberately do
+  // NOT gate on `running` here: bets placed before a bot is stopped must
+  // still settle after their market closes, even if both bots are stopped.
   try {
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
     const unsettled = await db
@@ -420,9 +420,7 @@ export async function startPaperBot(key: PaperStrategyKey): Promise<void> {
     .catch((err: unknown) => logger.error({ err }, `[${def.logTag}] Failed to persist running=true`));
   log(key, "info", `${def.strategyName} started`);
   void schedulePaperCycle(key);
-  if (!settlementInterval) {
-    settlementInterval = setInterval(() => { void runPaperSettlement(); }, 2 * 60_000);
-  }
+  ensureSettlementTimer();
 }
 
 export async function stopPaperBot(key: PaperStrategyKey): Promise<void> {
@@ -435,14 +433,20 @@ export async function stopPaperBot(key: PaperStrategyKey): Promise<void> {
   db.update(botConfigTable).set({ [def.runningCol]: false })
     .catch((err: unknown) => logger.error({ err }, `[${def.logTag}] Failed to persist running=false`));
   log(key, "info", `${def.strategyName} stopped`);
-  // If neither strategy is running, kill the settlement timer
-  if (!state.back_fav.running && !state.lay_short_fav.running && settlementInterval) {
-    clearInterval(settlementInterval);
-    settlementInterval = null;
+  // Intentionally leave the settlement timer running so any bets placed
+  // before the stop still settle after their market closes.
+}
+
+function ensureSettlementTimer(): void {
+  if (!settlementInterval) {
+    settlementInterval = setInterval(() => { void runPaperSettlement(); }, 2 * 60_000);
   }
 }
 
 export async function autoResumePaperBots(): Promise<void> {
+  // Always start the settlement loop so paper bets placed before a restart
+  // (or before the user stops a bot) will settle once their markets close.
+  ensureSettlementTimer();
   try {
     const [row] = await db.select({
       back: botConfigTable.paperBackFavIsRunning,

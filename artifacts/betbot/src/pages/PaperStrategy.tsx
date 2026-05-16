@@ -388,7 +388,7 @@ export default function PaperStrategy({ slug, title, subtitle, description }: Pr
                     <div className="text-right flex-shrink-0">
                       {r.settled ? (
                         <div className={`text-base font-bold tabular-nums ${pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          {pnl >= 0 ? "+" : ""}£{Math.abs(pnl).toFixed(2)}
+                          {pnl >= 0 ? "+" : "-"}£{Math.abs(pnl).toFixed(2)}
                         </div>
                       ) : (
                         <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30">Pending</Badge>
