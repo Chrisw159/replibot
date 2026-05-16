@@ -28,6 +28,10 @@ export const botConfigTable = pgTable("bot_config", {
   bookieConfigJson: json("bookie_config_json").$type<Record<string, unknown>>(),
   dutchIsRunning: boolean("dutch_is_running").notNull().default(false),
   dutchConfigJson: json("dutch_config_json").$type<Record<string, unknown>>(),
+  paperBackFavIsRunning: boolean("paper_back_fav_is_running").notNull().default(false),
+  paperBackFavConfigJson: json("paper_back_fav_config_json").$type<Record<string, unknown>>(),
+  paperLayShortFavIsRunning: boolean("paper_lay_short_fav_is_running").notNull().default(false),
+  paperLayShortFavConfigJson: json("paper_lay_short_fav_config_json").$type<Record<string, unknown>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 

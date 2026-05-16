@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDutchBot } from "./lib/dutchEngine";
+import { autoResumePaperBots } from "./lib/paperEngine";
 import { db, botConfigTable } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
@@ -35,8 +36,9 @@ app.listen(port, (err) => {
         logger.info("Auto-resuming Dutch Bot after server restart");
         await startDutchBot();
       }
+      await autoResumePaperBots();
     } catch (err) {
-      logger.error({ err }, "Failed to auto-resume Dutch Bot on startup");
+      logger.error({ err }, "Failed to auto-resume bots on startup");
     }
   })();
 });
