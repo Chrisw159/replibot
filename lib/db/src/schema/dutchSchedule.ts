@@ -24,6 +24,9 @@ export const dutchScheduleTable = pgTable("dutch_schedule", {
   // Filled by runScheduleSettlement once the market closes
   winnerSelectionId:  integer("winner_selection_id"),
   winnerName:         text("winner_name"),
+  // Track condition scraped from Racing Post once the race has been run.
+  // Captured so future strategies can condition on going (e.g. soft/heavy).
+  going:              text("going"),
   resultRecordedAt:   timestamp("result_recorded_at", { withTimezone: true }),
   createdAt:          timestamp("created_at",  { withTimezone: true }).notNull().defaultNow(),
   updatedAt:          timestamp("updated_at",  { withTimezone: true }).notNull().defaultNow(),

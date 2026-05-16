@@ -846,28 +846,57 @@ async function runScheduleSettlement(): Promise<void> {
   }
   scheduleSettlementInFlight = true;
   try {
-    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    // Result recovery only attempts the recent window (Betfair drops settled
+    // markets fast). Going can be backfilled much further back from Racing
+    // Post, so null-going rows get a 14-day lookback.
+    const resultCutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const goingCutoff  = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     const now    = new Date();
     const rows = await db
       .select({
         id:              dutchScheduleTable.id,
         marketId:        dutchScheduleTable.marketId,
+        eventName:       dutchScheduleTable.eventName,
+        scheduledDate:   dutchScheduleTable.scheduledDate,
         runnersJson:     dutchScheduleTable.runnersJson,
         marketStartTime: dutchScheduleTable.marketStartTime,
         totalMatched:    dutchScheduleTable.totalMatched,
+        going:           dutchScheduleTable.going,
       })
       .from(dutchScheduleTable)
       .where(
-        sql`${dutchScheduleTable.winnerSelectionId} IS NULL
-            AND ${dutchScheduleTable.marketStartTime} >= ${cutoff}
-            AND ${dutchScheduleTable.marketStartTime} <= ${now}`,
+        sql`${dutchScheduleTable.marketStartTime} <= ${now}
+            AND (
+              (${dutchScheduleTable.winnerSelectionId} IS NULL
+               AND ${dutchScheduleTable.marketStartTime} >= ${resultCutoff})
+              OR
+              (${dutchScheduleTable.going} IS NULL
+               AND ${dutchScheduleTable.marketStartTime} >= ${goingCutoff})
+            )`,
       );
     if (rows.length === 0) return;
 
     const { getMarketResultWithBSP } = await import("./betfair");
+    const { getGoingByCourseForDate, courseFromEventName } = await import("./racingPost");
+
+    // Pre-load going maps for every date we're about to settle (typically 1-2).
+    const datesNeeded = [...new Set(rows.map(r => r.scheduledDate))];
+    const goingByDate = new Map<string, Map<string, string>>();
+    for (const d of datesNeeded) {
+      goingByDate.set(d, await getGoingByCourseForDate(d));
+    }
+
     let recorded = 0;
 
     for (const row of rows) {
+      // Going lookup (independent of Betfair result — Racing Post has it as
+      // soon as the meeting starts). May be undefined for foreign meetings or
+      // when the RP page hasn't published yet.
+      const courseKey = courseFromEventName(row.eventName);
+      const going = courseKey
+        ? goingByDate.get(row.scheduledDate)?.get(courseKey) ?? null
+        : null;
+
       let result: Awaited<ReturnType<typeof getMarketResultWithBSP>> = null;
       try {
         result = await getMarketResultWithBSP(row.marketId);
@@ -875,7 +904,18 @@ async function runScheduleSettlement(): Promise<void> {
         logger.warn({ err, marketId: row.marketId }, "[DUTCH] schedule-settle lookup failed");
         continue;
       }
-      if (!result || !result.closed || result.winnerSelectionId == null) continue;
+      // If the market hasn't closed yet (or this row was reselected purely to
+      // backfill going on an already-settled race), persist going alone and
+      // move on. Result recovery will fill in the rest next tick.
+      const goingChanged = going != null && going !== row.going;
+      if (!result || !result.closed || result.winnerSelectionId == null) {
+        if (goingChanged) {
+          await db.update(dutchScheduleTable)
+            .set({ going, updatedAt: new Date() })
+            .where(eq(dutchScheduleTable.id, row.id));
+        }
+        continue;
+      }
 
       // Enrich runners_json with per-runner BSP + finalStatus
       const bspMap = new Map(result.runners.map(r => [r.selectionId, r]));
@@ -938,6 +978,7 @@ async function runScheduleSettlement(): Promise<void> {
           runnersJson:        enriched as unknown as Record<string, unknown>[],
           winnerSelectionId:  result.winnerSelectionId,
           winnerName,
+          ...(going ? { going } : {}),
           ...(!haveLiveLiquidity && settlementHasValue
             ? { totalMatched: result.totalMatched.toFixed(2) }
             : {}),
