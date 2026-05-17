@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startDutchBot } from "./lib/dutchEngine";
 import { autoResumePaperBots } from "./lib/paperEngine";
+import { autoResumeMartingaleBot } from "./lib/martingaleEngine";
 import { db, botConfigTable } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
@@ -37,6 +38,7 @@ app.listen(port, (err) => {
         await startDutchBot();
       }
       await autoResumePaperBots();
+      await autoResumeMartingaleBot();
     } catch (err) {
       logger.error({ err }, "Failed to auto-resume bots on startup");
     }

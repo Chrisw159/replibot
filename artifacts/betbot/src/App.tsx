@@ -10,6 +10,7 @@ import DutchingBot from "@/pages/DutchingBot";
 import DutchingBotRace from "@/pages/DutchingBotRace";
 import PaperBackFav from "@/pages/PaperBackFav";
 import PaperLayShortFav from "@/pages/PaperLayShortFav";
+import Martingale from "@/pages/Martingale";
 
 const queryClient = new QueryClient();
 
@@ -21,6 +22,7 @@ function Router() {
         <Route path="/dutchingbot/race/:marketId" component={DutchingBotRace} />
         <Route path="/paper/back-fav" component={PaperBackFav} />
         <Route path="/paper/lay-short-fav" component={PaperLayShortFav} />
+        <Route path="/martingale" component={Martingale} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>
