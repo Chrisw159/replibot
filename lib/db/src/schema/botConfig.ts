@@ -32,6 +32,9 @@ export const botConfigTable = pgTable("bot_config", {
   paperBackFavConfigJson: json("paper_back_fav_config_json").$type<Record<string, unknown>>(),
   paperLayShortFavIsRunning: boolean("paper_lay_short_fav_is_running").notNull().default(false),
   paperLayShortFavConfigJson: json("paper_lay_short_fav_config_json").$type<Record<string, unknown>>(),
+  martingaleIsRunning: boolean("martingale_is_running").notNull().default(false),
+  martingaleConfigJson: json("martingale_config_json").$type<Record<string, unknown>>(),
+  martingaleStateJson: json("martingale_state_json").$type<Record<string, unknown>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
