@@ -15,6 +15,8 @@ interface MartingaleConfig {
   maxDoubles: number;
   minLiquidity: number;
   eventTypeIds: string[];
+  minMinsBeforeStart: number;
+  maxMinsBeforeStart: number;
 }
 
 interface MartingaleStateInfo {
@@ -343,6 +345,8 @@ export default function Martingale() {
               { label: "Max fav odds", key: "maxOdds" as const, step: 0.05 },
               { label: "Max doubles (cap)", key: "maxDoubles" as const, step: 1 },
               { label: "Min market liquidity (£)", key: "minLiquidity" as const, step: 500 },
+              { label: "Earliest mins before start", key: "minMinsBeforeStart" as const, step: 1 },
+              { label: "Latest mins before start", key: "maxMinsBeforeStart" as const, step: 1 },
             ].map(f => (
               <label key={f.key} className="text-xs space-y-1">
                 <span className="text-muted-foreground">{f.label}</span>

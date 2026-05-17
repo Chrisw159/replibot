@@ -51,6 +51,7 @@ interface DutchConfig {
   maxRunners: number;
   skipChases: boolean;       // legacy, default OFF (backtest: chases +21.9% ROI)
   skipAwSevenFurlong: boolean; // legacy, default OFF (backtest: AW +16.8% ROI)
+  dailyProfitLockGBP: number; // stop placing new bets once today's settled net ≥ this £
 }
 
 let dutchBotRunning = false;
@@ -70,7 +71,45 @@ let dutchConfig: DutchConfig = {
   maxRunners: 15,
   skipChases: false,
   skipAwSevenFurlong: false,
+  dailyProfitLockGBP: 120,
 };
+
+let dailyLockLatched = false;
+let dailyLockLatchedDate: string | null = null;
+
+function utcDayBounds(now: Date = new Date()): { start: Date; nextStart: Date; key: string } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const nextStart = new Date(start.getTime() + 24 * 60 * 60_000);
+  return { start, nextStart, key: start.toISOString().slice(0, 10) };
+}
+
+async function getTodaysDutchSettledNet(): Promise<number> {
+  const { start, nextStart } = utcDayBounds();
+  try {
+    const [row] = await db
+      .select({
+        net: sql<string>`coalesce(sum(${betsTable.actualProfit}::numeric), 0)::text`,
+      })
+      .from(betsTable)
+      .where(sql`${betsTable.strategyName} = ${DUTCH_STRATEGY_NAME}
+                 AND ${betsTable.settledAt} IS NOT NULL
+                 AND ${betsTable.settledAt} >= ${start}
+                 AND ${betsTable.settledAt} <  ${nextStart}
+                 AND ${betsTable.status} IN ('WON','LOST','VOID')
+                 AND ${betsTable.actualProfit} IS NOT NULL`);
+    return Number(row?.net ?? 0);
+  } catch (err) {
+    logger.error({ err }, "[DUTCH] getTodaysDutchSettledNet failed");
+    return 0;
+  }
+}
+
+async function isDailyProfitLocked(): Promise<{ locked: boolean; net: number; target: number }> {
+  const target = dutchConfig.dailyProfitLockGBP;
+  if (target <= 0) return { locked: false, net: 0, target };
+  const net = await getTodaysDutchSettledNet();
+  return { locked: net >= target, net, target };
+}
 
 export function isDutchBotRunning(): boolean { return dutchBotRunning; }
 export function getDutchStartedAt(): Date | null { return dutchStartedAt; }
@@ -115,6 +154,7 @@ async function loadDutchConfigFromDb(): Promise<void> {
       if (typeof saved.maxRunners   === "number") dutchConfig.maxRunners   = saved.maxRunners;
       if (typeof saved.skipChases   === "boolean") dutchConfig.skipChases   = saved.skipChases;
       if (typeof saved.skipAwSevenFurlong === "boolean") dutchConfig.skipAwSevenFurlong = saved.skipAwSevenFurlong;
+      if (typeof saved.dailyProfitLockGBP === "number") dutchConfig.dailyProfitLockGBP = saved.dailyProfitLockGBP;
       logger.info({ dutchConfig }, "[DUTCH] Loaded config from DB");
     }
   } catch (err) {
@@ -176,6 +216,27 @@ function log(level: string, message: string, metadata?: Record<string, unknown>)
 async function runDutchCycle(): Promise<number> {
   if (!dutchBotRunning) return 0;
   try {
+    // Daily profit lock — once today's settled net ≥ dailyProfitLockGBP, stop
+    // placing new bets until UTC midnight rollover. Reset latch on new UTC day.
+    const todayKey = utcDayBounds().key;
+    if (dailyLockLatchedDate !== todayKey) {
+      if (dailyLockLatched) log("info", `Daily profit lock reset for new day ${todayKey}`);
+      dailyLockLatched = false;
+      dailyLockLatchedDate = todayKey;
+    }
+    {
+      const { locked, net, target } = await isDailyProfitLocked();
+      if (locked) {
+        if (!dailyLockLatched) {
+          log("info",
+            `🔒 Daily profit lock TRIGGERED — today's settled net £${net.toFixed(2)} ≥ £${target.toFixed(2)}. No more bets until tomorrow.`,
+          );
+          dailyLockLatched = true;
+        }
+        return 0;
+      }
+    }
+
     if (!getSession()) {
       const r = await loginWithEnvCredentials();
       if (!r.success) {
@@ -236,6 +297,18 @@ async function runDutchCycle(): Promise<number> {
 
     let acted = 0;
     for (const m of fresh) {
+      // Re-check the daily profit lock between each market — settlements run on
+      // a 2-min loop and may push net over the threshold mid-cycle.
+      const recheck = await isDailyProfitLocked();
+      if (recheck.locked) {
+        if (!dailyLockLatched) {
+          log("info",
+            `🔒 Daily profit lock TRIGGERED mid-cycle — today's settled net £${recheck.net.toFixed(2)} ≥ £${recheck.target.toFixed(2)}. Aborting remaining markets.`,
+          );
+          dailyLockLatched = true;
+        }
+        break;
+      }
       processingMarkets.add(m.marketId);
       try {
         await runDutchMarket(m.marketId, m.eventName, m.marketName);

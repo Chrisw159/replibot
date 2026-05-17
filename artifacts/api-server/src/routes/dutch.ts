@@ -126,6 +126,7 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   const minFavPrice  = typeof body.minFavPrice  === "number" ? body.minFavPrice  : undefined;
   const minLiquidity = typeof body.minLiquidity === "number" ? body.minLiquidity : undefined;
   const minRunners   = typeof body.minRunners   === "number" ? body.minRunners   : undefined;
+  const dailyProfitLockGBP = typeof body.dailyProfitLockGBP === "number" ? body.dailyProfitLockGBP : undefined;
   const countryCodes = Array.isArray(body.countryCodes)
     ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
     : undefined;
@@ -145,6 +146,9 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   if (minRunners !== undefined && (minRunners < 2 || minRunners > 20)) {
     res.status(400).json({ error: "minRunners must be between 2 and 20" }); return;
   }
+  if (dailyProfitLockGBP !== undefined && (dailyProfitLockGBP < 0 || dailyProfitLockGBP > 100000)) {
+    res.status(400).json({ error: "dailyProfitLockGBP must be between 0 and 100,000 (0 disables the lock)" }); return;
+  }
   if (countryCodes !== undefined && countryCodes.length === 0) {
     res.status(400).json({ error: "At least one country code is required" }); return;
   }
@@ -155,6 +159,7 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   if (minFavPrice  !== undefined) patch.minFavPrice  = minFavPrice;
   if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
   if (minRunners   !== undefined) patch.minRunners   = minRunners;
+  if (dailyProfitLockGBP !== undefined) patch.dailyProfitLockGBP = dailyProfitLockGBP;
   if (countryCodes !== undefined) patch.countryCodes = countryCodes;
   setDutchConfig(patch);
   await saveDutchConfigToDb();

@@ -119,6 +119,8 @@ router.patch("/martingale/config", async (req, res): Promise<void> => {
   const eventTypeIds = Array.isArray(body.eventTypeIds)
     ? (body.eventTypeIds as string[]).map(c => String(c).trim()).filter(Boolean)
     : undefined;
+  const minMinsBeforeStart = typeof body.minMinsBeforeStart === "number" ? body.minMinsBeforeStart : undefined;
+  const maxMinsBeforeStart = typeof body.maxMinsBeforeStart === "number" ? body.maxMinsBeforeStart : undefined;
 
   if (startStake   !== undefined && (startStake   < 1   || startStake   > 100))  { res.status(400).json({ error: "startStake must be £1–£100" }); return; }
   if (minOdds      !== undefined && (minOdds      < 1.01 || minOdds     > 100))  { res.status(400).json({ error: "minOdds must be 1.01–100" }); return; }
@@ -126,12 +128,20 @@ router.patch("/martingale/config", async (req, res): Promise<void> => {
   if (maxDoubles   !== undefined && (maxDoubles   < 1   || maxDoubles   > 12))   { res.status(400).json({ error: "maxDoubles must be 1–12" }); return; }
   if (minLiquidity !== undefined && (minLiquidity < 0   || minLiquidity > 1_000_000)) { res.status(400).json({ error: "minLiquidity out of range" }); return; }
   if (eventTypeIds !== undefined && eventTypeIds.length === 0) { res.status(400).json({ error: "Pick at least one sport" }); return; }
+  if (minMinsBeforeStart !== undefined && (minMinsBeforeStart < 0 || minMinsBeforeStart > 1440)) { res.status(400).json({ error: "minMinsBeforeStart must be 0–1440" }); return; }
+  if (maxMinsBeforeStart !== undefined && (maxMinsBeforeStart < 1 || maxMinsBeforeStart > 1440)) { res.status(400).json({ error: "maxMinsBeforeStart must be 1–1440" }); return; }
 
   const current = getMartingaleConfig();
   const effectiveMin = minOdds ?? current.minOdds;
   const effectiveMax = maxOdds ?? current.maxOdds;
   if (effectiveMin >= effectiveMax) {
     res.status(400).json({ error: "minOdds must be strictly less than maxOdds" });
+    return;
+  }
+  const effMinMins = minMinsBeforeStart ?? current.minMinsBeforeStart;
+  const effMaxMins = maxMinsBeforeStart ?? current.maxMinsBeforeStart;
+  if (effMinMins >= effMaxMins) {
+    res.status(400).json({ error: "minMinsBeforeStart must be strictly less than maxMinsBeforeStart" });
     return;
   }
 
@@ -142,6 +152,8 @@ router.patch("/martingale/config", async (req, res): Promise<void> => {
   if (maxDoubles   !== undefined) patch.maxDoubles   = maxDoubles;
   if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
   if (eventTypeIds !== undefined) patch.eventTypeIds = eventTypeIds;
+  if (minMinsBeforeStart !== undefined) patch.minMinsBeforeStart = minMinsBeforeStart;
+  if (maxMinsBeforeStart !== undefined) patch.maxMinsBeforeStart = maxMinsBeforeStart;
   setMartingaleConfig(patch);
   await persistMartingaleConfig();
   res.json({ martingaleConfig: getMartingaleConfig() });

@@ -14,8 +14,6 @@ const LOG_TAG = "MARTINGALE";
 const NON_WIN_PATTERN =
   /each.?way|forecast|\(f\/c\)|\bFC\b|\bRFC\b|reverse\s|straight\s+f|combination\s+f|to be placed|\bTBP\b|match bet|daily win dist|without\s+\w|to win by|trained\s+winner|named\s+fav|jockey.*champion|specials|scorecast|wincast/i;
 
-const MIN_MINS_BEFORE_START = 1;
-const MAX_MINS_BEFORE_START = 4;
 const CYCLE_INTERVAL_MS = 60_000;
 const SETTLEMENT_INTERVAL_MS = 2 * 60_000;
 
@@ -26,6 +24,8 @@ export interface MartingaleConfig {
   maxDoubles: number;
   minLiquidity: number;
   eventTypeIds: string[];
+  minMinsBeforeStart: number;
+  maxMinsBeforeStart: number;
 }
 
 interface MartingaleState {
@@ -55,6 +55,8 @@ const DEFAULT_CONFIG: MartingaleConfig = {
   maxDoubles: 6, // → max stake = startStake × 2^6 = £128 with default £2 start
   minLiquidity: 5000,
   eventTypeIds: SPORTS.map(s => s.eventTypeId),
+  minMinsBeforeStart: 1,
+  maxMinsBeforeStart: 30,
 };
 
 interface Runtime {
@@ -140,6 +142,8 @@ async function loadConfigFromDb(): Promise<void> {
       if (typeof saved.maxDoubles   === "number") c.maxDoubles   = saved.maxDoubles;
       if (typeof saved.minLiquidity === "number") c.minLiquidity = saved.minLiquidity;
       if (Array.isArray(saved.eventTypeIds))      c.eventTypeIds = saved.eventTypeIds;
+      if (typeof saved.minMinsBeforeStart === "number") c.minMinsBeforeStart = saved.minMinsBeforeStart;
+      if (typeof saved.maxMinsBeforeStart === "number") c.maxMinsBeforeStart = saved.maxMinsBeforeStart;
     }
     const savedState = row?.st as Partial<MartingaleState> | null | undefined;
     if (savedState) {
@@ -215,8 +219,8 @@ async function findCandidateMarket(): Promise<{
 } | null> {
   const cfg = rt.config;
   const now = new Date();
-  const fromMs = now.getTime() + MIN_MINS_BEFORE_START * 60_000;
-  const toMs   = now.getTime() + MAX_MINS_BEFORE_START * 60_000;
+  const fromMs = now.getTime() + cfg.minMinsBeforeStart * 60_000;
+  const toMs   = now.getTime() + cfg.maxMinsBeforeStart * 60_000;
 
   for (const sport of SPORTS) {
     if (!cfg.eventTypeIds.includes(sport.eventTypeId)) continue;
@@ -226,7 +230,7 @@ async function findCandidateMarket(): Promise<{
         eventTypeId: sport.eventTypeId,
         countryCodes: sport.countries ?? undefined,
         marketType: sport.marketType,
-        hoursAhead: MAX_MINS_BEFORE_START / 60,
+        hoursAhead: Math.max(cfg.maxMinsBeforeStart / 60, 0.05),
         limit: 50,
       });
     } catch (err) {
@@ -239,6 +243,11 @@ async function findCandidateMarket(): Promise<{
       return startMs >= fromMs && startMs <= toMs;
     });
     if (inWindow.length === 0) continue;
+
+    // Bet on the one starting soonest within the window
+    inWindow.sort((a, b) =>
+      new Date(a.marketStartTime).getTime() - new Date(b.marketStartTime).getTime(),
+    );
 
     for (const m of inWindow) {
       if (NON_WIN_PATTERN.test(m.marketName)) continue;
