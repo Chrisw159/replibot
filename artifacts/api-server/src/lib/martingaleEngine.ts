@@ -222,6 +222,8 @@ async function findCandidateMarket(): Promise<{
   const fromMs = now.getTime() + cfg.minMinsBeforeStart * 60_000;
   const toMs   = now.getTime() + cfg.maxMinsBeforeStart * 60_000;
 
+  const diag: string[] = [];
+
   for (const sport of SPORTS) {
     if (!cfg.eventTypeIds.includes(sport.eventTypeId)) continue;
     let markets;
@@ -242,38 +244,50 @@ async function findCandidateMarket(): Promise<{
       const startMs = new Date(m.marketStartTime).getTime();
       return startMs >= fromMs && startMs <= toMs;
     });
-    if (inWindow.length === 0) continue;
 
-    // Bet on the one starting soonest within the window
+    let rejNameFilter = 0, rejAlreadyBet = 0, rejNoDetail = 0;
+    let rejLiquidity = 0, rejRunners = 0, rejOdds = 0;
+    let lowestFav: number | null = null, highestFav: number | null = null;
+    let bestLiquidity = 0;
+
+    if (inWindow.length === 0) {
+      diag.push(`${sport.name}:${markets.length}fetched/0inWin`);
+      continue;
+    }
+
     inWindow.sort((a, b) =>
       new Date(a.marketStartTime).getTime() - new Date(b.marketStartTime).getTime(),
     );
 
     for (const m of inWindow) {
-      if (NON_WIN_PATTERN.test(m.marketName)) continue;
+      if (NON_WIN_PATTERN.test(m.marketName)) { rejNameFilter++; continue; }
       if (processingMarkets.has(m.marketId)) continue;
 
-      // Skip if we've already bet on this market
       const [existing] = await db
         .select({ id: betsTable.id })
         .from(betsTable)
         .where(sql`${betsTable.strategyName} = ${STRATEGY_NAME} AND ${betsTable.marketId} = ${m.marketId}`)
         .limit(1);
-      if (existing) continue;
+      if (existing) { rejAlreadyBet++; continue; }
 
       const detail = await getMarketDetail(m.marketId);
-      if (!detail) continue;
-      if (detail.totalMatched < cfg.minLiquidity) continue;
+      if (!detail) { rejNoDetail++; continue; }
+      if (detail.totalMatched > bestLiquidity) bestLiquidity = detail.totalMatched;
+      // (Liquidity filter intentionally disabled — user request.)
 
       const active = detail.runners.filter(r => r.status === "ACTIVE" && (r.bestBackPrice ?? 0) > 1);
-      if (active.length < 2) continue;
+      if (active.length < 2) { rejRunners++; continue; }
 
       const sorted = [...active].sort((a, b) => (a.bestBackPrice ?? 999) - (b.bestBackPrice ?? 999));
       const fav = sorted[0];
       const favBack = fav.bestBackPrice ?? 0;
-      if (favBack < cfg.minOdds || favBack >= cfg.maxOdds) continue;
+      if (lowestFav === null || favBack < lowestFav) lowestFav = favBack;
+      if (highestFav === null || favBack > highestFav) highestFav = favBack;
+      if (favBack < cfg.minOdds || favBack >= cfg.maxOdds) { rejOdds++; continue; }
 
-      // Found a candidate — return it for placement
+      log("info",
+        `Candidate found in ${sport.name}: ${m.eventName} (fav £${favBack.toFixed(2)}, liq £${detail.totalMatched.toFixed(0)})`,
+      );
       return {
         marketId: m.marketId,
         marketName: m.marketName,
@@ -281,7 +295,17 @@ async function findCandidateMarket(): Promise<{
         sport: sport.name,
       };
     }
+
+    const favRange = lowestFav !== null && highestFav !== null
+      ? `favs ${lowestFav.toFixed(2)}-${highestFav.toFixed(2)}`
+      : "favs n/a";
+    diag.push(
+      `${sport.name}:${inWindow.length}inWin,bestLiq£${bestLiquidity.toFixed(0)},${favRange}` +
+      `,rej{name:${rejNameFilter},bet:${rejAlreadyBet},nodet:${rejNoDetail},liq:${rejLiquidity},run:${rejRunners},odds:${rejOdds}}`,
+    );
   }
+
+  if (diag.length > 0) log("info", `No candidate. Breakdown: ${diag.join(" | ")}`);
   return null;
 }
 
