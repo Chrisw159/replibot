@@ -780,7 +780,7 @@ export async function startDutchBot(): Promise<void> {
   dutchSettlementInterval = setInterval(() => {
     void runDutchSettlement();
     void runScheduleSettlement();
-  }, 2 * 60_000);
+  }, 30_000);
   void runScheduleScan();
   dutchScanInterval = setInterval(() => { void runScheduleScan(); }, 60 * 60_000);
 }
