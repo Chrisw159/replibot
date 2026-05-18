@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, Trophy, Clock,
   ChevronRight, ChevronDown, CircleOff, CheckCircle2,
   CalendarClock, ArrowDownCircle, ArrowUpCircle, MinusCircle,
-  Play, Square, Loader2, AlertCircle,
+  Play, Square, Loader2, AlertCircle, Lock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -26,6 +26,7 @@ interface DutchStats {
   totalNetProfit: number;
   isRunning?: boolean;
   startedAt?: string | null;
+  dailyProfitLock?: { locked: boolean; net: number; target: number };
   phase1?: {
     cutoverIso: string;
     before: PhaseStats;
@@ -133,6 +134,8 @@ export default function DutchingBot() {
     onError: (e: Error) => setActionError(e.message || "Failed to stop bot"),
   });
   const isRunning   = stats?.isRunning ?? false;
+  const lock        = stats?.dailyProfitLock;
+  const isLocked    = !!lock?.locked;
   const actionBusy  = startMutation.isPending || stopMutation.isPending;
 
   const { data: schedule, isLoading: scheduleLoading } = useQuery<DutchScheduleEntry[]>({
@@ -202,8 +205,10 @@ export default function DutchingBot() {
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs">
-              <span className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"}`} />
-              {isRunning
+              <span className={`w-2 h-2 rounded-full ${isLocked ? "bg-amber-400 animate-pulse" : isRunning ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"}`} />
+              {isLocked
+                ? <span className="text-amber-400">Paused — daily profit lock</span>
+                : isRunning
                 ? <span className="text-emerald-400">Running{stats?.startedAt ? ` since ${fmtTime(stats.startedAt)}` : ""}</span>
                 : <span className="text-muted-foreground">Stopped</span>}
             </div>
@@ -237,6 +242,22 @@ export default function DutchingBot() {
           )}
         </div>
       </div>
+
+      {/* ── Daily profit lock banner ── */}
+      {isLocked && lock && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+          <Lock className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-amber-300">
+              Daily profit lock hit — no new bets until midnight UTC
+            </div>
+            <div className="text-xs text-amber-200/80 mt-1">
+              Today's settled net <span className="font-semibold">£{lock.net.toFixed(2)}</span> has reached your target of <span className="font-semibold">£{lock.target.toFixed(2)}</span>.
+              Scheduled races below will be skipped until the lock resets. Already-matched bets will still settle normally.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

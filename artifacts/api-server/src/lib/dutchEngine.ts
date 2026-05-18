@@ -104,7 +104,7 @@ async function getTodaysDutchSettledNet(): Promise<number> {
   }
 }
 
-async function isDailyProfitLocked(): Promise<{ locked: boolean; net: number; target: number }> {
+export async function isDailyProfitLocked(): Promise<{ locked: boolean; net: number; target: number }> {
   const target = dutchConfig.dailyProfitLockGBP;
   if (target <= 0) return { locked: false, net: 0, target };
   const net = await getTodaysDutchSettledNet();

@@ -10,6 +10,7 @@ import {
   setDutchConfig,
   saveDutchConfigToDb,
   runScheduleScan,
+  isDailyProfitLocked,
   PHASE1_CUTOVER_ISO,
 } from "../lib/dutchEngine";
 import { getMarketSettlement } from "../lib/betfair";
@@ -102,14 +103,16 @@ function statusPayload() {
 router.get("/dutch/status", async (_req, res): Promise<void> => {
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getDutchStats();
-  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats });
+  const lock = await isDailyProfitLocked();
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock });
 });
 
 router.post("/dutch/start", async (_req, res): Promise<void> => {
   await startDutchBot();
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getDutchStats();
-  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats });
+  const lock = await isDailyProfitLocked();
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock });
 });
 
 router.post("/dutch/stop", async (_req, res): Promise<void> => {
