@@ -1,8 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startDutchBot } from "./lib/dutchEngine";
-import { autoResumePaperBots } from "./lib/paperEngine";
-import { autoResumeMartingaleBot } from "./lib/martingaleEngine";
+import { autoResumeDutchV2Bots } from "./lib/dutchV2Engine";
 import { db, botConfigTable } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
@@ -27,9 +26,8 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  // Auto-resume the Dutch bot if it was running before the server restarted.
-  // (Legacy AI bot and Bookie bot have been retired — only the Combo-strategy
-  // Dutch bot is exposed in the UI.)
+  // Auto-resume Dutching bots (current + v2 paper variants) if they were
+  // running before the restart.
   void (async () => {
     try {
       const [config] = await db.select().from(botConfigTable).limit(1);
@@ -37,8 +35,7 @@ app.listen(port, (err) => {
         logger.info("Auto-resuming Dutch Bot after server restart");
         await startDutchBot();
       }
-      await autoResumePaperBots();
-      await autoResumeMartingaleBot();
+      await autoResumeDutchV2Bots();
     } catch (err) {
       logger.error({ err }, "Failed to auto-resume bots on startup");
     }

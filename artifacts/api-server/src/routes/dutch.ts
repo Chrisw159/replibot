@@ -11,6 +11,7 @@ import {
   saveDutchConfigToDb,
   runScheduleScan,
   isDailyProfitLocked,
+  isDailyLossStopped,
   PHASE1_CUTOVER_ISO,
 } from "../lib/dutchEngine";
 import { getMarketSettlement } from "../lib/betfair";
@@ -104,7 +105,8 @@ router.get("/dutch/status", async (_req, res): Promise<void> => {
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getDutchStats();
   const lock = await isDailyProfitLocked();
-  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock });
+  const lossStop = await isDailyLossStopped();
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock, dailyLossStop: lossStop });
 });
 
 router.post("/dutch/start", async (_req, res): Promise<void> => {
@@ -112,7 +114,8 @@ router.post("/dutch/start", async (_req, res): Promise<void> => {
   const [config] = await db.select().from(botConfigTable).limit(1);
   const stats = await getDutchStats();
   const lock = await isDailyProfitLocked();
-  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock });
+  const lossStop = await isDailyLossStopped();
+  res.json({ ...statusPayload(), paperTradingMode: config?.paperTradingMode ?? true, ...stats, dailyProfitLock: lock, dailyLossStop: lossStop });
 });
 
 router.post("/dutch/stop", async (_req, res): Promise<void> => {
@@ -130,6 +133,7 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   const minLiquidity = typeof body.minLiquidity === "number" ? body.minLiquidity : undefined;
   const minRunners   = typeof body.minRunners   === "number" ? body.minRunners   : undefined;
   const dailyProfitLockGBP = typeof body.dailyProfitLockGBP === "number" ? body.dailyProfitLockGBP : undefined;
+  const dailyLossStopGBP   = typeof body.dailyLossStopGBP   === "number" ? body.dailyLossStopGBP   : undefined;
   const countryCodes = Array.isArray(body.countryCodes)
     ? (body.countryCodes as string[]).map(c => String(c).trim().toUpperCase()).filter(Boolean)
     : undefined;
@@ -152,6 +156,9 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   if (dailyProfitLockGBP !== undefined && (dailyProfitLockGBP < 0 || dailyProfitLockGBP > 100000)) {
     res.status(400).json({ error: "dailyProfitLockGBP must be between 0 and 100,000 (0 disables the lock)" }); return;
   }
+  if (dailyLossStopGBP !== undefined && (dailyLossStopGBP < 0 || dailyLossStopGBP > 100000)) {
+    res.status(400).json({ error: "dailyLossStopGBP must be between 0 and 100,000 (0 disables the stop)" }); return;
+  }
   if (countryCodes !== undefined && countryCodes.length === 0) {
     res.status(400).json({ error: "At least one country code is required" }); return;
   }
@@ -163,6 +170,7 @@ router.patch("/dutch/config", async (req, res): Promise<void> => {
   if (minLiquidity !== undefined) patch.minLiquidity = minLiquidity;
   if (minRunners   !== undefined) patch.minRunners   = minRunners;
   if (dailyProfitLockGBP !== undefined) patch.dailyProfitLockGBP = dailyProfitLockGBP;
+  if (dailyLossStopGBP   !== undefined) patch.dailyLossStopGBP   = dailyLossStopGBP;
   if (countryCodes !== undefined) patch.countryCodes = countryCodes;
   setDutchConfig(patch);
   await saveDutchConfigToDb();

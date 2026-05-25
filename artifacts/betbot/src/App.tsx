@@ -8,9 +8,7 @@ import { Layout } from "@/components/Layout";
 import Settings from "@/pages/Settings";
 import DutchingBot from "@/pages/DutchingBot";
 import DutchingBotRace from "@/pages/DutchingBotRace";
-import PaperBackFav from "@/pages/PaperBackFav";
-import PaperLayShortFav from "@/pages/PaperLayShortFav";
-import Martingale from "@/pages/Martingale";
+import DutchingBotV2 from "@/pages/DutchingBotV2";
 
 const queryClient = new QueryClient();
 
@@ -20,9 +18,7 @@ function Router() {
       <Switch>
         <Route path="/" component={DutchingBot} />
         <Route path="/dutchingbot/race/:marketId" component={DutchingBotRace} />
-        <Route path="/paper/back-fav" component={PaperBackFav} />
-        <Route path="/paper/lay-short-fav" component={PaperLayShortFav} />
-        <Route path="/martingale" component={Martingale} />
+        <Route path="/v2/:variant" component={DutchingBotV2} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

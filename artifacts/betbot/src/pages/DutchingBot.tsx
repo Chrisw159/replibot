@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, Trophy, Clock,
   ChevronRight, ChevronDown, CircleOff, CheckCircle2,
   CalendarClock, ArrowDownCircle, ArrowUpCircle, MinusCircle,
-  Play, Square, Loader2, AlertCircle, Lock,
+  Play, Square, Loader2, AlertCircle, Lock, ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -27,6 +27,7 @@ interface DutchStats {
   isRunning?: boolean;
   startedAt?: string | null;
   dailyProfitLock?: { locked: boolean; net: number; target: number };
+  dailyLossStop?:   { stopped: boolean; net: number; threshold: number };
   phase1?: {
     cutoverIso: string;
     before: PhaseStats;
@@ -135,7 +136,10 @@ export default function DutchingBot() {
   });
   const isRunning   = stats?.isRunning ?? false;
   const lock        = stats?.dailyProfitLock;
+  const lossStop    = stats?.dailyLossStop;
   const isLocked    = !!lock?.locked;
+  const isLossStopped = !!lossStop?.stopped;
+  const isAnyPaused = isLocked || isLossStopped;
   const actionBusy  = startMutation.isPending || stopMutation.isPending;
 
   const { data: schedule, isLoading: scheduleLoading } = useQuery<DutchScheduleEntry[]>({
@@ -205,8 +209,14 @@ export default function DutchingBot() {
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs">
-              <span className={`w-2 h-2 rounded-full ${isLocked ? "bg-amber-400 animate-pulse" : isRunning ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"}`} />
-              {isLocked
+              <span className={`w-2 h-2 rounded-full ${
+                isLossStopped ? "bg-red-400 animate-pulse" :
+                isLocked ? "bg-amber-400 animate-pulse" :
+                isRunning ? "bg-emerald-400 animate-pulse" :
+                "bg-muted-foreground/40"}`} />
+              {isLossStopped
+                ? <span className="text-red-400">Paused — daily loss stop</span>
+                : isLocked
                 ? <span className="text-amber-400">Paused — daily profit lock</span>
                 : isRunning
                 ? <span className="text-emerald-400">Running{stats?.startedAt ? ` since ${fmtTime(stats.startedAt)}` : ""}</span>
@@ -254,6 +264,22 @@ export default function DutchingBot() {
             <div className="text-xs text-amber-200/80 mt-1">
               Today's settled net <span className="font-semibold">£{lock.net.toFixed(2)}</span> has reached your target of <span className="font-semibold">£{lock.target.toFixed(2)}</span>.
               Scheduled races below will be skipped until the lock resets. Already-matched bets will still settle normally.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Daily loss stop banner ── */}
+      {isLossStopped && lossStop && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-red-300">
+              Daily loss stop hit — no new bets until midnight UTC
+            </div>
+            <div className="text-xs text-red-200/80 mt-1">
+              Today's settled net <span className="font-semibold">£{lossStop.net.toFixed(2)}</span> has breached the −£{lossStop.threshold.toFixed(2)} floor.
+              No further bets today. Already-matched bets will still settle normally.
             </div>
           </div>
         </div>

@@ -52,6 +52,7 @@ interface DutchConfig {
   skipChases: boolean;       // legacy, default OFF (backtest: chases +21.9% ROI)
   skipAwSevenFurlong: boolean; // legacy, default OFF (backtest: AW +16.8% ROI)
   dailyProfitLockGBP: number; // stop placing new bets once today's settled net ≥ this £
+  dailyLossStopGBP: number;   // stop placing new bets once today's settled net ≤ -this £ (0 disables)
 }
 
 let dutchBotRunning = false;
@@ -72,10 +73,13 @@ let dutchConfig: DutchConfig = {
   skipChases: false,
   skipAwSevenFurlong: false,
   dailyProfitLockGBP: 120,
+  dailyLossStopGBP: 150,
 };
 
 let dailyLockLatched = false;
 let dailyLockLatchedDate: string | null = null;
+let dailyLossLatched = false;
+let dailyLossLatchedDate: string | null = null;
 
 function utcDayBounds(now: Date = new Date()): { start: Date; nextStart: Date; key: string } {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -109,6 +113,13 @@ export async function isDailyProfitLocked(): Promise<{ locked: boolean; net: num
   if (target <= 0) return { locked: false, net: 0, target };
   const net = await getTodaysDutchSettledNet();
   return { locked: net >= target, net, target };
+}
+
+export async function isDailyLossStopped(): Promise<{ stopped: boolean; net: number; threshold: number }> {
+  const threshold = dutchConfig.dailyLossStopGBP;
+  if (threshold <= 0) return { stopped: false, net: 0, threshold };
+  const net = await getTodaysDutchSettledNet();
+  return { stopped: net <= -threshold, net, threshold };
 }
 
 export function isDutchBotRunning(): boolean { return dutchBotRunning; }
@@ -155,6 +166,7 @@ async function loadDutchConfigFromDb(): Promise<void> {
       if (typeof saved.skipChases   === "boolean") dutchConfig.skipChases   = saved.skipChases;
       if (typeof saved.skipAwSevenFurlong === "boolean") dutchConfig.skipAwSevenFurlong = saved.skipAwSevenFurlong;
       if (typeof saved.dailyProfitLockGBP === "number") dutchConfig.dailyProfitLockGBP = saved.dailyProfitLockGBP;
+      if (typeof saved.dailyLossStopGBP   === "number") dutchConfig.dailyLossStopGBP   = saved.dailyLossStopGBP;
       logger.info({ dutchConfig }, "[DUTCH] Loaded config from DB");
     }
   } catch (err) {
@@ -224,6 +236,11 @@ async function runDutchCycle(): Promise<number> {
       dailyLockLatched = false;
       dailyLockLatchedDate = todayKey;
     }
+    if (dailyLossLatchedDate !== todayKey) {
+      if (dailyLossLatched) log("info", `Daily loss stop reset for new day ${todayKey}`);
+      dailyLossLatched = false;
+      dailyLossLatchedDate = todayKey;
+    }
     {
       const { locked, net, target } = await isDailyProfitLocked();
       if (locked) {
@@ -232,6 +249,18 @@ async function runDutchCycle(): Promise<number> {
             `🔒 Daily profit lock TRIGGERED — today's settled net £${net.toFixed(2)} ≥ £${target.toFixed(2)}. No more bets until tomorrow.`,
           );
           dailyLockLatched = true;
+        }
+        return 0;
+      }
+    }
+    {
+      const { stopped, net, threshold } = await isDailyLossStopped();
+      if (stopped) {
+        if (!dailyLossLatched) {
+          log("warn",
+            `🛑 Daily loss stop TRIGGERED — today's settled net £${net.toFixed(2)} ≤ -£${threshold.toFixed(2)}. No more bets until tomorrow.`,
+          );
+          dailyLossLatched = true;
         }
         return 0;
       }
@@ -306,6 +335,16 @@ async function runDutchCycle(): Promise<number> {
             `🔒 Daily profit lock TRIGGERED mid-cycle — today's settled net £${recheck.net.toFixed(2)} ≥ £${recheck.target.toFixed(2)}. Aborting remaining markets.`,
           );
           dailyLockLatched = true;
+        }
+        break;
+      }
+      const lossCheck = await isDailyLossStopped();
+      if (lossCheck.stopped) {
+        if (!dailyLossLatched) {
+          log("warn",
+            `🛑 Daily loss stop TRIGGERED mid-cycle — today's settled net £${lossCheck.net.toFixed(2)} ≤ -£${lossCheck.threshold.toFixed(2)}. Aborting remaining markets.`,
+          );
+          dailyLossLatched = true;
         }
         break;
       }

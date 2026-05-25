@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Power, PowerOff, Layers, ArrowUpCircle, ArrowDownCircle, Repeat } from "lucide-react";
+import { Settings, Power, PowerOff, Layers, FlaskConical } from "lucide-react";
 
 interface DutchStatus {
   isRunning?: boolean;
@@ -26,9 +26,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { href: "/", label: "Dutching Bot", icon: Layers },
-    { href: "/paper/back-fav", label: "Paper Back Fav", icon: ArrowUpCircle },
-    { href: "/paper/lay-short-fav", label: "Paper Lay Short Fav", icon: ArrowDownCircle },
-    { href: "/martingale", label: "Martingale Fav", icon: Repeat },
+    { href: "/v2/premium", label: "V2 Premium · £75", icon: FlaskConical },
+    { href: "/v2/conservative", label: "V2 Conservative · £75", icon: FlaskConical },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
