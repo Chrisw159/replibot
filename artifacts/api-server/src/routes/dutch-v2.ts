@@ -1,7 +1,18 @@
 import { Router, type IRouter } from "express";
 import { sql, desc } from "drizzle-orm";
-import { db, betsTable, botLogsTable } from "@workspace/db";
+import { db, betsTable, botLogsTable, dutchScheduleTable } from "@workspace/db";
 import { getV2Variant, listV2Variants } from "../lib/dutchV2Engine";
+
+interface ScheduleRunner {
+  selectionId?: number;
+  name: string;
+  price: number;
+  backed: boolean;
+  betType?: "BACK" | "LAY";
+  stake?: number;
+  liability?: number;
+  netProfit?: number;
+}
 
 const router: IRouter = Router();
 
@@ -122,6 +133,107 @@ router.get("/dutch-v2/:variant/races", async (req, res): Promise<void> => {
       winnerName:  r.winnerName ?? null,
     })),
   );
+});
+
+// V2 schedule — shares the Dutch bot's scanned race list (dutchScheduleTable
+// is populated hourly by the Dutch bot for ALL UK/IE WIN races), but overlays
+// THIS V2 variant's own bet/skip status and runner backing.
+router.get("/dutch-v2/:variant/schedule", async (req, res): Promise<void> => {
+  const v = getV2Variant(req.params.variant);
+  if (!v) { res.status(404).json({ error: "unknown variant" }); return; }
+  const strategyName = v.getConfig().strategyName;
+
+  const date = typeof req.query.date === "string"
+    ? req.query.date
+    : new Date().toISOString().slice(0, 10);
+
+  const entries = await db
+    .select()
+    .from(dutchScheduleTable)
+    .where(sql`${dutchScheduleTable.scheduledDate} = ${date}`)
+    .orderBy(dutchScheduleTable.marketStartTime);
+
+  if (entries.length === 0) { res.json([]); return; }
+
+  // V2's bets for today's markets, grouped by marketId.
+  const marketIds = entries.map(e => e.marketId);
+  const v2Bets = await db
+    .select({
+      marketId:     betsTable.marketId,
+      selectionId:  betsTable.selectionId,
+      selectionName:betsTable.selectionName,
+      betType:      betsTable.betType,
+      stake:        betsTable.stakeAmount,
+      odds:         betsTable.requestedOdds,
+      status:       betsTable.status,
+      actualProfit: betsTable.actualProfit,
+    })
+    .from(betsTable)
+    .where(sql`${betsTable.strategyName} = ${strategyName}
+               AND ${betsTable.marketId} = ANY(ARRAY[${sql.join(marketIds.map(id => sql`${id}`), sql`, `)}])`);
+
+  const betsByMarket = new Map<string, typeof v2Bets>();
+  for (const b of v2Bets) {
+    const list = betsByMarket.get(b.marketId) ?? [];
+    list.push(b);
+    betsByMarket.set(b.marketId, list);
+  }
+
+  const out = entries.map(e => {
+    const bets = betsByMarket.get(e.marketId) ?? [];
+    const v2HasBets = bets.length > 0;
+
+    let status: string;
+    let skipReason: string | null;
+    if (v2HasBets) {
+      status = "BET_PLACED";
+      skipReason = null;
+    } else if (e.status === "BET_PLACED") {
+      // Dutch bet on it but V2 didn't — for V2 this means it was filtered out.
+      status = "SKIPPED";
+      skipReason = "V2 filters excluded this race (Hurdle/NHF/runner-count/odds band)";
+    } else {
+      status = e.status;
+      skipReason = e.skipReason;
+    }
+
+    // Overlay V2 bet info on the snapshot runner list.
+    const baseRunners = (e.runnersJson as ScheduleRunner[] | null) ?? [];
+    const v2BetBySel = new Map<number, typeof bets[number]>();
+    for (const b of bets) v2BetBySel.set(b.selectionId, b);
+
+    const runnersJson: ScheduleRunner[] = baseRunners.map(r => {
+      const bet = r.selectionId != null ? v2BetBySel.get(r.selectionId) : undefined;
+      if (!bet) {
+        return { ...r, backed: false, betType: undefined, stake: undefined, liability: undefined, netProfit: undefined };
+      }
+      const stake = Number(bet.stake);
+      const odds  = Number(bet.odds);
+      const liability = bet.betType === "LAY" ? stake * (odds - 1) : stake;
+      return {
+        ...r,
+        backed:    true,
+        betType:   (bet.betType ?? "BACK") as "BACK" | "LAY",
+        stake:     Math.round(stake * 100) / 100,
+        liability: Math.round(liability * 100) / 100,
+        netProfit: bet.actualProfit != null ? Number(bet.actualProfit) : undefined,
+      };
+    });
+
+    return {
+      id:               e.id,
+      marketId:         e.marketId,
+      eventName:        e.eventName,
+      marketName:       e.marketName,
+      marketStartTime:  e.marketStartTime,
+      runnerCount:      e.runnerCount,
+      status,
+      skipReason,
+      runnersJson,
+    };
+  });
+
+  res.json(out);
 });
 
 router.get("/dutch-v2/:variant/logs", async (req, res): Promise<void> => {
