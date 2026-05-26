@@ -215,10 +215,14 @@ router.post("/admin/:token/backfill-today", async (req, res) => {
     // we only have post-race data). BSP is a reasonable proxy for the price
     // the bot WOULD have seen ~2min before off in liquid UK/IE win markets.
     const priceOf = (r: RawRunner): number | null => {
-      const p = r.price ?? r.lastPriceTraded ?? r.bsp;
-      return typeof p === "number" && p >= 1.01 ? p : null;
+      const valid = (x: unknown): x is number => typeof x === "number" && x >= 1.01;
+      if (valid(r.price)) return r.price;
+      if (valid(r.lastPriceTraded)) return r.lastPriceTraded;
+      if (valid(r.bsp)) return r.bsp;
+      return null;
     };
     const eligible: SnapshotRunner[] = runners
+      .filter(r => r.finalStatus !== "REMOVED")
       .map(r => ({ selectionId: r.selectionId, name: r.name, price: priceOf(r) }))
       .filter((r): r is SnapshotRunner => r.price !== null);
     const winnerSel = race.winnerSelectionId!;
