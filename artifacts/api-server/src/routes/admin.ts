@@ -208,10 +208,19 @@ router.post("/admin/:token/backfill-today", async (req, res) => {
   for (const bot of BACKFILL_BOTS) summary[bot.strategyName] = { betsInserted: 0, racesBet: 0, netProfit: 0, skipped: [] };
 
   for (const race of races) {
-    const runners = (race.runnersJson as Array<{ selectionId: number; name: string; price: number }> | null) ?? [];
+    type RawRunner = { selectionId: number; name: string; price?: number; lastPriceTraded?: number; bsp?: number; finalStatus?: string };
+    const runners = (race.runnersJson as RawRunner[] | null) ?? [];
+    // Decision-time price fallback chain: price (Dutch processed it live) →
+    // lastPriceTraded → bsp (settlement-time, used when bot wasn't running and
+    // we only have post-race data). BSP is a reasonable proxy for the price
+    // the bot WOULD have seen ~2min before off in liquid UK/IE win markets.
+    const priceOf = (r: RawRunner): number | null => {
+      const p = r.price ?? r.lastPriceTraded ?? r.bsp;
+      return typeof p === "number" && p >= 1.01 ? p : null;
+    };
     const eligible: SnapshotRunner[] = runners
-      .filter(r => typeof r.price === "number" && r.price >= 1.01)
-      .map(r => ({ selectionId: r.selectionId, name: r.name, price: r.price }));
+      .map(r => ({ selectionId: r.selectionId, name: r.name, price: priceOf(r) }))
+      .filter((r): r is SnapshotRunner => r.price !== null);
     const winnerSel = race.winnerSelectionId!;
     const totalMatched = race.totalMatched ? Number(race.totalMatched) : 0;
     const raceDesc = `${race.eventName} ${race.marketName}`;
@@ -233,7 +242,7 @@ router.post("/admin/:token/backfill-today", async (req, res) => {
       if (plan.mode === "SKIP") continue;
       if (plan.bets.some(b => b.stake < MIN_BET_SIZE)) continue;
 
-      const fullField = JSON.stringify(runners.map(r => ({ selectionId: r.selectionId, name: r.name, odds: r.price })).sort((a, b) => a.odds - b.odds));
+      const fullField = JSON.stringify(runners.map(r => ({ selectionId: r.selectionId, name: r.name, odds: priceOf(r) ?? 999 })).sort((a, b) => a.odds - b.odds));
       let raceNet = 0;
       const settledAt = race.marketStartTime;
 
