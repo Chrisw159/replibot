@@ -1,7 +1,18 @@
 import { Router, type IRouter } from "express";
-import { sql } from "drizzle-orm";
+import { sql, desc } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { betsTable, dutchScheduleTable, botLogsTable } from "@workspace/db";
+import { betsTable, dutchScheduleTable, botLogsTable, raceDatasetTable } from "@workspace/db";
+
+/**
+ * ============================================================================
+ *  PERMANENT DATA — NEVER WIPE
+ * ============================================================================
+ *  The `race_dataset` table is the long-term research corpus (every race we
+ *  have ever observed, with winners + going). It must NEVER be referenced by
+ *  any reset/delete endpoint in this file. If you add a new wipe endpoint,
+ *  audit it to confirm raceDatasetTable is not touched.
+ * ============================================================================
+ */
 
 const router: IRouter = Router();
 
@@ -48,6 +59,32 @@ router.post("/admin/:token/clear-logs", async (req, res) => {
   }
   const del = await db.delete(botLogsTable).returning({ id: botLogsTable.id });
   res.json({ ok: true, logsDeleted: del.length });
+});
+
+// Read-only dataset access (no token required — research data, no secrets).
+router.get("/dataset/races", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 100), 1000);
+  const date  = req.query.date ? String(req.query.date) : null;
+  const rows = date
+    ? await db.select().from(raceDatasetTable)
+        .where(sql`${raceDatasetTable.scheduledDate} = ${date}`)
+        .orderBy(desc(raceDatasetTable.marketStartTime))
+        .limit(limit)
+    : await db.select().from(raceDatasetTable)
+        .orderBy(desc(raceDatasetTable.marketStartTime))
+        .limit(limit);
+  res.json({ count: rows.length, races: rows });
+});
+
+router.get("/dataset/races/count", async (_req, res) => {
+  const [r] = await db
+    .select({
+      total:        sql<number>`count(*)::int`,
+      withWinner:   sql<number>`count(${raceDatasetTable.winnerSelectionId})::int`,
+      withGoing:    sql<number>`count(${raceDatasetTable.going})::int`,
+    })
+    .from(raceDatasetTable);
+  res.json(r ?? { total: 0, withWinner: 0, withGoing: 0 });
 });
 
 export default router;

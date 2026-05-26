@@ -715,12 +715,22 @@ async function runDutchMarket(
   }
 
   // Mark race as bet-placed in the schedule with full snapshot
+  const snapshot = buildSnapshot(eligible, plan);
   void updateScheduleEntry(marketId, "BET_PLACED", {
     runnerCount: eligible.length,
-    runners: buildSnapshot(eligible, plan),
+    runners: snapshot,
     mode: plan.mode,
     totalMatched: marketDetail.totalMatched,
   });
+
+  // Also enrich the permanent research dataset
+  void (async () => {
+    const { enrichRaceWithRunners } = await import("./raceDataset");
+    await enrichRaceWithRunners(marketId, {
+      runners: snapshot as unknown as unknown[],
+      preRaceTotalMatched: marketDetail.totalMatched ?? null,
+    });
+  })();
 }
 
 export async function runScheduleScan(): Promise<void> {
@@ -747,6 +757,19 @@ export async function runScheduleScan(): Promise<void> {
       const raceDate = new Date(m.marketStartTime).toISOString().slice(0, 10);
       return raceDate === today;
     });
+
+    // Permanent research dataset: capture EVERY race we discover, before any
+    // filtering. Append/enrich only; never deleted by any reset endpoint.
+    const { upsertDiscoveredRaces } = await import("./raceDataset");
+    await upsertDiscoveredRaces(markets.map(m => ({
+      marketId: m.marketId,
+      eventName: m.eventName,
+      marketName: m.marketName,
+      marketStartTime: m.marketStartTime,
+      runnerCount: m.runnerCount ?? null,
+      marketType: "WIN",
+      countryCode: null,
+    })));
 
     const filteredIds = new Set(filtered.map(m => m.marketId));
 
@@ -819,6 +842,7 @@ export async function startDutchBot(): Promise<void> {
   dutchSettlementInterval = setInterval(() => {
     void runDutchSettlement();
     void runScheduleSettlement();
+    void runDatasetSettlement();
   }, 30_000);
   void runScheduleScan();
   dutchScanInterval = setInterval(() => { void runScheduleScan(); }, 60 * 60_000);
@@ -949,6 +973,89 @@ async function runDutchSettlement(): Promise<void> {
  * missed, low-liquidity, etc.) ends up with full outcome data we can mine.
  */
 let scheduleSettlementInFlight = false;
+
+/**
+ * Permanent-dataset settlement: backfills winner + going on race_dataset rows
+ * for EVERY race we've ever observed, regardless of whether the bot bet on it
+ * or whether it survived the schedule filters. Never deletes anything.
+ */
+let datasetSettlementInFlight = false;
+async function runDatasetSettlement(): Promise<void> {
+  if (!getSession()) return;
+  if (datasetSettlementInFlight) return;
+  datasetSettlementInFlight = true;
+  try {
+    const { raceDatasetTable } = await import("@workspace/db");
+    const { recordRaceResult } = await import("./raceDataset");
+    const resultCutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const goingCutoff  = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const rows = await db
+      .select({
+        marketId:        raceDatasetTable.marketId,
+        eventName:       raceDatasetTable.eventName,
+        scheduledDate:   raceDatasetTable.scheduledDate,
+        marketStartTime: raceDatasetTable.marketStartTime,
+        going:           raceDatasetTable.going,
+        winnerSelectionId: raceDatasetTable.winnerSelectionId,
+      })
+      .from(raceDatasetTable)
+      .where(
+        sql`${raceDatasetTable.marketStartTime} <= ${now}
+            AND (
+              (${raceDatasetTable.winnerSelectionId} IS NULL
+               AND ${raceDatasetTable.marketStartTime} >= ${resultCutoff})
+              OR
+              (${raceDatasetTable.going} IS NULL
+               AND ${raceDatasetTable.marketStartTime} >= ${goingCutoff})
+            )`,
+      )
+      .limit(50);
+    if (rows.length === 0) return;
+
+    const { getMarketResultWithBSP } = await import("./betfair");
+    const { getGoingByCourseForDate, courseFromEventName } = await import("./racingPost");
+    const datesNeeded = [...new Set(rows.map(r => r.scheduledDate))];
+    const goingByDate = new Map<string, Map<string, string>>();
+    for (const d of datesNeeded) {
+      goingByDate.set(d, await getGoingByCourseForDate(d));
+    }
+
+    let updated = 0;
+    for (const row of rows) {
+      const courseKey = courseFromEventName(row.eventName);
+      const going = courseKey
+        ? goingByDate.get(row.scheduledDate)?.get(courseKey) ?? null
+        : null;
+
+      let result: Awaited<ReturnType<typeof getMarketResultWithBSP>> = null;
+      if (row.winnerSelectionId == null) {
+        try {
+          result = await getMarketResultWithBSP(row.marketId);
+        } catch {
+          // ignore — try again next tick
+        }
+      }
+      const winnerSelectionId = result?.winnerSelectionId ?? null;
+      const goingChanged = going != null && going !== row.going;
+      const winnerChanged = winnerSelectionId != null;
+      if (!goingChanged && !winnerChanged) continue;
+
+      await recordRaceResult(row.marketId, {
+        winnerSelectionId,
+        going: goingChanged ? going : null,
+      });
+      updated++;
+    }
+    if (updated > 0) {
+      logger.info({ updated }, "[DATASET] backfilled winner/going on permanent rows");
+    }
+  } catch (err) {
+    logger.error({ err }, "[DATASET] settlement loop failed");
+  } finally {
+    datasetSettlementInFlight = false;
+  }
+}
 
 async function runScheduleSettlement(): Promise<void> {
   if (!getSession()) return;
@@ -1098,6 +1205,20 @@ async function runScheduleSettlement(): Promise<void> {
           updatedAt:          new Date(),
         })
         .where(eq(dutchScheduleTable.id, row.id));
+
+      // Mirror the result into the permanent research dataset
+      void (async () => {
+        const { recordRaceResult } = await import("./raceDataset");
+        await recordRaceResult(row.marketId, {
+          winnerSelectionId: result.winnerSelectionId,
+          winnerName,
+          going: going ?? null,
+          runners: enriched as unknown as unknown[],
+          preRaceTotalMatched:
+            !haveLiveLiquidity && settlementHasValue ? result.totalMatched : null,
+        });
+      })();
+
       recorded++;
     }
 
