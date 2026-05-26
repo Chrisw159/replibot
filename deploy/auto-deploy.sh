@@ -1,33 +1,55 @@
 #!/bin/bash
 # Auto-deploy script — runs every minute via cron.
 # Pulls from GitHub; if there are new commits, rebuilds containers.
-# Designed to be silent on no-op, verbose on actual deploys.
 
-set -e
-cd /opt/replibot
+# CRITICAL: cron runs with a stripped PATH. docker-compose lives in /usr/local/bin.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+cd /opt/replibot || exit 1
+
+LOG=/var/log/replibot-deploy.log
 LOCK=/tmp/replibot-deploy.lock
+
+# Stale-lock guard: if lock is >10 min old, force-clear it (previous run crashed)
 if [ -e "$LOCK" ]; then
-  # Previous deploy still running — skip this tick
-  exit 0
+  AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK") ))
+  if [ "$AGE" -gt 600 ]; then
+    echo "$(date -u +%FT%TZ) Clearing stale lock (age ${AGE}s)" >> "$LOG"
+    rm -f "$LOCK"
+  else
+    exit 0
+  fi
 fi
 touch "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
 
-LOG=/var/log/replibot-deploy.log
-
-BEFORE=$(git rev-parse HEAD)
-git fetch origin main --quiet
-AFTER=$(git rev-parse origin/main)
+# Don't use `set -e` — we want to log failures, not silently exit
+BEFORE=$(git rev-parse HEAD 2>>"$LOG")
+if ! git fetch origin main 2>>"$LOG"; then
+  echo "$(date -u +%FT%TZ) git fetch failed" >> "$LOG"
+  exit 1
+fi
+AFTER=$(git rev-parse origin/main 2>>"$LOG")
 
 if [ "$BEFORE" = "$AFTER" ]; then
   exit 0
 fi
 
-echo "================ $(date -u +%Y-%m-%dT%H:%M:%SZ) ================" >> "$LOG"
-echo "New commit detected: $BEFORE -> $AFTER" >> "$LOG"
+echo "================ $(date -u +%FT%TZ) ================" >> "$LOG"
+echo "Deploying $BEFORE -> $AFTER" >> "$LOG"
 
-git reset --hard origin/main >> "$LOG" 2>&1
-docker-compose down >> "$LOG" 2>&1 || true
-docker-compose up -d --build >> "$LOG" 2>&1
-echo "Deploy complete." >> "$LOG"
+git reset --hard origin/main >> "$LOG" 2>&1 || { echo "git reset FAILED" >> "$LOG"; exit 1; }
+
+# Use sudo-less docker if available; fall back to docker-compose
+if ! command -v docker-compose >/dev/null 2>&1; then
+  echo "docker-compose NOT FOUND in PATH=$PATH" >> "$LOG"
+  exit 1
+fi
+
+docker-compose down >> "$LOG" 2>&1 || echo "(down had errors, continuing)" >> "$LOG"
+if docker-compose up -d --build >> "$LOG" 2>&1; then
+  echo "Deploy complete at $(date -u +%FT%TZ)" >> "$LOG"
+else
+  echo "BUILD FAILED at $(date -u +%FT%TZ)" >> "$LOG"
+  exit 1
+fi
