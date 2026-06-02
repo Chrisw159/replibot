@@ -24,6 +24,8 @@ export const dutchScheduleTable = pgTable("dutch_schedule", {
   // Filled by runScheduleSettlement once the market closes
   winnerSelectionId:  integer("winner_selection_id"),
   winnerName:         text("winner_name"),
+  // Number of placed runners from the Betfair "To Be Placed" market.
+  placesPaid:         integer("places_paid"),
   // Track condition scraped from Racing Post once the race has been run.
   // Captured so future strategies can condition on going (e.g. soft/heavy).
   going:              text("going"),

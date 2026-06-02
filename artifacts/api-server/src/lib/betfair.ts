@@ -723,6 +723,99 @@ export async function getMarketResultWithBSP(marketId: string): Promise<MarketRe
   }
 }
 
+export interface PlaceResult {
+  placeMarketId: string;
+  placesPaid: number;            // number of runners that placed (= WINNER in the PLACE market)
+  placedSelectionIds: number[];  // selectionIds that placed (includes the race winner)
+}
+
+/**
+ * Betfair only settles a WIN market to WINNER/LOSER, so it never gives the full
+ * finishing order. To capture a richer "who placed" result we read the matching
+ * "To Be Placed" (PLACE) market for the same race: every runner that placed has
+ * status WINNER there. Combining WIN (1st) + PLACE (placed set) gives the
+ * fullest result the Exchange exposes — winner, placed runners, and unplaced.
+ *
+ * Exact 2nd/3rd ordering is NOT available from Betfair; an external results API
+ * (see racingResults.ts) can fill exact finishing positions when configured.
+ *
+ * Best-effort: returns null if the place market can't be found or isn't closed.
+ */
+export async function getPlaceResultForWinMarket(
+  winMarketId: string,
+): Promise<PlaceResult | null> {
+  interface Cat {
+    marketId: string;
+    marketStartTime?: string;
+    event?: { id?: string };
+  }
+  interface Book {
+    status?: string;
+    runners?: Array<{ selectionId: number; status: string }>;
+  }
+  try {
+    // 1) Resolve the WIN market's event id + off time.
+    const winCat = await apiRequest<Cat[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketCatalogue",
+      {
+        filter: { marketIds: [winMarketId] },
+        marketProjection: ["EVENT", "MARKET_START_TIME"],
+        maxResults: 1,
+      },
+    );
+    const eventId = winCat?.[0]?.event?.id;
+    const startTime = winCat?.[0]?.marketStartTime;
+    if (!eventId || !startTime) return null;
+
+    // 2) Find the PLACE market in the same event with the same off time.
+    const placeCats = await apiRequest<Cat[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketCatalogue",
+      {
+        filter: { eventIds: [eventId], marketTypeCodes: ["PLACE"] },
+        marketProjection: ["MARKET_START_TIME"],
+        maxResults: 100,
+      },
+    );
+    // Match on off time, tolerant to small clock/format drift between the WIN
+    // and PLACE catalogues. Pick the closest PLACE market within 60s.
+    const startMs = new Date(startTime).getTime();
+    const TOLERANCE_MS = 60_000;
+    let place: Cat | undefined;
+    let bestDelta = Infinity;
+    for (const m of placeCats ?? []) {
+      if (!m.marketStartTime) continue;
+      const delta = Math.abs(new Date(m.marketStartTime).getTime() - startMs);
+      if (delta <= TOLERANCE_MS && delta < bestDelta) {
+        bestDelta = delta;
+        place = m;
+      }
+    }
+    // Fall back to the sole PLACE market if there's exactly one in the event.
+    if (!place && (placeCats?.length ?? 0) === 1) place = placeCats![0];
+    if (!place) return null;
+
+    // 3) Read the PLACE market result — placed runners have status WINNER.
+    const books = await apiRequest<Book[]>(
+      BETFAIR_API_URL,
+      "SportsAPING/v1.0/listMarketBook",
+      { marketIds: [place.marketId], priceProjection: { priceData: [] } },
+    );
+    const book = books?.[0];
+    if (!book || book.status !== "CLOSED") return null;
+    const placed = (book.runners ?? []).filter(r => r.status === "WINNER");
+    return {
+      placeMarketId: place.marketId,
+      placesPaid: placed.length,
+      placedSelectionIds: placed.map(r => r.selectionId),
+    };
+  } catch (err) {
+    logger.warn({ err, winMarketId }, "Could not fetch place-market result");
+    return null;
+  }
+}
+
 /**
  * Lightweight per-runner name lookup used by schedule settlement when our
  * decision-time snapshot is missing names (e.g. races that never reached the

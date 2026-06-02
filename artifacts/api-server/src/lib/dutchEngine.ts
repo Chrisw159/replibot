@@ -214,6 +214,8 @@ interface ScheduleRunner {
   // Filled in by runScheduleSettlement once the market closes:
   bsp?: number;               // Betfair Starting Price (actualSP)
   finalStatus?: "WINNER" | "LOSER" | "REMOVED";
+  placed?: boolean;           // placed in the race (Betfair "To Be Placed" market)
+  finishPosition?: number | null; // exact finish (1=winner from Betfair; full order via external API)
 }
 
 async function updateScheduleEntry(
@@ -1173,20 +1175,34 @@ async function runScheduleSettlement(): Promise<void> {
               (${dutchScheduleTable.winnerSelectionId} IS NULL
                AND ${dutchScheduleTable.marketStartTime} >= ${resultCutoff})
               OR
+              (${dutchScheduleTable.placesPaid} IS NULL
+               AND ${dutchScheduleTable.marketStartTime} >= ${resultCutoff})
+              OR
               (${dutchScheduleTable.going} IS NULL
                AND ${dutchScheduleTable.marketStartTime} >= ${goingCutoff})
             )`,
       );
     if (rows.length === 0) return;
 
-    const { getMarketResultWithBSP } = await import("./betfair");
+    const { getMarketResultWithBSP, getPlaceResultForWinMarket } = await import("./betfair");
     const { getGoingByCourseForDate, courseFromEventName } = await import("./racingPost");
+    const { getFinishingOrderByCourseForDate, isExternalResultsConfigured, normalizeHorseKey } =
+      await import("./racingResults");
 
     // Pre-load going maps for every date we're about to settle (typically 1-2).
     const datesNeeded = [...new Set(rows.map(r => r.scheduledDate))];
     const goingByDate = new Map<string, Map<string, string>>();
     for (const d of datesNeeded) {
       goingByDate.set(d, await getGoingByCourseForDate(d));
+    }
+
+    // Pre-load exact finishing order from the external results API (dormant
+    // unless RACING_API_* creds are set). courseKey -> (horseKey -> position).
+    const externalByDate = new Map<string, Map<string, Map<string, number>>>();
+    if (isExternalResultsConfigured()) {
+      for (const d of datesNeeded) {
+        externalByDate.set(d, await getFinishingOrderByCourseForDate(d));
+      }
     }
 
     let recorded = 0;
@@ -1270,6 +1286,39 @@ async function runScheduleSettlement(): Promise<void> {
 
       const winnerName = enriched.find(r => r.selectionId === result!.winnerSelectionId)?.name ?? null;
 
+      // ── Full result ──────────────────────────────────────────────────────
+      // Betfair WIN gives the winner (1st); the matching "To Be Placed" market
+      // gives the placed set. An external API (if configured) overlays exact
+      // finishing positions for every runner.
+      let placesPaid: number | null = null;
+      let place: Awaited<ReturnType<typeof getPlaceResultForWinMarket>> = null;
+      try {
+        place = await getPlaceResultForWinMarket(row.marketId);
+      } catch (err) {
+        logger.warn({ err, marketId: row.marketId }, "[DUTCH] place-market lookup failed");
+      }
+      const placedSet = new Set(place?.placedSelectionIds ?? []);
+      if (place) placesPaid = place.placesPaid;
+      const extByHorse = courseKey
+        ? externalByDate.get(row.scheduledDate)?.get(courseKey)
+        : undefined;
+      for (let i = 0; i < enriched.length; i++) {
+        const r = enriched[i];
+        const isWinner = r.selectionId === result!.winnerSelectionId;
+        // Winner is the source of truth from the Betfair WIN market — never let
+        // an external overlay move it off 1st.
+        let finishPosition: number | null = isWinner ? 1 : null;
+        if (!isWinner && extByHorse && r.name) {
+          const pos = extByHorse.get(normalizeHorseKey(r.name));
+          if (pos != null) finishPosition = pos;
+        }
+        enriched[i] = {
+          ...r,
+          ...(place ? { placed: isWinner || placedSet.has(r.selectionId) } : {}),
+          ...(finishPosition != null ? { finishPosition } : {}),
+        };
+      }
+
       // Only fill totalMatched from settlement if we never captured a live
       // decision-time value. CLOSED-market totalMatched is often 0 and we want
       // to preserve the real liquidity recorded during runDutchMarket.
@@ -1281,6 +1330,7 @@ async function runScheduleSettlement(): Promise<void> {
           runnersJson:        enriched as unknown as Record<string, unknown>[],
           winnerSelectionId:  result.winnerSelectionId,
           winnerName,
+          ...(placesPaid != null ? { placesPaid } : {}),
           ...(going ? { going } : {}),
           ...(!haveLiveLiquidity && settlementHasValue
             ? { totalMatched: result.totalMatched.toFixed(2) }
@@ -1296,6 +1346,7 @@ async function runScheduleSettlement(): Promise<void> {
         await recordRaceResult(row.marketId, {
           winnerSelectionId: result.winnerSelectionId,
           winnerName,
+          placesPaid,
           going: going ?? null,
           runners: enriched as unknown as unknown[],
           preRaceTotalMatched:

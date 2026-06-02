@@ -84,3 +84,9 @@ Paper trading mode is enabled by default — no real money bets will be placed u
 - The bot engine auto-connects to Betfair at the start of each cycle if credentials are available as secrets
 - Daily loss limits are enforced: bot pauses when daily losses exceed the configured limit
 - AI model is configurable per strategy (default: `gpt-5-mini`)
+
+## Data-collection mode & race results
+
+- `bot_config.dataCollectionMode` (toggle on the Dutching Bot page) makes the bot place **no** bets while recording every GB/IE race to the permanent `race_dataset` with full runner metadata + liquidity.
+- **Full result** is captured at settlement from Betfair: the WIN market gives the winner (`finishPosition` 1) and the matching **"To Be Placed"** market gives the placed set (`placesPaid` + per-runner `placed`). Exact 2nd/3rd ordering is NOT available from Betfair.
+- **Optional external results API** (`artifacts/api-server/src/lib/racingResults.ts`): set `RACING_API_USERNAME` + `RACING_API_PASSWORD` (The Racing API) to overlay exact `finishPosition` for every runner, matched by normalised horse name + course + date. Dormant until those secrets are set.

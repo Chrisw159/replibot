@@ -34,6 +34,9 @@ export const raceDatasetTable = pgTable("race_dataset", {
   preRaceTotalMatched: numeric("pre_race_total_matched", { precision: 14, scale: 2 }),
   winnerSelectionId:  integer("winner_selection_id"),
   winnerName:         text("winner_name"),
+  // Number of runners that placed (from the Betfair "To Be Placed" market).
+  // Per-runner placed/finishPosition detail lives in runnersJson.
+  placesPaid:         integer("places_paid"),
   going:              text("going"),
   discoveredAt:       timestamp("discovered_at",   { withTimezone: true }).notNull().defaultNow(),
   enrichedAt:         timestamp("enriched_at",     { withTimezone: true }),

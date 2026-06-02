@@ -64,6 +64,7 @@ export interface RaceEnrichment {
 export interface RaceResult {
   winnerSelectionId?: number | null;
   winnerName?: string | null;
+  placesPaid?: number | null;
   going?: string | null;
   runners?: unknown[];
   preRaceTotalMatched?: number | null;
@@ -112,6 +113,7 @@ export async function recordRaceResult(
       sets.settledAt = new Date();
     }
     if (result.winnerName) sets.winnerName = result.winnerName;
+    if (result.placesPaid != null) sets.placesPaid = result.placesPaid;
     if (result.going) {
       sets.going = result.going;
       sets.goingRecordedAt = new Date();

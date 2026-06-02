@@ -27,9 +27,18 @@ their prices are always non-null.
 `runScheduleSettlement` selects by time + null winner/going, NOT by status, so `OBSERVED` rows are
 settled normally and mirrored to `race_dataset` (metadata preserved via `...r` spread).
 
-## Limitation
-Betfair only exposes WINNER/LOSER + BSP — finishing positions beyond the winner (2nd/3rd) are NOT
-available, so "full result" stops at the winner.
+## Result capture (win + place)
+Settlement records the full result from TWO Betfair markets: the WIN market gives the winner
+(finishPosition 1) and the matching "To Be Placed" market (marketTypeCodes ["PLACE"], same event +
+off time) gives the placed set — runners whose place-book status is WINNER are `placed: true`, and
+`placesPaid` = count of them. `getPlaceResultForWinMarket(winMarketId)` in betfair.ts is best-effort
+(null on failure / market not CLOSED).
+
+## Limitation — exact order
+Betfair NEVER exposes the exact order of 2nd/3rd/4th — only winner + placed set + BSP. For full
+finishing positions, `racingResults.ts` is a dormant external seam (The Racing API) gated on
+`RACING_API_USERNAME` + `RACING_API_PASSWORD`; when set it overlays exact `finishPosition` per runner,
+matched by normalised horse name + course + date. Returns empty map when unconfigured → Betfair-only.
 
 ## Deploy safety
 Adding the `dataCollectionMode` column is safe on the droplet: docker-compose `db-migrate`
