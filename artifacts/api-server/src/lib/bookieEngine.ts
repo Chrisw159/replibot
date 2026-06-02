@@ -197,9 +197,19 @@ async function runBookieMarket(
   eventName: string,
   marketName: string,
 ): Promise<void> {
-  const [config] = await db.select({ paperTradingMode: botConfigTable.paperTradingMode })
+  const [config] = await db.select({
+      paperTradingMode: botConfigTable.paperTradingMode,
+      dataCollectionMode: botConfigTable.dataCollectionMode,
+    })
     .from(botConfigTable).limit(1);
   const paperTrading = config?.paperTradingMode ?? true;
+
+  // Data-collection mode: this engine places no bets. The dataset is built by
+  // the Dutch engine's observe path, so just skip without acting.
+  if (config?.dataCollectionMode) {
+    log("info", `Data-collection mode — skipping ${eventName} (no bets placed)`);
+    return;
+  }
 
   const marketDetail = await getMarketDetail(marketId);
   if (!marketDetail) return;

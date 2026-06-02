@@ -292,6 +292,7 @@ export const GetBotConfigResponse = zod.object({
   dailyProfitTarget: zod.number().nullish(),
   enabledEventTypes: zod.string(),
   paperTradingMode: zod.boolean(),
+  dataCollectionMode: zod.boolean(),
   updatedAt: zod.string(),
 });
 
@@ -305,6 +306,7 @@ export const UpdateBotConfigBody = zod.object({
   dailyProfitTarget: zod.number().nullish(),
   enabledEventTypes: zod.string().nullish(),
   paperTradingMode: zod.boolean().nullish(),
+  dataCollectionMode: zod.boolean().nullish(),
 });
 
 export const UpdateBotConfigResponse = zod.object({
@@ -316,6 +318,7 @@ export const UpdateBotConfigResponse = zod.object({
   dailyProfitTarget: zod.number().nullish(),
   enabledEventTypes: zod.string(),
   paperTradingMode: zod.boolean(),
+  dataCollectionMode: zod.boolean(),
   updatedAt: zod.string(),
 });
 

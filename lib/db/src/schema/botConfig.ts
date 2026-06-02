@@ -20,6 +20,10 @@ export const botConfigTable = pgTable("bot_config", {
   dailyProfitTarget: numeric("daily_profit_target", { precision: 10, scale: 2 }),
   enabledEventTypes: text("enabled_event_types").notNull().default("1,2,4"),
   paperTradingMode: boolean("paper_trading_mode").notNull().default(true),
+  // When true: place NO bets (paper or real). The engines only observe markets
+  // and record the permanent research dataset (race_dataset). Used for pure
+  // data-collection runs (e.g. 1-2 months of races) ahead of going live.
+  dataCollectionMode: boolean("data_collection_mode").notNull().default(false),
   xaiApiKey: text("xai_api_key"),
   betfairUsername: text("betfair_username"),
   betfairPassword: text("betfair_password"),

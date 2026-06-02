@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, Trophy, Clock,
   ChevronRight, ChevronDown, CircleOff, CheckCircle2,
   CalendarClock, ArrowDownCircle, ArrowUpCircle, MinusCircle,
-  Play, Square, Loader2, AlertCircle, Lock, ShieldAlert,
+  Play, Square, Loader2, AlertCircle, Lock, ShieldAlert, Database,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -50,7 +50,7 @@ interface DutchRace {
 
 interface ScheduleRunner {
   name: string;
-  price: number;
+  price: number | null;
   backed: boolean;
   betType?: "BACK" | "LAY";
   stake?: number;
@@ -134,6 +134,27 @@ export default function DutchingBot() {
     },
     onError: (e: Error) => setActionError(e.message || "Failed to stop bot"),
   });
+  const { data: botConfig } = useQuery<{ dataCollectionMode: boolean }>({
+    queryKey: ["bot-config"],
+    queryFn: () => apiFetch("/bot/config"),
+    refetchInterval: 15_000,
+  });
+  const dataCollectionMode = botConfig?.dataCollectionMode ?? false;
+
+  const dataModeMutation = useMutation({
+    mutationFn: (next: boolean) =>
+      apiFetch("/bot/config", {
+        method: "PATCH",
+        body: JSON.stringify({ dataCollectionMode: next }),
+        headers: { "Content-Type": "application/json" },
+      }),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: ["bot-config"] });
+    },
+    onError: (e: Error) => setActionError(e.message || "Failed to update data-collection mode"),
+  });
+
   const isRunning   = stats?.isRunning ?? false;
   const lock        = stats?.dailyProfitLock;
   const lossStop    = stats?.dailyLossStop;
@@ -244,6 +265,22 @@ export default function DutchingBot() {
               </button>
             )}
           </div>
+          <button
+            type="button"
+            disabled={dataModeMutation.isPending}
+            onClick={() => dataModeMutation.mutate(!dataCollectionMode)}
+            title="When on, the bot places NO bets (paper or real) — it only records every race to the research dataset."
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              dataCollectionMode
+                ? "bg-violet-500/20 text-violet-300 border border-violet-500/40 hover:bg-violet-500/30"
+                : "bg-muted text-muted-foreground border border-border hover:bg-muted/70"
+            }`}
+          >
+            {dataModeMutation.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Database className="w-3.5 h-3.5" />}
+            Data-collection mode {dataCollectionMode ? "ON" : "OFF"}
+          </button>
           {actionError && (
             <div className="inline-flex items-center gap-1.5 text-xs text-red-400 max-w-xs text-right">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -252,6 +289,23 @@ export default function DutchingBot() {
           )}
         </div>
       </div>
+
+      {/* ── Data-collection mode banner ── */}
+      {dataCollectionMode && (
+        <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-4 flex items-start gap-3">
+          <Database className="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-violet-200">
+              Data-collection mode — no bets are being placed (paper or real)
+            </div>
+            <div className="text-xs text-violet-200/80 mt-1">
+              Every GB/IE race is observed and recorded to the permanent research dataset with full
+              runner metadata (jockey, trainer, age, draw, form, ratings), decision-time liquidity,
+              going, and final result. Turn this off to resume betting.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Daily profit lock banner ── */}
       {isLocked && lock && (
@@ -506,7 +560,7 @@ export default function DutchingBot() {
                           >
                             <div className="col-span-1 text-muted-foreground tabular-nums">{i + 1}</div>
                             <div className="col-span-5 truncate font-medium">{r.name}</div>
-                            <div className="col-span-2 text-right tabular-nums">{r.price.toFixed(2)}</div>
+                            <div className="col-span-2 text-right tabular-nums">{r.price != null ? r.price.toFixed(2) : "—"}</div>
                             <div className="col-span-2 text-right">
                               {r.backed ? (
                                 r.betType === "LAY" ? (

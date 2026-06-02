@@ -1,0 +1,2 @@
+- [Data-collection mode](data-collection-mode.md) — how the bot observes (no bets) and records races; why snapshots must include unpriced active runners.
+- [Betfair local geo-block](betfair-local-geoblock.md) — local/dev server cannot reach Betfair (US IP); verify Betfair-dependent code by typecheck + review, never live e2e.

@@ -40,6 +40,7 @@ function mapConfig(c: typeof botConfigTable.$inferSelect) {
     dailyProfitTarget: c.dailyProfitTarget !== null ? Number(c.dailyProfitTarget) : null,
     enabledEventTypes: c.enabledEventTypes,
     paperTradingMode: c.paperTradingMode,
+    dataCollectionMode: c.dataCollectionMode,
     updatedAt: c.updatedAt.toISOString(),
   };
 }
@@ -86,6 +87,7 @@ router.patch("/bot/config", async (req, res): Promise<void> => {
   if (d.dailyProfitTarget != null) updates.dailyProfitTarget = d.dailyProfitTarget.toString();
   if (d.enabledEventTypes != null) updates.enabledEventTypes = d.enabledEventTypes;
   if (d.paperTradingMode != null) updates.paperTradingMode = d.paperTradingMode;
+  if (d.dataCollectionMode != null) updates.dataCollectionMode = d.dataCollectionMode;
 
   const [updated] = await db
     .update(botConfigTable)

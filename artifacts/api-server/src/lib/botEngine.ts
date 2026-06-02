@@ -557,6 +557,10 @@ ${marketContext}
     }
 
     // ── Place bets ──
+    if (config.dataCollectionMode) {
+      await logBotActivity("info", `[DUTCH] Data-collection mode — not betting on ${market.eventName}`);
+      continue;
+    }
     const dutchGroupId = `DUTCH-${market.marketId}-${Date.now()}`;
     const profitPerWinner = dc.stakingMode === "weighted"
       ? `£${(minReturn - totalStaked).toFixed(2)}–£${(maxReturn - totalStaked).toFixed(2)}`
@@ -762,6 +766,11 @@ ${eligibleRunners.map(r => `  - ${r.runnerName}: Back ${r.bestBackPrice}, Lay ${
       const stakeAmount = Number(strategy.stakeAmount);
       const odds = targetRunner.bestBackPrice;
       const potentialProfit = stakeAmount * (odds - 1);
+
+      if (config.dataCollectionMode) {
+        await logBotActivity("info", `Data-collection mode — not betting on ${targetMarket.eventName}`);
+        continue;
+      }
 
       if (config.paperTradingMode) {
         await db.insert(betsTable).values({

@@ -183,6 +183,7 @@ export interface BotConfig {
   dailyProfitTarget?: number | null;
   enabledEventTypes: string;
   paperTradingMode: boolean;
+  dataCollectionMode: boolean;
   updatedAt: string;
 }
 
@@ -199,6 +200,8 @@ export interface UpdateBotConfigBody {
   enabledEventTypes?: string | null;
   /** @nullable */
   paperTradingMode?: boolean | null;
+  /** @nullable */
+  dataCollectionMode?: boolean | null;
 }
 
 export interface BotStatus {

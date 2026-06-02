@@ -177,13 +177,40 @@ async function loadDutchConfigFromDb(): Promise<void> {
 interface ScheduleRunner {
   selectionId: number;        // Betfair selection ID (for result resolution)
   name: string;
-  price: number;              // best back price at decision time
+  price: number | null;       // best back price at decision time (null if no back offer)
   lastPriceTraded?: number;   // last traded price at decision time
   backed: boolean;            // true if we placed a bet on this runner (BACK or LAY)
   betType?: "BACK" | "LAY";   // direction of our bet
   stake?: number;             // Betfair "size" (backer's stake)
   liability?: number;         // for LAY bets: stake * (odds-1)
   netProfit?: number;         // expected race net P&L if THIS runner wins
+  // ── Decision-time liquidity (per-runner) ──
+  layPrice?: number;          // best lay price at decision time
+  backSize?: number;          // £ available to back at bestBack
+  laySize?: number;           // £ available to lay at bestLay
+  tradedVolume?: number;      // £ matched on this runner so far
+  sortPriority?: number;      // market favouritism order (1 = favourite)
+  // ── Research metadata (Betfair RUNNER_METADATA) ──
+  jockeyName?: string;
+  jockeyClaim?: string;
+  trainerName?: string;       // the stable
+  ownerName?: string;
+  age?: number;
+  sex?: string;
+  form?: string;
+  daysSinceLastRun?: number;
+  officialRating?: number;
+  adjustedRating?: number;
+  stallDraw?: number;
+  weightValue?: number;
+  weightUnits?: string;
+  wearing?: string;           // headgear (blinkers, etc.)
+  clothNumber?: number;
+  sireName?: string;
+  damName?: string;
+  bredCountry?: string;
+  colour?: string;
+  forecastPrice?: number;
   // Filled in by runScheduleSettlement once the market closes:
   bsp?: number;               // Betfair Starting Price (actualSP)
   finalStatus?: "WINNER" | "LOSER" | "REMOVED";
@@ -518,9 +545,13 @@ async function runDutchMarket(
   eventName: string,
   marketName: string,
 ): Promise<void> {
-  const [config] = await db.select({ paperTradingMode: botConfigTable.paperTradingMode })
+  const [config] = await db.select({
+      paperTradingMode: botConfigTable.paperTradingMode,
+      dataCollectionMode: botConfigTable.dataCollectionMode,
+    })
     .from(botConfigTable).limit(1);
   const paperTrading = config?.paperTradingMode ?? true;
+  const dataCollectionMode = config?.dataCollectionMode ?? false;
 
   const marketDetail = await getMarketDetail(marketId);
   if (!marketDetail) return;
@@ -529,6 +560,7 @@ async function runDutchMarket(
   const buildSnapshot = (
     eligibleRunners: typeof marketDetail.runners,
     plan?: ComboPlan,
+    includeUnpriced = false,
   ): ScheduleRunner[] => {
     const planMap = new Map(plan?.bets.map(b => [String(b.selectionId), b]) ?? []);
     // Net P&L if THIS runner wins:
@@ -548,23 +580,75 @@ async function runDutchMarket(
     };
 
     return eligibleRunners
-      .filter(r => r.status === "ACTIVE" && r.bestBackPrice != null)
+      .filter(r => r.status === "ACTIVE" && (includeUnpriced || r.bestBackPrice != null))
       .map(r => {
         const planned = planMap.get(String(r.selectionId));
         return {
           selectionId: r.selectionId,
           name: r.runnerName,
-          price: r.bestBackPrice!,
+          price: r.bestBackPrice ?? null,
           lastPriceTraded: r.lastPriceTraded,
           backed: !!planned,
           betType: planned?.side,
           stake: planned?.stake,
           liability: planned?.liability,
           netProfit: plan && plan.bets.length > 0 ? netIfWins(String(r.selectionId)) : undefined,
+          // Decision-time liquidity
+          layPrice: r.bestLayPrice,
+          backSize: r.bestBackSize,
+          laySize: r.bestLaySize,
+          tradedVolume: r.totalMatched,
+          sortPriority: r.sortPriority,
+          // Research metadata
+          jockeyName: r.jockeyName,
+          jockeyClaim: r.jockeyClaim,
+          trainerName: r.trainerName,
+          ownerName: r.ownerName,
+          age: r.age,
+          sex: r.sex,
+          form: r.form,
+          daysSinceLastRun: r.daysSinceLastRun,
+          officialRating: r.officialRating,
+          adjustedRating: r.adjustedRating,
+          stallDraw: r.stallDraw,
+          weightValue: r.weightValue,
+          weightUnits: r.weightUnits,
+          wearing: r.wearing,
+          clothNumber: r.clothNumber,
+          sireName: r.sireName,
+          damName: r.damName,
+          bredCountry: r.bredCountry,
+          colour: r.colour,
+          forecastPrice: r.forecastPrice,
         } as ScheduleRunner;
       })
-      .sort((a, b) => a.price - b.price);
+      .sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
   };
+
+  // ── DATA-COLLECTION MODE ──────────────────────────────────────────────────
+  // Place NO bets (paper or real). Snapshot the FULL active field with all
+  // research metadata + liquidity, record it to the schedule and the permanent
+  // research dataset, then return. No filters — we want every race we observe.
+  if (dataCollectionMode) {
+    const snapshot = buildSnapshot(marketDetail.runners, undefined, true);
+    log("info",
+      `OBSERVE ${eventName} — data-collection only, ${snapshot.length} runners, £${marketDetail.totalMatched.toFixed(0)} matched`,
+      { marketId, runnerCount: snapshot.length },
+    );
+    void updateScheduleEntry(marketId, "OBSERVED", {
+      runnerCount: snapshot.length,
+      runners: snapshot,
+      totalMatched: marketDetail.totalMatched,
+    });
+    void (async () => {
+      const { enrichRaceWithRunners } = await import("./raceDataset");
+      await enrichRaceWithRunners(marketId, {
+        runners: snapshot as unknown as unknown[],
+        preRaceTotalMatched: marketDetail.totalMatched ?? null,
+      });
+    })();
+    return;
+  }
 
   if (marketDetail.totalMatched < dutchConfig.minLiquidity) {
     log("info",

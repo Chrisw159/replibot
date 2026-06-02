@@ -205,6 +205,31 @@ export interface BetfairRunner {
   bestBackPrice?: number;
   bestBackSize?: number;
   bestLayPrice?: number;
+  bestLaySize?: number;
+  // Market favouritism order from the catalogue (1 = favourite).
+  sortPriority?: number;
+  // ── RUNNER_METADATA (catalogue) — research fields, all optional ──
+  jockeyName?: string;
+  jockeyClaim?: string;
+  trainerName?: string;
+  ownerName?: string;
+  age?: number;
+  sex?: string;
+  form?: string;
+  daysSinceLastRun?: number;
+  officialRating?: number;
+  adjustedRating?: number;
+  stallDraw?: number;
+  weightValue?: number;
+  weightUnits?: string;
+  wearing?: string;
+  clothNumber?: number;
+  sireName?: string;
+  damName?: string;
+  bredCountry?: string;
+  colour?: string;
+  // Bookmaker forecast price as a decimal (numerator/denominator + 1).
+  forecastPrice?: number;
 }
 
 export interface BetfairMarketDetail extends BetfairMarket {
@@ -450,8 +475,22 @@ export async function getMarketDetail(
     marketName?: string;
     event?: { name?: string };
     marketStartTime?: string;
-    runners?: Array<{ selectionId: number; runnerName: string }>;
+    runners?: Array<{
+      selectionId: number;
+      runnerName: string;
+      sortPriority?: number;
+      metadata?: Record<string, string | null>;
+    }>;
   }
+
+  // Parse a numeric RUNNER_METADATA value, tolerating blanks/non-numeric.
+  const num = (v: string | null | undefined): number | undefined => {
+    if (v == null || v === "") return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const str = (v: string | null | undefined): string | undefined =>
+    v != null && v !== "" ? v : undefined;
 
   try {
     const [bookResult, catalogResult] = await Promise.all([
@@ -491,6 +530,13 @@ export async function getMarketDetail(
 
     const runners: BetfairRunner[] = (catalogue.runners ?? []).map((cr) => {
       const br = bookBySelection.get(cr.selectionId);
+      const md = cr.metadata ?? {};
+      const fcN = num(md.FORECASTPRICE_NUMERATOR);
+      const fcD = num(md.FORECASTPRICE_DENOMINATOR);
+      const forecastPrice =
+        fcN != null && fcD != null && fcD !== 0
+          ? Math.round((fcN / fcD + 1) * 100) / 100
+          : undefined;
       return {
         selectionId: cr.selectionId,
         runnerName: cr.runnerName ?? `Selection ${cr.selectionId}`,
@@ -500,6 +546,28 @@ export async function getMarketDetail(
         bestBackPrice: br?.ex?.availableToBack?.[0]?.price,
         bestBackSize: br?.ex?.availableToBack?.[0]?.size,
         bestLayPrice: br?.ex?.availableToLay?.[0]?.price,
+        bestLaySize: br?.ex?.availableToLay?.[0]?.size,
+        sortPriority: cr.sortPriority,
+        jockeyName: str(md.JOCKEY_NAME),
+        jockeyClaim: str(md.JOCKEY_CLAIM),
+        trainerName: str(md.TRAINER_NAME),
+        ownerName: str(md.OWNER_NAME),
+        age: num(md.AGE),
+        sex: str(md.SEX_TYPE),
+        form: str(md.FORM),
+        daysSinceLastRun: num(md.DAYS_SINCE_LAST_RUN),
+        officialRating: num(md.OFFICIAL_RATING),
+        adjustedRating: num(md.ADJUSTED_RATING),
+        stallDraw: num(md.STALL_DRAW),
+        weightValue: num(md.WEIGHT_VALUE),
+        weightUnits: str(md.WEIGHT_UNITS),
+        wearing: str(md.WEARING),
+        clothNumber: num(md.CLOTH_NUMBER),
+        sireName: str(md.SIRE_NAME),
+        damName: str(md.DAM_NAME),
+        bredCountry: str(md.bredCountry ?? md.COUNTRY_CODE),
+        colour: str(md.COLOUR_TYPE ?? md.COLOUR),
+        forecastPrice,
       };
     });
 

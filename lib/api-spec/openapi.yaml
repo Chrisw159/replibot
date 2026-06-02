@@ -788,6 +788,8 @@ components:
           type: string
         paperTradingMode:
           type: boolean
+        dataCollectionMode:
+          type: boolean
         updatedAt:
           type: string
       required:
@@ -797,6 +799,7 @@ components:
         - maxConcurrentBets
         - dailyLossLimit
         - paperTradingMode
+        - dataCollectionMode
         - enabledEventTypes
         - updatedAt
 
@@ -814,6 +817,8 @@ components:
         enabledEventTypes:
           type: ["string", "null"]
         paperTradingMode:
+          type: ["boolean", "null"]
+        dataCollectionMode:
           type: ["boolean", "null"]
 
     BotStatus:

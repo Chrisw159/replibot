@@ -17,7 +17,7 @@
 // we didn't bet on. Just scan → filter → place paper bet → settle.
 
 import { logger } from "./logger";
-import { db, betsTable, botLogsTable } from "@workspace/db";
+import { db, betsTable, botLogsTable, botConfigTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import {
   getSession,
@@ -390,6 +390,15 @@ class DutchV2Variant {
   }
 
   private async runMarket(marketId: string, eventName: string, marketName: string): Promise<void> {
+    // Data-collection mode: place no bets. The permanent dataset is built by the
+    // primary Dutch engine's observe path, so this paper engine just stands down.
+    const [cfg] = await db.select({ dataCollectionMode: botConfigTable.dataCollectionMode })
+      .from(botConfigTable).limit(1);
+    if (cfg?.dataCollectionMode) {
+      this.log("info", `Data-collection mode — skipping ${eventName} (no bets placed)`);
+      return;
+    }
+
     const detail = await getMarketDetail(marketId);
     if (!detail) return;
 
