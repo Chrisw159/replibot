@@ -39,6 +39,7 @@ services:
       BETFAIR_APP_KEY: ${BETFAIR_APP_KEY:-}
       NODE_ENV: production
       PORT: 8080
+      FORCE_DATA_COLLECTION: ${FORCE_DATA_COLLECTION:-true}
     depends_on:
       postgres:
         condition: service_healthy

@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startDutchBot } from "./lib/dutchEngine";
 import { autoResumeDutchV2Bots } from "./lib/dutchV2Engine";
 import { db, botConfigTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -30,6 +31,21 @@ app.listen(port, (err) => {
   // running before the restart.
   void (async () => {
     try {
+      // Operator override: when FORCE_DATA_COLLECTION=true, force the whole
+      // server into data-collection mode on every boot regardless of the
+      // stored toggle. All four engines honour bot_config.data_collection_mode
+      // and place NO bets when it is on. This guarantees a freshly deployed
+      // server collects data without anyone having to flip the UI toggle.
+      if (process.env["FORCE_DATA_COLLECTION"] === "true") {
+        const [existing] = await db.select({ id: botConfigTable.id }).from(botConfigTable).limit(1);
+        if (existing) {
+          await db.update(botConfigTable).set({ dataCollectionMode: true }).where(eq(botConfigTable.id, existing.id));
+        } else {
+          await db.insert(botConfigTable).values({ dataCollectionMode: true });
+        }
+        logger.info("FORCE_DATA_COLLECTION=true — data-collection mode enforced; no bets will be placed");
+      }
+
       const [config] = await db.select().from(botConfigTable).limit(1);
       if (config?.dutchIsRunning) {
         logger.info("Auto-resuming Dutch Bot after server restart");
