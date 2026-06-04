@@ -1,2 +1,2 @@
-- [Data-collection mode](data-collection-mode.md) — how the bot observes (no bets) and records races; why snapshots must include unpriced active runners.
-- [Betfair local geo-block](betfair-local-geoblock.md) — local/dev server cannot reach Betfair (US IP); verify Betfair-dependent code by typecheck + review, never live e2e.
+- [Live droplet — access, control, broken auto-deploy](droplet-deploy-and-control.md) — prod is 144.126.238.76; pushing code often doesn't deploy; control bots via public HTTP API; SSH key in ~/.ssh gets wiped on reset.
+- [Betfair local geo-block](betfair-local-geoblock.md) — Betfair-dependent code can't run from the US dev IP; verify via typecheck + review, real runs happen on the droplet.
