@@ -24,6 +24,23 @@ drawdown tolerance, 5% commission account.
 runnersJson + winnerSelectionId, simulate the frozen rule, append results. No droplet code
 changes needed for the proving phase (deploy pipeline is still broken anyway).
 
+# FOM portfolio — second frozen candidate (frozen 2 Jul 2026)
+
+User wanted higher returns than LT2's ~£4/wk. Systematic scan (~40 rank×fav-band cells) over
+550 fully-priced races found a coherent "front-of-market" back portfolio:
+
+> fav < 2.0 → BACK the 2nd favourite; fav 2.0-3.0 → BACK the 2nd favourite;
+> fav 3.0-4.0 → BACK the favourite; fav >= 4.0 → no back bet (LT2 territory).
+> Flat 1% of bank per bet, 5% commission.
+
+Backtest (26 May-1 Jul, 407 bets, 10.7/day): +26.7% ROI, t=2.58, both halves positive
+(+33%/+20%), survives settling at BSP (all 3 legs higher at BSP), 5/6 weeks positive,
+maxDD 18% of bank at 1% stakes.
+
+**Why cautious:** discovered in-sample by scanning many cells — expect regression toward
+~10% ROI. Each leg alone is only ~1.8σ. Proof gate: 300 forward bets (~4 weeks at 10.7/day),
+require ROI > +5% to go live. Same freeze discipline: do NOT re-tune bands on old data.
+
 **Confirmed losers (in AND out of sample — do not resurrect):** Martingale staking (-14.9%),
 BACK fav 2.0-2.5 (-11.6% OOS), LAY 3.0-4.0 band (-16.9%), blanket LAY 4.2-10 without the
 fav>=5 condition (-12.4% OOS). Paper P&L on the droplet deducts NO commission — always
