@@ -41,6 +41,15 @@ maxDD 18% of bank at 1% stakes.
 ~10% ROI. Each leg alone is only ~1.8σ. Proof gate: 300 forward bets (~4 weeks at 10.7/day),
 require ROI > +5% to go live. Same freeze discipline: do NOT re-tune bands on old data.
 
+**Crash test (Monte Carlo under efficient-market null, 3,000 sims, 2 Jul 2026):**
+- Fixed rule pre-specified: p=0.0003 (real, IF the rule had been chosen in advance).
+- Dredge-corrected (replicating the 20-cell scan+selection procedure on random data):
+  p=0.18 — the scan procedure alone manufactures a median +17% ROI "portfolio" from noise.
+- Rank calibration on real winners: rank1 36.0% actual vs 35.2% implied, rank2 21.4% vs
+  20.6% — front-of-market bias direction is REAL but small (~+0.8pp ≈ +2-4% ROI, not +26%).
+- Verdict: NOT PROVEN; realistic forward expectation is single-digit ROI (~£10-30/wk on £500
+  at 1-2% stakes). Only the 300-bet forward test counts as evidence.
+
 **Confirmed losers (in AND out of sample — do not resurrect):** Martingale staking (-14.9%),
 BACK fav 2.0-2.5 (-11.6% OOS), LAY 3.0-4.0 band (-16.9%), blanket LAY 4.2-10 without the
 fav>=5 condition (-12.4% OOS). Paper P&L on the droplet deducts NO commission — always
