@@ -33,3 +33,13 @@ Prior sessions connected via `ssh -i /home/runner/.ssh/replibot_droplet root@144
 `DROPLET_PASSWORD` secret) were both erased, locking the agent out. **Why:** the only durable place
 for credentials is a Replit secret, not `~/.ssh`. If re-establishing key access, store the private
 key in a secret too, or expect to lose it on the next reset.
+
+## Current working deploy path (Aug 2026)
+SSH key access was re-established: `ssh -i ~/.ssh/replibot_droplet root@144.126.238.76` (pubkey in
+droplet's authorized_keys; private key subject to wipe caveat above). If locked out again, the user
+can paste a one-liner via the DigitalOcean web console ("Launch Droplet Console") to add a new pubkey —
+the DROPLET_* secrets are junk/rejected, so the console is the recovery path.
+Deploy command (docker-compose v1 requires `down` first or it fails with `KeyError: 'ContainerConfig'`):
+`cd /opt/replibot && git fetch origin && git reset --hard origin/main && docker-compose down && docker-compose up -d --build`
+Auto-deploy cron remains dead. The soccer bot auto-restarts with the container and re-enters its
+running state; verify via `curl http://144.126.238.76/api/soccer/status`.
