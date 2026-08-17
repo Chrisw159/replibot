@@ -9,8 +9,6 @@ import dashboardRouter from "./dashboard";
 import settingsRouter from "./settings";
 import goalbotRouter from "./goalbot";
 import bookieRouter from "./bookie";
-import dutchRouter from "./dutch";
-import dutchV2Router from "./dutch-v2";
 import adminRouter from "./admin";
 import soccerRouter from "./soccer";
 
@@ -26,8 +24,6 @@ router.use(dashboardRouter);
 router.use(settingsRouter);
 router.use(goalbotRouter);
 router.use(bookieRouter);
-router.use(dutchRouter);
-router.use(dutchV2Router);
 router.use(adminRouter);
 router.use(soccerRouter);
 
