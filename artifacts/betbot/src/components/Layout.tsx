@@ -1,33 +1,30 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Power, PowerOff, Layers, FlaskConical, Target } from "lucide-react";
+import { Settings, Power, PowerOff, Target } from "lucide-react";
 
-interface DutchStatus {
+interface SoccerStatus {
   isRunning?: boolean;
-  paperTradingMode?: boolean;
+  paperMode?: boolean;
 }
 
-async function fetchDutchStatus(): Promise<DutchStatus> {
-  const res = await fetch("/api/dutch/status");
+async function fetchSoccerStatus(): Promise<SoccerStatus> {
+  const res = await fetch("/api/soccer/status");
   if (!res.ok) return {};
   return res.json();
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { data: status } = useQuery<DutchStatus>({
-    queryKey: ["dutch-status"],
-    queryFn: fetchDutchStatus,
+  const { data: status } = useQuery<SoccerStatus>({
+    queryKey: ["soccer-status-nav"],
+    queryFn: fetchSoccerStatus,
     refetchInterval: 5000,
   });
 
   const isRunning = status?.isRunning ?? false;
-  const isPaperTrading = status?.paperTradingMode ?? true;
+  const isPaperTrading = status?.paperMode ?? true;
 
   const navItems = [
-    { href: "/", label: "Dutching Bot", icon: Layers },
-    { href: "/v2/premium", label: "V2 Premium · £75", icon: FlaskConical },
-    { href: "/v2/conservative", label: "V2 Conservative · £75", icon: FlaskConical },
     { href: "/soccerbot", label: "Soccer Bot", icon: Target },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
