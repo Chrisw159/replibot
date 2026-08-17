@@ -29,12 +29,21 @@ import type {
   ErrorResponse,
   GetBotLogsParams,
   GetPnlChartParams,
+  GetSoccerLogsParams,
   HealthStatus,
   ListBetsParams,
   ListMarketsParams,
+  ListSoccerTradesParams,
   Market,
   MarketDetail,
   PnlDataPoint,
+  SoccerCandidate,
+  SoccerConfig,
+  SoccerConfigUpdate,
+  SoccerLogEntry,
+  SoccerStatus,
+  SoccerSummary,
+  SoccerTrade,
   Strategy,
   StrategyPerformance,
   UpdateBotConfigBody,
@@ -1927,6 +1936,745 @@ export function useGetStrategyPerformance<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetStrategyPerformanceQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get soccer in-play bot configuration
+ */
+export const getGetSoccerConfigUrl = () => {
+  return `/api/soccer/config`;
+};
+
+export const getSoccerConfig = async (
+  options?: RequestInit,
+): Promise<SoccerConfig> => {
+  return customFetch<SoccerConfig>(getGetSoccerConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSoccerConfigQueryKey = () => {
+  return [`/api/soccer/config`] as const;
+};
+
+export const getGetSoccerConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSoccerConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSoccerConfigQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSoccerConfig>>> = ({
+    signal,
+  }) => getSoccerConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSoccerConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSoccerConfig>>
+>;
+export type GetSoccerConfigQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get soccer in-play bot configuration
+ */
+
+export function useGetSoccerConfig<
+  TData = Awaited<ReturnType<typeof getSoccerConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSoccerConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update soccer in-play bot configuration
+ */
+export const getUpdateSoccerConfigUrl = () => {
+  return `/api/soccer/config`;
+};
+
+export const updateSoccerConfig = async (
+  soccerConfigUpdate: SoccerConfigUpdate,
+  options?: RequestInit,
+): Promise<SoccerConfig> => {
+  return customFetch<SoccerConfig>(getUpdateSoccerConfigUrl(), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(soccerConfigUpdate),
+  });
+};
+
+export const getUpdateSoccerConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSoccerConfig>>,
+    TError,
+    { data: BodyType<SoccerConfigUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSoccerConfig>>,
+  TError,
+  { data: BodyType<SoccerConfigUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateSoccerConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSoccerConfig>>,
+    { data: BodyType<SoccerConfigUpdate> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateSoccerConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSoccerConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSoccerConfig>>
+>;
+export type UpdateSoccerConfigMutationBody = BodyType<SoccerConfigUpdate>;
+export type UpdateSoccerConfigMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update soccer in-play bot configuration
+ */
+export const useUpdateSoccerConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSoccerConfig>>,
+    TError,
+    { data: BodyType<SoccerConfigUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSoccerConfig>>,
+  TError,
+  { data: BodyType<SoccerConfigUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateSoccerConfigMutationOptions(options));
+};
+
+/**
+ * @summary Start the soccer in-play bot
+ */
+export const getStartSoccerBotUrl = () => {
+  return `/api/soccer/start`;
+};
+
+export const startSoccerBot = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getStartSoccerBotUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStartSoccerBotMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof startSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["startSoccerBot"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof startSoccerBot>>,
+    void
+  > = () => {
+    return startSoccerBot(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StartSoccerBotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof startSoccerBot>>
+>;
+
+export type StartSoccerBotMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Start the soccer in-play bot
+ */
+export const useStartSoccerBot = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof startSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStartSoccerBotMutationOptions(options));
+};
+
+/**
+ * @summary Stop the soccer in-play bot
+ */
+export const getStopSoccerBotUrl = () => {
+  return `/api/soccer/stop`;
+};
+
+export const stopSoccerBot = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getStopSoccerBotUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStopSoccerBotMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof stopSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["stopSoccerBot"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof stopSoccerBot>>,
+    void
+  > = () => {
+    return stopSoccerBot(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StopSoccerBotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof stopSoccerBot>>
+>;
+
+export type StopSoccerBotMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Stop the soccer in-play bot
+ */
+export const useStopSoccerBot = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof stopSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStopSoccerBotMutationOptions(options));
+};
+
+/**
+ * @summary Get soccer bot live status
+ */
+export const getGetSoccerStatusUrl = () => {
+  return `/api/soccer/status`;
+};
+
+export const getSoccerStatus = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getGetSoccerStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSoccerStatusQueryKey = () => {
+  return [`/api/soccer/status`] as const;
+};
+
+export const getGetSoccerStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSoccerStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSoccerStatusQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSoccerStatus>>> = ({
+    signal,
+  }) => getSoccerStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSoccerStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSoccerStatus>>
+>;
+export type GetSoccerStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get soccer bot live status
+ */
+
+export function useGetSoccerStatus<
+  TData = Awaited<ReturnType<typeof getSoccerStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSoccerStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Live watchlist of in-play games being evaluated
+ */
+export const getGetSoccerCandidatesUrl = () => {
+  return `/api/soccer/candidates`;
+};
+
+export const getSoccerCandidates = async (
+  options?: RequestInit,
+): Promise<SoccerCandidate[]> => {
+  return customFetch<SoccerCandidate[]>(getGetSoccerCandidatesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSoccerCandidatesQueryKey = () => {
+  return [`/api/soccer/candidates`] as const;
+};
+
+export const getGetSoccerCandidatesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSoccerCandidates>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerCandidates>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSoccerCandidatesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSoccerCandidates>>
+  > = ({ signal }) => getSoccerCandidates({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerCandidates>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSoccerCandidatesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSoccerCandidates>>
+>;
+export type GetSoccerCandidatesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Live watchlist of in-play games being evaluated
+ */
+
+export function useGetSoccerCandidates<
+  TData = Awaited<ReturnType<typeof getSoccerCandidates>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerCandidates>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSoccerCandidatesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List soccer trades (newest first)
+ */
+export const getListSoccerTradesUrl = (params?: ListSoccerTradesParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/soccer/trades?${stringifiedParams}`
+    : `/api/soccer/trades`;
+};
+
+export const listSoccerTrades = async (
+  params?: ListSoccerTradesParams,
+  options?: RequestInit,
+): Promise<SoccerTrade[]> => {
+  return customFetch<SoccerTrade[]>(getListSoccerTradesUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSoccerTradesQueryKey = (
+  params?: ListSoccerTradesParams,
+) => {
+  return [`/api/soccer/trades`, ...(params ? [params] : [])] as const;
+};
+
+export const getListSoccerTradesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSoccerTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSoccerTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSoccerTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListSoccerTradesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSoccerTrades>>
+  > = ({ signal }) => listSoccerTrades(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSoccerTrades>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSoccerTradesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSoccerTrades>>
+>;
+export type ListSoccerTradesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List soccer trades (newest first)
+ */
+
+export function useListSoccerTrades<
+  TData = Awaited<ReturnType<typeof listSoccerTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListSoccerTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSoccerTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSoccerTradesQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate P&L and performance for the soccer bot
+ */
+export const getGetSoccerSummaryUrl = () => {
+  return `/api/soccer/summary`;
+};
+
+export const getSoccerSummary = async (
+  options?: RequestInit,
+): Promise<SoccerSummary> => {
+  return customFetch<SoccerSummary>(getGetSoccerSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSoccerSummaryQueryKey = () => {
+  return [`/api/soccer/summary`] as const;
+};
+
+export const getGetSoccerSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSoccerSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSoccerSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSoccerSummary>>
+  > = ({ signal }) => getSoccerSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSoccerSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSoccerSummary>>
+>;
+export type GetSoccerSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregate P&L and performance for the soccer bot
+ */
+
+export function useGetSoccerSummary<
+  TData = Awaited<ReturnType<typeof getSoccerSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSoccerSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Recent soccer bot activity log
+ */
+export const getGetSoccerLogsUrl = (params?: GetSoccerLogsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/soccer/logs?${stringifiedParams}`
+    : `/api/soccer/logs`;
+};
+
+export const getSoccerLogs = async (
+  params?: GetSoccerLogsParams,
+  options?: RequestInit,
+): Promise<SoccerLogEntry[]> => {
+  return customFetch<SoccerLogEntry[]>(getGetSoccerLogsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSoccerLogsQueryKey = (params?: GetSoccerLogsParams) => {
+  return [`/api/soccer/logs`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetSoccerLogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSoccerLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSoccerLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSoccerLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSoccerLogsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSoccerLogs>>> = ({
+    signal,
+  }) => getSoccerLogs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSoccerLogs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSoccerLogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSoccerLogs>>
+>;
+export type GetSoccerLogsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recent soccer bot activity log
+ */
+
+export function useGetSoccerLogs<
+  TData = Awaited<ReturnType<typeof getSoccerLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetSoccerLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSoccerLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSoccerLogsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

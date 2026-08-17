@@ -447,3 +447,211 @@ export const GetStrategyPerformanceResponseItem = zod.object({
 export const GetStrategyPerformanceResponse = zod.array(
   GetStrategyPerformanceResponseItem,
 );
+
+/**
+ * @summary Get soccer in-play bot configuration
+ */
+export const GetSoccerConfigResponse = zod.object({
+  id: zod.number(),
+  isRunning: zod.boolean(),
+  stake: zod.number(),
+  minOdds: zod.number(),
+  maxOdds: zod.number(),
+  profitTargetPct: zod.number(),
+  entryMinute: zod.number(),
+  minGoalGap: zod.number(),
+  preferBufferLine: zod.boolean(),
+  maxConcurrent: zod.number(),
+  dailyStopLoss: zod.number(),
+  minLiquidity: zod.number(),
+  checkIntervalSeconds: zod.number(),
+  paperMode: zod.boolean(),
+  updatedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Update soccer in-play bot configuration
+ */
+export const UpdateSoccerConfigBody = zod.object({
+  stake: zod.number().optional(),
+  minOdds: zod.number().optional(),
+  maxOdds: zod.number().optional(),
+  profitTargetPct: zod.number().optional(),
+  entryMinute: zod.number().optional(),
+  minGoalGap: zod.number().optional(),
+  preferBufferLine: zod.boolean().optional(),
+  maxConcurrent: zod.number().optional(),
+  dailyStopLoss: zod.number().optional(),
+  minLiquidity: zod.number().optional(),
+  checkIntervalSeconds: zod.number().optional(),
+  paperMode: zod.boolean().optional(),
+});
+
+export const UpdateSoccerConfigResponse = zod.object({
+  id: zod.number(),
+  isRunning: zod.boolean(),
+  stake: zod.number(),
+  minOdds: zod.number(),
+  maxOdds: zod.number(),
+  profitTargetPct: zod.number(),
+  entryMinute: zod.number(),
+  minGoalGap: zod.number(),
+  preferBufferLine: zod.boolean(),
+  maxConcurrent: zod.number(),
+  dailyStopLoss: zod.number(),
+  minLiquidity: zod.number(),
+  checkIntervalSeconds: zod.number(),
+  paperMode: zod.boolean(),
+  updatedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Start the soccer in-play bot
+ */
+export const StartSoccerBotResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  dailyStopHit: zod.boolean(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary Stop the soccer in-play bot
+ */
+export const StopSoccerBotResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  dailyStopHit: zod.boolean(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary Get soccer bot live status
+ */
+export const GetSoccerStatusResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  dailyStopHit: zod.boolean(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary Live watchlist of in-play games being evaluated
+ */
+export const GetSoccerCandidatesResponseItem = zod.object({
+  eventName: zod.string(),
+  competition: zod.string().nullish(),
+  marketId: zod.string().nullish(),
+  score: zod.string(),
+  goalGap: zod.number().optional(),
+  minute: zod.number(),
+  tightLine: zod.number().nullish(),
+  tightOdds: zod.number().nullish(),
+  bufferLine: zod.number().nullish(),
+  bufferOdds: zod.number().nullish(),
+  liquidity: zod.number().nullish(),
+  verdict: zod.string().describe("ENTERED | WATCHING | SKIPPED | OPEN"),
+  reason: zod.string(),
+});
+export const GetSoccerCandidatesResponse = zod.array(
+  GetSoccerCandidatesResponseItem,
+);
+
+/**
+ * @summary List soccer trades (newest first)
+ */
+export const ListSoccerTradesQueryParams = zod.object({
+  status: zod.coerce.string().nullish(),
+  limit: zod.coerce.number().nullish(),
+});
+
+export const ListSoccerTradesResponseItem = zod.object({
+  id: zod.number(),
+  eventId: zod.string().nullish(),
+  eventName: zod.string(),
+  competition: zod.string().nullish(),
+  marketId: zod.string(),
+  marketName: zod.string(),
+  selectionId: zod.number().nullish(),
+  selectionName: zod.string(),
+  line: zod.number(),
+  bufferLine: zod.boolean(),
+  entryScore: zod.string(),
+  entryTotalGoals: zod.number().nullish(),
+  entryMinute: zod.number(),
+  entryOdds: zod.number(),
+  stake: zod.number(),
+  status: zod
+    .string()
+    .describe(
+      "OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID",
+    ),
+  exitOdds: zod.number().nullish(),
+  exitReason: zod.string().nullish(),
+  profit: zod.number().nullish(),
+  goalAfterEntry: zod.boolean().optional(),
+  paper: zod.boolean(),
+  placedAt: zod.string(),
+  closedAt: zod.string().nullish(),
+});
+export const ListSoccerTradesResponse = zod.array(ListSoccerTradesResponseItem);
+
+/**
+ * @summary Aggregate P&L and performance for the soccer bot
+ */
+export const GetSoccerSummaryResponse = zod.object({
+  totalTrades: zod.number(),
+  openTrades: zod.number(),
+  tradedOut: zod.number(),
+  exitedAfterGoal: zod.number(),
+  settledWon: zod.number(),
+  settledLost: zod.number(),
+  totalPnl: zod.number(),
+  totalStaked: zod.number(),
+  roiPct: zod.number(),
+  todayPnl: zod.number(),
+  avgEntryOdds: zod.number(),
+  winRatePct: zod.number(),
+  dailyPnl: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        pnl: zod.number(),
+        trades: zod.number(),
+      }),
+    )
+    .optional(),
+});
+
+/**
+ * @summary Recent soccer bot activity log
+ */
+export const GetSoccerLogsQueryParams = zod.object({
+  limit: zod.coerce.number().nullish(),
+});
+
+export const GetSoccerLogsResponseItem = zod.object({
+  id: zod.number(),
+  level: zod.string(),
+  message: zod.string(),
+  createdAt: zod.string(),
+});
+export const GetSoccerLogsResponse = zod.array(GetSoccerLogsResponseItem);

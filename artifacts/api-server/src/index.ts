@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startDutchBot } from "./lib/dutchEngine";
 import { autoResumeDutchV2Bots } from "./lib/dutchV2Engine";
+import { autoResumeSoccerBot } from "./lib/soccerEngine";
 import { db, botConfigTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
@@ -52,6 +53,7 @@ app.listen(port, (err) => {
         await startDutchBot();
       }
       await autoResumeDutchV2Bots();
+      await autoResumeSoccerBot();
     } catch (err) {
       logger.error({ err }, "Failed to auto-resume bots on startup");
     }
