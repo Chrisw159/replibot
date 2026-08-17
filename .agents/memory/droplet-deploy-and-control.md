@@ -1,45 +1,40 @@
 ---
-name: Live droplet — access, control, and broken auto-deploy
-description: How the production REPLIBOT droplet is reached/controlled and why pushing code often does nothing.
+name: Live droplet — access, control, and remote admin endpoint
+description: How the production REPLIBOT droplet is reached, deployed, and controlled from Replit.
 ---
 
 # Live droplet (production) — access & control
 
-Production runs on a self-managed droplet at `144.126.238.76` (root login), code in `/opt/replibot`,
-docker-compose stack (postgres + db-migrate + api + frontend). This is SEPARATE from the Replit dev
-workspace and its own Postgres.
+Production runs on a self-managed droplet at `144.126.238.76` (root), code in `/opt/replibot`,
+docker compose stack (postgres + db-migrate + api + frontend). Separate from the Replit dev workspace.
 
-## Pushing code to GitHub does NOT reliably deploy
-The droplet is supposed to auto-deploy `origin/main` every minute (`deploy/auto-deploy.sh` cron:
-git fetch → reset --hard → docker-compose up -d --build). In practice this has been DEAD — the
-container ran the same image for 8+ days despite multiple pushes, and the live `/api/bot/config`
-lacked fields that were merged to main long before. **Always verify the live server actually
-runs new code; never assume a push deployed.** Quick check: `curl http://144.126.238.76/api/bot/config`
-and look for expected new fields.
+## Remote admin endpoint (installed 17 Aug 2026) — primary control channel
+A token-gated HTTP service runs on the droplet: `http://144.126.238.76:8844` (systemd unit
+`replibot-admin`, script `/opt/replibot-admin/admin.py`, token in `/opt/replibot-admin/token`).
+- `GET /health` — current commit + container status
+- `POST /deploy` — git fetch/reset to origin/main + docker compose up -d --build
+- `POST /exec` `{"cmd":"...","timeout":N}` — arbitrary shell (default 120s; exec timeout KILLS the command — run long builds with `nohup ... &` and poll)
+Auth: `Authorization: Bearer $DROPLET_ADMIN_TOKEN` (Replit secret). **Why:** SSH keys in ~/.ssh get
+wiped on workspace resets; this endpoint + secret survives.
 
-## Reaching the live server WITHOUT ssh — HTTP API is public
-The droplet's API is reachable over plain HTTP at `http://144.126.238.76/api/...` with no auth.
-Use this to read live state and to control the bots directly. Engines and stop endpoints (old build):
-- main AI bot: `GET /api/bot/status`, `POST /api/bot/stop`, `POST /api/bot/start`
-- dutch: `GET /api/dutch/status`, `POST /api/dutch/stop`
-- dutch-v2: `GET /api/dutch-v2/list` (returns variants, e.g. `premium`, `conservative`),
-  then `GET|POST /api/dutch-v2/<variant>/status|stop|start`
-To stop ALL paper/real betting on old code (which has no data-collection gate), you must stop every
-engine individually via these POSTs — there is no global kill switch in the old build.
+## SSH (secondary)
+Key `~/.ssh/replit_droplet` (ed25519, authorized on droplet 17 Aug 2026) — works but is wiped on
+workspace reset. Re-bootstrap path if all access lost: user pastes an authorized_keys one-liner in the
+DigitalOcean web console (user has console access only; the old passwords/secrets are invalid).
 
-## SSH access is ephemeral — keep the private key OUT of the workspace only at your peril
-Prior sessions connected via `ssh -i /home/runner/.ssh/replibot_droplet root@144.126.238.76`.
-`~/.ssh` is NOT in git and gets wiped on a workspace reset/rollback — the private key (and the
-`DROPLET_PASSWORD` secret) were both erased, locking the agent out. **Why:** the only durable place
-for credentials is a Replit secret, not `~/.ssh`. If re-establishing key access, store the private
-key in a secret too, or expect to lose it on the next reset.
+## Deploy pipeline (fixed 17 Aug 2026)
+Push to GitHub origin/main → droplet cron (`deploy/auto-deploy.sh`, every minute) fetch/reset/rebuild,
+or force it immediately via `POST /deploy`. Root causes of the historic "dead" auto-deploy, all fixed:
+- docker-compose v1 crashed with `KeyError: 'ContainerConfig'` on container recreate → images rebuilt
+  but old containers kept running. Fix: compose v2 plugin installed at
+  /usr/local/lib/docker/cli-plugins; auto-deploy.sh now uses `docker compose`.
+- Disk hit 99% (orphaned images) and builds failed with "no space left". `docker system prune -af`
+  freed 15GB. Watch disk before builds: 24GB total, images are ~GB each.
+**Always verify after deploying:** `GET :8844/health` must show the expected commit AND containers
+recently recreated ("Up N seconds/minutes"). Compose v2 renamed containers `replibot-api-1` style.
 
-## Current working deploy path (Aug 2026)
-SSH key access was re-established: `ssh -i ~/.ssh/replibot_droplet root@144.126.238.76` (pubkey in
-droplet's authorized_keys; private key subject to wipe caveat above). If locked out again, the user
-can paste a one-liner via the DigitalOcean web console ("Launch Droplet Console") to add a new pubkey —
-the DROPLET_* secrets are junk/rejected, so the console is the recovery path.
-Deploy command (docker-compose v1 requires `down` first or it fails with `KeyError: 'ContainerConfig'`):
-`cd /opt/replibot && git fetch origin && git reset --hard origin/main && docker-compose down && docker-compose up -d --build`
-Auto-deploy cron remains dead. The soccer bot auto-restarts with the container and re-enters its
-running state; verify via `curl http://144.126.238.76/api/soccer/status`.
+## Workspace git quirks
+- Workspace `origin` is GitHub (chrisw159/replibot). Task-agent merges also land there — expect
+  divergence; pull/merge before pushing.
+- A stale `.git/refs/remotes/origin/main.lock` (months old) once blocked fetches AND platform task
+  merges; if fetch says "reference already exists"/lock exists with no git process, delete the lock.

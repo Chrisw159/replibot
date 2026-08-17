@@ -1,4 +1,4 @@
-- [Live droplet — access, control, broken auto-deploy](droplet-deploy-and-control.md) — prod is 144.126.238.76; pushing code often doesn't deploy; control bots via public HTTP API; SSH key in ~/.ssh gets wiped on reset.
+- [Live droplet — access, deploy, remote admin](droplet-deploy-and-control.md) — control/deploy via token-gated :8844 endpoint (secret DROPLET_ADMIN_TOKEN); auto-deploy fixed (compose v2 + disk); verify commit via /health after every deploy.
 - [LT2 lay rule + FOM back portfolio proof plans](lay-strategy-proof-plan.md) — two frozen candidate rules, 300-bet proof gates, user stays paper (<£500 bank, 5% comm); do NOT re-tune params on old data.
 - [Soccer "no more goals" bot](soccer-noglob-strategy.md) — frozen 85'/2-gap under-goals rules; score inferred from CORRECT_SCORE market; paper exits require real lay depth; stop-loss by closedAt.
 - [Betfair local geo-block](betfair-local-geoblock.md) — Betfair-dependent code can't run from the US dev IP; verify via typecheck + review, real runs happen on the droplet.
