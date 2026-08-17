@@ -280,7 +280,8 @@ async function runCycle(): Promise<void> {
   // 3) Re-check the daily stop AFTER exits/settlements so a loss realized
   //    this cycle blocks entries in this same cycle.
   const day = await todayPnl();
-  if (!dailyStopHit && day.pnl <= -num(config.dailyStopLoss)) {
+  const stopLoss = num(config.dailyStopLoss);
+  if (!dailyStopHit && stopLoss > 0 && day.pnl <= -stopLoss) {
     dailyStopHit = true;
     await slog(
       "warn",

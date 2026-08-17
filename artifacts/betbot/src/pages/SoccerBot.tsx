@@ -220,7 +220,9 @@ export default function SoccerBot() {
           {config && (
             <p className="text-xs text-muted-foreground mt-1">
               Stake <span className="font-semibold text-foreground">£{config.stake}</span> ·
-              Loss stop <span className="font-semibold text-red-400">−£{config.dailyStopLoss}</span> ·
+              Loss stop {Number(config.dailyStopLoss) > 0
+                ? <span className="font-semibold text-red-400">−£{config.dailyStopLoss}</span>
+                : <span className="font-semibold text-muted-foreground">off</span>} ·
               Target <span className="font-semibold text-emerald-400">+{config.profitTargetPct}%</span>
             </p>
           )}

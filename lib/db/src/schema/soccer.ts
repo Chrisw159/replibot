@@ -30,7 +30,8 @@ export const soccerConfigTable = pgTable("soccer_config", {
   minGoalGap: integer("min_goal_gap").notNull().default(2),
   preferBufferLine: boolean("prefer_buffer_line").notNull().default(true),
   maxConcurrent: integer("max_concurrent").notNull().default(3),
-  dailyStopLoss: numeric("daily_stop_loss", { precision: 10, scale: 2 }).notNull().default("100.00"),
+  // 0 = disabled (no daily stop-loss)
+  dailyStopLoss: numeric("daily_stop_loss", { precision: 10, scale: 2 }).notNull().default("0.00"),
   minLiquidity: numeric("min_liquidity", { precision: 12, scale: 2 }).notNull().default("5000.00"),
   checkIntervalSeconds: integer("check_interval_seconds").notNull().default(20),
   paperMode: boolean("paper_mode").notNull().default(true),
