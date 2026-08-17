@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Power, PowerOff, Layers, FlaskConical } from "lucide-react";
+import { Settings, Power, PowerOff, Layers, FlaskConical, Target } from "lucide-react";
 
 interface DutchStatus {
   isRunning?: boolean;
@@ -28,6 +28,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/", label: "Dutching Bot", icon: Layers },
     { href: "/v2/premium", label: "V2 Premium · £75", icon: FlaskConical },
     { href: "/v2/conservative", label: "V2 Conservative · £75", icon: FlaskConical },
+    { href: "/soccerbot", label: "Soccer Bot", icon: Target },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

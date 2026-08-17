@@ -446,6 +446,147 @@ paths:
                 items:
                   $ref: "#/components/schemas/StrategyPerformance"
 
+  /soccer/config:
+    get:
+      operationId: getSoccerConfig
+      tags: [soccer]
+      summary: Get soccer in-play bot configuration
+      responses:
+        "200":
+          description: Soccer bot config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerConfig"
+    patch:
+      operationId: updateSoccerConfig
+      tags: [soccer]
+      summary: Update soccer in-play bot configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SoccerConfigUpdate"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerConfig"
+
+  /soccer/start:
+    post:
+      operationId: startSoccerBot
+      tags: [soccer]
+      summary: Start the soccer in-play bot
+      responses:
+        "200":
+          description: Started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /soccer/stop:
+    post:
+      operationId: stopSoccerBot
+      tags: [soccer]
+      summary: Stop the soccer in-play bot
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /soccer/status:
+    get:
+      operationId: getSoccerStatus
+      tags: [soccer]
+      summary: Get soccer bot live status
+      responses:
+        "200":
+          description: Live status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /soccer/candidates:
+    get:
+      operationId: getSoccerCandidates
+      tags: [soccer]
+      summary: Live watchlist of in-play games being evaluated
+      responses:
+        "200":
+          description: Current candidate games and why they do/don't qualify
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoccerCandidate"
+
+  /soccer/trades:
+    get:
+      operationId: listSoccerTrades
+      tags: [soccer]
+      summary: List soccer trades (newest first)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoccerTrade"
+
+  /soccer/summary:
+    get:
+      operationId: getSoccerSummary
+      tags: [soccer]
+      summary: Aggregate P&L and performance for the soccer bot
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerSummary"
+
+  /soccer/logs:
+    get:
+      operationId: getSoccerLogs
+      tags: [soccer]
+      summary: Recent soccer bot activity log
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoccerLogEntry"
+
 components:
   schemas:
     HealthStatus:
@@ -942,3 +1083,138 @@ components:
         - totalProfit
         - roi
         - isActive
+
+    SoccerConfig:
+      type: object
+      required: [id, isRunning, stake, minOdds, maxOdds, profitTargetPct, entryMinute, minGoalGap, preferBufferLine, maxConcurrent, dailyStopLoss, minLiquidity, checkIntervalSeconds, paperMode]
+      properties:
+        id: { type: integer }
+        isRunning: { type: boolean }
+        stake: { type: number }
+        minOdds: { type: number }
+        maxOdds: { type: number }
+        profitTargetPct: { type: number }
+        entryMinute: { type: integer }
+        minGoalGap: { type: integer }
+        preferBufferLine: { type: boolean }
+        maxConcurrent: { type: integer }
+        dailyStopLoss: { type: number }
+        minLiquidity: { type: number }
+        checkIntervalSeconds: { type: integer }
+        paperMode: { type: boolean }
+        updatedAt: { type: ["string", "null"] }
+
+    SoccerConfigUpdate:
+      type: object
+      properties:
+        stake: { type: number }
+        minOdds: { type: number }
+        maxOdds: { type: number }
+        profitTargetPct: { type: number }
+        entryMinute: { type: integer }
+        minGoalGap: { type: integer }
+        preferBufferLine: { type: boolean }
+        maxConcurrent: { type: integer }
+        dailyStopLoss: { type: number }
+        minLiquidity: { type: number }
+        checkIntervalSeconds: { type: integer }
+        paperMode: { type: boolean }
+
+    SoccerStatus:
+      type: object
+      required: [isRunning, openTrades, watchedGames, todayPnl, todayTrades, dailyStopHit, paperMode]
+      properties:
+        isRunning: { type: boolean }
+        startedAt: { type: ["string", "null"] }
+        openTrades: { type: integer }
+        watchedGames: { type: integer }
+        todayPnl: { type: number }
+        todayTrades: { type: integer }
+        dailyStopHit: { type: boolean }
+        paperMode: { type: boolean }
+        lastCycleAt: { type: ["string", "null"] }
+        betfairConnected: { type: boolean }
+
+    SoccerCandidate:
+      type: object
+      required: [eventName, score, minute, verdict, reason]
+      properties:
+        eventName: { type: string }
+        competition: { type: ["string", "null"] }
+        marketId: { type: ["string", "null"] }
+        score: { type: string }
+        goalGap: { type: integer }
+        minute: { type: integer }
+        tightLine: { type: ["number", "null"] }
+        tightOdds: { type: ["number", "null"] }
+        bufferLine: { type: ["number", "null"] }
+        bufferOdds: { type: ["number", "null"] }
+        liquidity: { type: ["number", "null"] }
+        verdict: { type: string, description: "ENTERED | WATCHING | SKIPPED | OPEN" }
+        reason: { type: string }
+
+    SoccerTrade:
+      type: object
+      required: [id, eventName, marketId, marketName, selectionName, line, bufferLine, entryScore, entryMinute, entryOdds, stake, status, paper, placedAt]
+      properties:
+        id: { type: integer }
+        eventId: { type: ["string", "null"] }
+        eventName: { type: string }
+        competition: { type: ["string", "null"] }
+        marketId: { type: string }
+        marketName: { type: string }
+        selectionId: { type: ["integer", "null"] }
+        selectionName: { type: string }
+        line: { type: number }
+        bufferLine: { type: boolean }
+        entryScore: { type: string }
+        entryTotalGoals: { type: ["integer", "null"] }
+        entryMinute: { type: integer }
+        entryOdds: { type: number }
+        stake: { type: number }
+        status: { type: string, description: "OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID" }
+        exitOdds: { type: ["number", "null"] }
+        exitReason: { type: ["string", "null"] }
+        profit: { type: ["number", "null"] }
+        goalAfterEntry: { type: boolean }
+        paper: { type: boolean }
+        placedAt: { type: string }
+        closedAt: { type: ["string", "null"] }
+
+    SoccerSummary:
+      type: object
+      required: [totalTrades, openTrades, tradedOut, exitedAfterGoal, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, avgEntryOdds, winRatePct]
+      properties:
+        totalTrades: { type: integer }
+        openTrades: { type: integer }
+        tradedOut: { type: integer }
+        exitedAfterGoal: { type: integer }
+        settledWon: { type: integer }
+        settledLost: { type: integer }
+        totalPnl: { type: number }
+        totalStaked: { type: number }
+        roiPct: { type: number }
+        todayPnl: { type: number }
+        avgEntryOdds: { type: number }
+        winRatePct: { type: number }
+        dailyPnl:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoccerDailyPnl"
+
+    SoccerDailyPnl:
+      type: object
+      required: [date, pnl, trades]
+      properties:
+        date: { type: string }
+        pnl: { type: number }
+        trades: { type: integer }
+
+    SoccerLogEntry:
+      type: object
+      required: [id, level, message, createdAt]
+      properties:
+        id: { type: integer }
+        level: { type: string }
+        message: { type: string }
+        createdAt: { type: string }

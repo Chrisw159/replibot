@@ -254,6 +254,143 @@ export interface StrategyPerformance {
   isActive: boolean;
 }
 
+export interface SoccerConfig {
+  id: number;
+  isRunning: boolean;
+  stake: number;
+  minOdds: number;
+  maxOdds: number;
+  profitTargetPct: number;
+  entryMinute: number;
+  minGoalGap: number;
+  preferBufferLine: boolean;
+  maxConcurrent: number;
+  dailyStopLoss: number;
+  minLiquidity: number;
+  checkIntervalSeconds: number;
+  paperMode: boolean;
+  /** @nullable */
+  updatedAt?: string | null;
+}
+
+export interface SoccerConfigUpdate {
+  stake?: number;
+  minOdds?: number;
+  maxOdds?: number;
+  profitTargetPct?: number;
+  entryMinute?: number;
+  minGoalGap?: number;
+  preferBufferLine?: boolean;
+  maxConcurrent?: number;
+  dailyStopLoss?: number;
+  minLiquidity?: number;
+  checkIntervalSeconds?: number;
+  paperMode?: boolean;
+}
+
+export interface SoccerStatus {
+  isRunning: boolean;
+  /** @nullable */
+  startedAt?: string | null;
+  openTrades: number;
+  watchedGames: number;
+  todayPnl: number;
+  todayTrades: number;
+  dailyStopHit: boolean;
+  paperMode: boolean;
+  /** @nullable */
+  lastCycleAt?: string | null;
+  betfairConnected?: boolean;
+}
+
+export interface SoccerCandidate {
+  eventName: string;
+  /** @nullable */
+  competition?: string | null;
+  /** @nullable */
+  marketId?: string | null;
+  score: string;
+  goalGap?: number;
+  minute: number;
+  /** @nullable */
+  tightLine?: number | null;
+  /** @nullable */
+  tightOdds?: number | null;
+  /** @nullable */
+  bufferLine?: number | null;
+  /** @nullable */
+  bufferOdds?: number | null;
+  /** @nullable */
+  liquidity?: number | null;
+  /** ENTERED | WATCHING | SKIPPED | OPEN */
+  verdict: string;
+  reason: string;
+}
+
+export interface SoccerTrade {
+  id: number;
+  /** @nullable */
+  eventId?: string | null;
+  eventName: string;
+  /** @nullable */
+  competition?: string | null;
+  marketId: string;
+  marketName: string;
+  /** @nullable */
+  selectionId?: number | null;
+  selectionName: string;
+  line: number;
+  bufferLine: boolean;
+  entryScore: string;
+  /** @nullable */
+  entryTotalGoals?: number | null;
+  entryMinute: number;
+  entryOdds: number;
+  stake: number;
+  /** OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID */
+  status: string;
+  /** @nullable */
+  exitOdds?: number | null;
+  /** @nullable */
+  exitReason?: string | null;
+  /** @nullable */
+  profit?: number | null;
+  goalAfterEntry?: boolean;
+  paper: boolean;
+  placedAt: string;
+  /** @nullable */
+  closedAt?: string | null;
+}
+
+export interface SoccerDailyPnl {
+  date: string;
+  pnl: number;
+  trades: number;
+}
+
+export interface SoccerSummary {
+  totalTrades: number;
+  openTrades: number;
+  tradedOut: number;
+  exitedAfterGoal: number;
+  settledWon: number;
+  settledLost: number;
+  totalPnl: number;
+  totalStaked: number;
+  roiPct: number;
+  todayPnl: number;
+  avgEntryOdds: number;
+  winRatePct: number;
+  dailyPnl?: SoccerDailyPnl[];
+}
+
+export interface SoccerLogEntry {
+  id: number;
+  level: string;
+  message: string;
+  createdAt: string;
+}
+
 export type ListMarketsParams = {
   /**
    * @nullable
@@ -304,4 +441,22 @@ export type GetPnlChartParams = {
    * @nullable
    */
   days?: number | null;
+};
+
+export type ListSoccerTradesParams = {
+  /**
+   * @nullable
+   */
+  status?: string | null;
+  /**
+   * @nullable
+   */
+  limit?: number | null;
+};
+
+export type GetSoccerLogsParams = {
+  /**
+   * @nullable
+   */
+  limit?: number | null;
 };

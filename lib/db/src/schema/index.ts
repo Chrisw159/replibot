@@ -7,3 +7,4 @@ export * from "./aiInsights";
 export * from "./goalSignals";
 export * from "./dutchSchedule";
 export * from "./raceDataset";
+export * from "./soccer";

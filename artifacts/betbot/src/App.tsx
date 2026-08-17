@@ -9,6 +9,7 @@ import Settings from "@/pages/Settings";
 import DutchingBot from "@/pages/DutchingBot";
 import DutchingBotRace from "@/pages/DutchingBotRace";
 import DutchingBotV2 from "@/pages/DutchingBotV2";
+import SoccerBot from "@/pages/SoccerBot";
 
 const queryClient = new QueryClient();
 
@@ -19,6 +20,7 @@ function Router() {
         <Route path="/" component={DutchingBot} />
         <Route path="/dutchingbot/race/:marketId" component={DutchingBotRace} />
         <Route path="/v2/:variant" component={DutchingBotV2} />
+        <Route path="/soccerbot" component={SoccerBot} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

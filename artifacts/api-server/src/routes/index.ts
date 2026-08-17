@@ -12,6 +12,7 @@ import bookieRouter from "./bookie";
 import dutchRouter from "./dutch";
 import dutchV2Router from "./dutch-v2";
 import adminRouter from "./admin";
+import soccerRouter from "./soccer";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(bookieRouter);
 router.use(dutchRouter);
 router.use(dutchV2Router);
 router.use(adminRouter);
+router.use(soccerRouter);
 
 export default router;
