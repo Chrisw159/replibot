@@ -200,8 +200,12 @@ function parseScoreName(name: string): { home: number; away: number } | null {
 function inferScore(
   catalogue: CatalogueMarket,
   book: Book,
-): { home: number; away: number } | null {
-  if (!book.runners || !catalogue.runners) return null;
+): {
+  score: { home: number; away: number } | null;
+  detail: string;
+} {
+  if (!book.runners) return { score: null, detail: "no book runners" };
+  if (!catalogue.runners) return { score: null, detail: "no catalogue runners" };
   const names = new Map(catalogue.runners.map((r) => [r.selectionId, r.runnerName]));
   let best: { price: number; name: string } | null = null;
   for (const r of book.runners) {
@@ -212,8 +216,10 @@ function inferScore(
       best = { price, name: names.get(r.selectionId) ?? "" };
     }
   }
-  if (!best || best.price > 1.15) return null; // market not sure ⇒ neither are we
-  return parseScoreName(best.name); // null for "Any Other Home Win" etc.
+  if (!best) return { score: null, detail: "no priced active runners" };
+  const detail = `best "${best.name}" @ ${best.price}`;
+  if (best.price > 1.15) return { score: null, detail: `${detail} — market not sure` };
+  return { score: parseScoreName(best.name), detail };
 }
 
 /** Estimated match minute from kick-off (adds 15-min half-time after 45'). */
@@ -336,13 +342,14 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const book = csBooks.get(cs.marketId);
     if (!book || !book.inplay || book.status === "CLOSED") continue;
 
-    const score = inferScore(cs, book);
+    const inferred = inferScore(cs, book);
+    const score = inferred.score;
     if (!score) {
       snap.push({
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
-        reason: "Score not readable from Correct Score market (high-scoring or ambiguous game)",
+        reason: `Score not readable from Correct Score market (${inferred.detail})`,
       });
       continue;
     }
@@ -540,7 +547,7 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
         for (const cs of csMarkets) {
           const b = csBooks.get(cs.marketId);
           if (!b || !cs.event?.id) continue;
-          const score = inferScore(cs, b);
+          const { score } = inferScore(cs, b);
           if (score) currentTotals.set(cs.event.id, score.home + score.away);
         }
       }
