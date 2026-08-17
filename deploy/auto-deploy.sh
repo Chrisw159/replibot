@@ -2,7 +2,7 @@
 # Auto-deploy script — runs every minute via cron.
 # Pulls from GitHub; if there are new commits, rebuilds containers.
 
-# CRITICAL: cron runs with a stripped PATH. docker-compose lives in /usr/local/bin.
+# CRITICAL: cron runs with a stripped PATH. docker compose (v2 plugin) lives in /usr/local/bin.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 cd /opt/replibot || exit 1
@@ -40,14 +40,14 @@ echo "Deploying $BEFORE -> $AFTER" >> "$LOG"
 
 git reset --hard origin/main >> "$LOG" 2>&1 || { echo "git reset FAILED" >> "$LOG"; exit 1; }
 
-# Use sudo-less docker if available; fall back to docker-compose
-if ! command -v docker-compose >/dev/null 2>&1; then
-  echo "docker-compose NOT FOUND in PATH=$PATH" >> "$LOG"
+# Use sudo-less docker if available; fall back to docker compose
+if ! command -v docker compose >/dev/null 2>&1; then
+  echo "docker compose NOT FOUND in PATH=$PATH" >> "$LOG"
   exit 1
 fi
 
-docker-compose down >> "$LOG" 2>&1 || echo "(down had errors, continuing)" >> "$LOG"
-if docker-compose up -d --build >> "$LOG" 2>&1; then
+docker compose down >> "$LOG" 2>&1 || echo "(down had errors, continuing)" >> "$LOG"
+if docker compose up -d --build >> "$LOG" 2>&1; then
   echo "Deploy complete at $(date -u +%FT%TZ)" >> "$LOG"
 else
   echo "BUILD FAILED at $(date -u +%FT%TZ)" >> "$LOG"
