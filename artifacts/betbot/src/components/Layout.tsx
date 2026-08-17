@@ -96,14 +96,3 @@ export function Layout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-interface SoccerStatus {
-  isRunning?: boolean;
-  paperMode?: boolean;
-}
-
-async function fetchSoccerStatus(): Promise<SoccerStatus> {
-  const res = await fetch("/api/soccer/status");
-  if (!res.ok) return {};
-  return res.json();
-}
