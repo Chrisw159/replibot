@@ -125,6 +125,10 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
               <input type="checkbox" name="paperMode" checked={formData.paperMode} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
               <span>Paper Trading Mode</span>
             </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="blockReEntryAfterProfit" checked={formData.blockReEntryAfterProfit ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
+              <span>Block re-entry after profit taken on same game today</span>
+            </label>
           </div>
         </div>
 
@@ -343,6 +347,11 @@ export default function SoccerBot() {
                            <span>·</span>
                            <span>Liq: £{c.liquidity ?? 0}</span>
                         </div>
+                        {c.verdict === "SKIPPED" && c.reason && (
+                          <div className="text-[11px] text-amber-400/70 mt-1 leading-snug" title={c.reason}>
+                            {c.reason}
+                          </div>
+                        )}
                       </div>
                       <div className="text-right flex-shrink-0">
                         <div className="text-xs font-mono">{c.tightLine ? `U${c.tightLine}` : 'Line?'} @ <span className="font-bold text-foreground">{c.tightOdds?.toFixed(2) ?? '-'}</span></div>

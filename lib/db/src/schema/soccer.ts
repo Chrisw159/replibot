@@ -35,6 +35,10 @@ export const soccerConfigTable = pgTable("soccer_config", {
   minLiquidity: numeric("min_liquidity", { precision: 12, scale: 2 }).notNull().default("5000.00"),
   checkIntervalSeconds: integer("check_interval_seconds").notNull().default(20),
   paperMode: boolean("paper_mode").notNull().default(true),
+  // When true (default), any event with a TRADED_OUT or EXITED_AFTER_GOAL trade
+  // placed today is blocked from re-entry — prevents doubling exposure to one
+  // late goal in the same game after profit has already been banked.
+  blockReEntryAfterProfit: boolean("block_re_entry_after_profit").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()

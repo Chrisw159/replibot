@@ -269,6 +269,7 @@ export interface SoccerConfig {
   minLiquidity: number;
   checkIntervalSeconds: number;
   paperMode: boolean;
+  blockReEntryAfterProfit: boolean;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -286,6 +287,7 @@ export interface SoccerConfigUpdate {
   minLiquidity?: number;
   checkIntervalSeconds?: number;
   paperMode?: boolean;
+  blockReEntryAfterProfit?: boolean;
 }
 
 export interface SoccerStatus {

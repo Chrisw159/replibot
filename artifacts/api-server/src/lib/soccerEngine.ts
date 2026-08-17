@@ -313,6 +313,22 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   }
   const openEventIds = new Set(openRows.map((t) => t.eventId).filter(Boolean));
 
+  // Events where we already banked profit today — block re-entry when the
+  // flag is set, to avoid doubling exposure on the same game.
+  const profitedEventIds = new Set<string>();
+  if (config.blockReEntryAfterProfit) {
+    const profited = await db
+      .select({ eventId: soccerTradesTable.eventId })
+      .from(soccerTradesTable)
+      .where(
+        sql`${soccerTradesTable.status} IN ('TRADED_OUT', 'EXITED_AFTER_GOAL')
+          AND ${soccerTradesTable.closedAt} >= date_trunc('day', now())`,
+      );
+    for (const r of profited) {
+      if (r.eventId) profitedEventIds.add(r.eventId);
+    }
+  }
+
   // Discover: correct-score markets index the live games
   const csMarkets = await listInPlaySoccerMarkets(["CORRECT_SCORE"], 200);
   const snap: SoccerCandidateSnapshot[] = openRows.map((t) => openSnapshot(t));
@@ -338,6 +354,16 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const competition = cs.competition?.name ?? null;
     const minute = estimateMinute(cs.marketStartTime);
     if (eventId && openEventIds.has(eventId)) continue;
+
+    if (eventId && profitedEventIds.has(eventId)) {
+      snap.push({
+        eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
+        tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
+        liquidity: null, verdict: "SKIPPED",
+        reason: "Already banked profit on this game today — re-entry blocked (blockReEntryAfterProfit)",
+      });
+      continue;
+    }
 
     const book = csBooks.get(cs.marketId);
     if (!book || !book.inplay || book.status === "CLOSED") continue;

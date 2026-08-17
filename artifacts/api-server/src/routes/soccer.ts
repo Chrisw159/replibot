@@ -34,6 +34,7 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     minLiquidity: num(c.minLiquidity),
     checkIntervalSeconds: c.checkIntervalSeconds,
     paperMode: c.paperMode,
+    blockReEntryAfterProfit: c.blockReEntryAfterProfit,
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }
@@ -114,6 +115,7 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.checkIntervalSeconds !== undefined)
     patch.checkIntervalSeconds = Math.max(10, Math.trunc(Number(b.checkIntervalSeconds)));
   if (b.paperMode !== undefined) patch.paperMode = Boolean(b.paperMode);
+  if (b.blockReEntryAfterProfit !== undefined) patch.blockReEntryAfterProfit = Boolean(b.blockReEntryAfterProfit);
 
   const current = await getSoccerConfig();
   if (Object.keys(patch).length > 0) {
