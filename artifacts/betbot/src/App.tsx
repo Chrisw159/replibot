@@ -14,7 +14,7 @@ function Router() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={() => <Redirect to="/soccerbot" />} />
+        <Route path="/" component={SoccerBot} />
         <Route path="/soccerbot" component={SoccerBot} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />

@@ -2,6 +2,17 @@ import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Power, PowerOff, Target } from "lucide-react";
 
+interface SoccerStatus {
+  isRunning?: boolean;
+  paperMode?: boolean;
+}
+
+async function fetchSoccerStatus(): Promise<SoccerStatus> {
+  const res = await fetch("/api/soccer/status");
+  if (!res.ok) return {};
+  return res.json();
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { data: status } = useQuery<SoccerStatus>({

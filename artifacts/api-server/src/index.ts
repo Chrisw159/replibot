@@ -1,5 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startDutchBot } from "./lib/dutchEngine";
+import { autoResumeDutchV2Bots } from "./lib/dutchV2Engine";
 import { autoResumeSoccerBot } from "./lib/soccerEngine";
 import { db, botConfigTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -45,9 +47,12 @@ app.listen(port, (err) => {
         logger.info("FORCE_DATA_COLLECTION=true — data-collection mode enforced; no bets will be placed");
       }
 
-      // Ensure Dutch bot flag is cleared — horse-racing bots have been retired.
-      await db.update(botConfigTable).set({ dutchIsRunning: false });
-
+      const [config] = await db.select().from(botConfigTable).limit(1);
+      if (config?.dutchIsRunning) {
+        logger.info("Auto-resuming Dutch Bot after server restart");
+        await startDutchBot();
+      }
+      await autoResumeDutchV2Bots();
       await autoResumeSoccerBot();
     } catch (err) {
       logger.error({ err }, "Failed to auto-resume bots on startup");
