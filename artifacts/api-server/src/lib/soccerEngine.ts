@@ -324,10 +324,21 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     let scoreSource = "odds";
     if (feed) {
       if (score && (score.home !== feed.home || score.away !== feed.away)) {
+        // Feed and market disagree — with both sources delayed, this usually
+        // means a goal is in flight. Don't enter on stale data; re-check next
+        // cycle when both have caught up.
         await slog(
           "warn",
-          `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — trusting the feed`,
+          `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — standing aside this cycle`,
         );
+        snap.push({
+          eventName, competition, marketId: null,
+          score: `${feed.home}-${feed.away}?`, goalGap: 0, minute,
+          tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
+          liquidity: null, verdict: "SKIPPED",
+          reason: `Feed (${feed.home}-${feed.away}) and market (${score.home}-${score.away}) disagree — possible goal in flight, waiting for both to agree`,
+        });
+        continue;
       }
       score = { home: feed.home, away: feed.away };
       scoreSource = "feed";
