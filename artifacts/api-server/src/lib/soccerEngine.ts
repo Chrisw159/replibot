@@ -253,12 +253,13 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   const openRows = await db
     .select()
     .from(soccerTradesTable)
-    .where(eq(soccerTradesTable.status, "OPEN"));
-  if (openRows.length >= config.maxConcurrent) {
+    .where(inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]));
+  const openEventIds = new Set(openRows.map((t) => t.eventId).filter(Boolean));
+  // Concurrency is per GAME (an event may carry one trade per strategy)
+  if (openEventIds.size >= config.maxConcurrent) {
     candidates = openRows.map((t) => openSnapshot(t));
     return;
   }
-  const openEventIds = new Set(openRows.map((t) => t.eventId).filter(Boolean));
 
   // Events where we already banked profit today — block re-entry when the
   // flag is set, to avoid doubling exposure on the same game.
@@ -293,7 +294,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
   const csBooks = await getBooks(lateGames.map((m) => m.marketId));
   const feedGames = await fetchLiveScores();
-  let slots = config.maxConcurrent - openRows.length;
+  let slots = config.maxConcurrent - openEventIds.size;
 
   for (const cs of lateGames) {
     if (slots <= 0) break;
@@ -461,10 +462,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       continue;
     }
 
-    // ENTER (paper): record at the visible back price
+    // ENTER (paper): record at the visible back price — one trade per enabled strategy
     const stake = num(config.stake);
     const isBuffer = pick.line === bufferLine;
-    await db.insert(soccerTradesTable).values({
+    const baseTrade = {
       eventId,
       eventName,
       competition,
@@ -481,13 +482,33 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       stake: stake.toFixed(2),
       status: "OPEN",
       paper: config.paperMode,
-    });
+    };
+    const entered: string[] = [];
+    if (config.strategyTradeOutEnabled) {
+      await db.insert(soccerTradesTable).values({ ...baseTrade, strategy: "TRADE_OUT" });
+      entered.push("TRADE_OUT");
+    }
+    if (config.strategyLayLockEnabled) {
+      // Resting lay, same stake: matched ⇒ layTargetPct% net if the under
+      // holds, breakeven if a goal breaks it. Net target needs gross B−L of
+      // target/(1−commission). Floor at 1.01 (max lock available).
+      const targetFrac = num(config.layTargetPct) / 100;
+      const ideal = pick.odds - targetFrac / (1 - COMMISSION);
+      const layPrice = Math.max(1.01, Math.round(ideal * 100) / 100);
+      await db.insert(soccerTradesTable).values({
+        ...baseTrade,
+        strategy: "LAY_LOCK",
+        layPrice: layPrice.toFixed(2),
+      });
+      entered.push(`LAY_LOCK (resting lay @ ${layPrice.toFixed(2)}${ideal < 1.01 ? ", capped at 1.01 — full target not reachable from these odds" : ""})`);
+    }
+    if (entered.length === 0) continue; // both strategies disabled
     slots--;
     if (eventId) openEventIds.add(eventId);
     await slog(
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
-        `(${isBuffer ? "BUFFER line, 2-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"})`,
+        `(${isBuffer ? "BUFFER line, 2-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) [${entered.join(" + ")}]`,
     );
     snap.push({
       ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
@@ -601,6 +622,36 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
       }
     }
 
+    // LAY_LOCK strategy: the only management is watching the resting lay.
+    // It matches (paper) when the market's best back offer trades down to
+    // our price with enough size to absorb the stake.
+    if (trade.strategy === "LAY_LOCK") {
+      if (book.status !== "OPEN" || !trade.layPrice) continue;
+      // Paper fill heuristic (threshold-cross): our resting lay at L sits in
+      // the availableToBack queue. Once the best OTHER back offer is strictly
+      // below L, our price is the best in the book and incoming back flow
+      // takes it. Strict `<` keeps the simulation conservative — touching L
+      // exactly doesn't count (we'd be behind the existing queue at L).
+      const backOffer = runner?.ex?.availableToBack?.[0];
+      const layPrice = num(trade.layPrice);
+      if (backOffer && backOffer.price < layPrice) {
+        await db
+          .update(soccerTradesTable)
+          .set({
+            status: "HEDGED",
+            layMatchedAt: new Date(),
+            exitOdds: layPrice.toFixed(2),
+            exitReason: `Resting lay matched @ ${layPrice.toFixed(2)} — locked: win = target %, lose = breakeven`,
+          })
+          .where(eq(soccerTradesTable.id, trade.id));
+        await slog(
+          "info",
+          `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ ${layPrice.toFixed(2)} (backed @ ${entryOdds}); outcome locked to +£${(stake * (entryOdds - layPrice) * (1 - COMMISSION)).toFixed(2)} or £0`,
+        );
+      }
+      continue;
+    }
+
     if (!layOffer || book.status !== "OPEN") continue;
 
     // Executable-hedge check: the equal-profit lay stake is S*B/O — the quoted
@@ -656,7 +707,7 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
     .from(soccerTradesTable)
-    .where(inArray(soccerTradesTable.status, ["OPEN"]));
+    .where(inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]));
   if (open.length === 0) return;
 
   interface SettleBook {
@@ -683,6 +734,41 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
 
     const stake = num(trade.stake);
     const entryOdds = num(trade.entryOdds);
+
+    if (trade.status === "HEDGED") {
+      // Lay was matched: outcome is locked either way.
+      const layPrice = num(trade.layPrice);
+      if (runner.status === "WINNER") {
+        const net = stake * (entryOdds - layPrice) * (1 - COMMISSION);
+        await db
+          .update(soccerTradesTable)
+          .set({
+            status: "SETTLED_WON",
+            exitReason: `Held to full time with lay locked @ ${layPrice.toFixed(2)}`,
+            profit: net.toFixed(2),
+            closedAt: new Date(),
+          })
+          .where(eq(soccerTradesTable.id, trade.id));
+        await slog("info", `SETTLED WON (LAY_LOCK) ${trade.eventName} +£${net.toFixed(2)}`);
+      } else if (runner.status === "LOSER") {
+        await db
+          .update(soccerTradesTable)
+          .set({
+            status: "SETTLED_LOST",
+            exitReason: `Line broken — lay hedge @ ${layPrice.toFixed(2)} returned the stake (breakeven)`,
+            profit: "0.00",
+            closedAt: new Date(),
+          })
+          .where(eq(soccerTradesTable.id, trade.id));
+        await slog("info", `SETTLED BREAKEVEN (LAY_LOCK) ${trade.eventName} £0.00 — hedge did its job`);
+      } else if (runner.status === "REMOVED") {
+        await db
+          .update(soccerTradesTable)
+          .set({ status: "VOID", exitReason: "Market voided/removed", profit: "0.00", closedAt: new Date() })
+          .where(eq(soccerTradesTable.id, trade.id));
+      }
+      continue;
+    }
 
     if (runner.status === "WINNER") {
       const net = stake * (entryOdds - 1) * (1 - COMMISSION);

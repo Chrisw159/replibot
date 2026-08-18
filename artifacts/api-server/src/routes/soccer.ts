@@ -35,6 +35,9 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     checkIntervalSeconds: c.checkIntervalSeconds,
     paperMode: c.paperMode,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
+    strategyTradeOutEnabled: c.strategyTradeOutEnabled,
+    strategyLayLockEnabled: c.strategyLayLockEnabled,
+    layTargetPct: num(c.layTargetPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }
@@ -56,6 +59,9 @@ function serializeTrade(t: typeof soccerTradesTable.$inferSelect) {
     entryMinute: t.entryMinute,
     entryOdds: num(t.entryOdds),
     stake: num(t.stake),
+    strategy: t.strategy,
+    layPrice: t.layPrice === null ? null : num(t.layPrice),
+    layMatchedAt: t.layMatchedAt?.toISOString() ?? null,
     status: t.status,
     exitOdds: t.exitOdds === null ? null : num(t.exitOdds),
     exitReason: t.exitReason,
@@ -71,7 +77,7 @@ async function statusPayload() {
   const open = await db
     .select({ n: sql<number>`count(*)` })
     .from(soccerTradesTable)
-    .where(eq(soccerTradesTable.status, "OPEN"));
+    .where(sql`${soccerTradesTable.status} IN ('OPEN', 'HEDGED')`);
   const today = await db
     .select({
       pnl: sql<string>`coalesce(sum(${soccerTradesTable.profit}), 0)`,
@@ -116,6 +122,12 @@ router.patch("/soccer/config", async (req, res) => {
     patch.checkIntervalSeconds = Math.max(10, Math.trunc(Number(b.checkIntervalSeconds)));
   if (b.paperMode !== undefined) patch.paperMode = Boolean(b.paperMode);
   if (b.blockReEntryAfterProfit !== undefined) patch.blockReEntryAfterProfit = Boolean(b.blockReEntryAfterProfit);
+  if (b.strategyTradeOutEnabled !== undefined) patch.strategyTradeOutEnabled = Boolean(b.strategyTradeOutEnabled);
+  if (b.strategyLayLockEnabled !== undefined) patch.strategyLayLockEnabled = Boolean(b.strategyLayLockEnabled);
+  if (b.layTargetPct !== undefined) {
+    const v = Number(b.layTargetPct);
+    if (Number.isFinite(v) && v >= 0) patch.layTargetPct = v.toFixed(2);
+  }
 
   const current = await getSoccerConfig();
   if (Object.keys(patch).length > 0) {
@@ -154,7 +166,7 @@ router.get("/soccer/trades", async (req, res) => {
 
 router.get("/soccer/summary", async (_req, res) => {
   const rows = await db.select().from(soccerTradesTable);
-  const closed = rows.filter((t) => t.status !== "OPEN");
+  const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
   const count = (s: string) => rows.filter((t) => t.status === s).length;
   const totalPnl = closed.reduce((s, t) => s + num(t.profit), 0);
   const totalStaked = closed.reduce((s, t) => s + num(t.stake), 0);
@@ -174,9 +186,24 @@ router.get("/soccer/summary", async (_req, res) => {
     byDay.set(d, e);
   }
 
+  const byStrategy = ["TRADE_OUT", "LAY_LOCK"].map((strat) => {
+    const all = rows.filter((t) => t.strategy === strat);
+    const done = all.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
+    const pnl = done.reduce((s, t) => s + num(t.profit), 0);
+    const staked = done.reduce((s, t) => s + num(t.stake), 0);
+    return {
+      strategy: strat,
+      trades: all.length,
+      openTrades: all.length - done.length,
+      pnl: Math.round(pnl * 100) / 100,
+      staked: Math.round(staked * 100) / 100,
+      roiPct: staked > 0 ? Math.round((pnl / staked) * 10000) / 100 : 0,
+    };
+  });
+
   res.json({
     totalTrades: rows.length,
-    openTrades: count("OPEN"),
+    openTrades: count("OPEN") + count("HEDGED"),
     tradedOut: count("TRADED_OUT"),
     exitedAfterGoal: count("EXITED_AFTER_GOAL"),
     settledWon: count("SETTLED_WON"),
@@ -193,6 +220,7 @@ router.get("/soccer/summary", async (_req, res) => {
     dailyPnl: [...byDay.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, e]) => ({ date, pnl: Math.round(e.pnl * 100) / 100, trades: e.trades })),
+    byStrategy,
   });
 });
 

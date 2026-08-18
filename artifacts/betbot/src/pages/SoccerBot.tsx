@@ -116,6 +116,22 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             </div>
           </div>
           
+          <div className="space-y-3 pt-2 border-t border-border/60 mt-2">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Strategies</div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="strategyTradeOutEnabled" checked={formData.strategyTradeOutEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
+              <span>Strategy 1 — Trade out at profit target</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="strategyLayLockEnabled" checked={formData.strategyLayLockEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
+              <span>Strategy 2 — Instant resting lay (lock win% / breakeven)</span>
+            </label>
+            <div className="space-y-1.5">
+              <label className="text-muted-foreground text-xs">Strategy 2 locked return (%)</label>
+              <input type="number" name="layTargetPct" value={formData.layTargetPct ?? 30} onChange={handleChange} className={inputClass} />
+            </div>
+          </div>
+
           <div className="space-y-3 pt-2">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="preferBufferLine" checked={formData.preferBufferLine} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
@@ -304,6 +320,25 @@ export default function SoccerBot() {
         ))}
       </div>
 
+      {/* Strategy comparison */}
+      {summary?.byStrategy && summary.byStrategy.some(s => s.trades > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {summary.byStrategy.map(s => (
+            <div key={s.strategy} className="rounded-xl border border-border/60 bg-card/40 px-5 py-4">
+              <div className="text-xs text-muted-foreground mb-1">
+                {s.strategy === "LAY_LOCK" ? "Strategy 2 — Instant lay lock" : "Strategy 1 — Trade out"}
+              </div>
+              <div className={`text-xl font-bold tabular-nums ${s.pnl > 0 ? "text-emerald-400" : s.pnl < 0 ? "text-red-400" : "text-foreground"}`}>
+                {s.pnl >= 0 ? "+" : ""}£{s.pnl.toFixed(2)}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {s.trades} trades · {s.openTrades} open · ROI {s.roiPct}%
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Watchlist & Trades */}
         <div className="lg:col-span-2 space-y-6">
@@ -403,16 +438,25 @@ export default function SoccerBot() {
                              {t.selectionName} · Entry {t.entryMinute}' @ {t.entryScore}
                            </div>
                         </div>
-                        <Badge className={`text-[10px] uppercase font-bold tracking-wider ${
-                          t.status === "OPEN" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
-                          t.status === "TRADED_OUT" || t.status === "SETTLED_WON" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
-                          t.status === "EXITED_AFTER_GOAL" || t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
-                          "bg-muted text-muted-foreground border-border"
-                        }`}>{t.status.replace(/_/g, ' ')}</Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge className={`text-[10px] uppercase font-bold tracking-wider ${
+                            t.status === "OPEN" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                            t.status === "HEDGED" ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
+                            t.status === "TRADED_OUT" || t.status === "SETTLED_WON" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                            t.status === "EXITED_AFTER_GOAL" || t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                            "bg-muted text-muted-foreground border-border"
+                          }`}>{t.status === "HEDGED" ? "LAY MATCHED" : t.status.replace(/_/g, ' ')}</Badge>
+                          <Badge className="text-[9px] uppercase tracking-wider bg-muted/60 text-muted-foreground border-border">
+                            {t.strategy === "LAY_LOCK" ? "S2 · lay lock" : "S1 · trade out"}
+                          </Badge>
+                        </div>
                      </div>
                      <div className="flex justify-between items-end">
                        <div className="text-xs text-muted-foreground space-y-0.5">
                           <div>Stake: £{t.stake} <span className="font-medium text-foreground">@ {t.entryOdds.toFixed(2)}</span></div>
+                          {t.strategy === "LAY_LOCK" && t.layPrice != null && t.status === "OPEN" && (
+                            <div>Resting lay <span className="font-medium text-foreground">@ {t.layPrice.toFixed(2)}</span> (waiting to match)</div>
+                          )}
                           {(t.exitOdds || t.exitReason) && (
                             <div>Exit: {t.exitOdds ? <span className="font-medium text-foreground">@ {t.exitOdds.toFixed(2)}</span> : ''} {t.exitReason ? `(${t.exitReason})` : ''}</div>
                           )}

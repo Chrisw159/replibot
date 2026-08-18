@@ -39,6 +39,12 @@ export const soccerConfigTable = pgTable("soccer_config", {
   // placed today is blocked from re-entry — prevents doubling exposure to one
   // late goal in the same game after profit has already been banked.
   blockReEntryAfterProfit: boolean("block_re_entry_after_profit").notNull().default(true),
+  // Strategy toggles: TRADE_OUT = original (+15% net trade-out, breakeven after
+  // goal). LAY_LOCK = immediately rest a lay at entry sized so a match locks
+  // layTargetPct net profit if the bet wins and breakeven if it loses.
+  strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(true),
+  strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
+  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("30.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
@@ -61,7 +67,13 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   entryMinute: integer("entry_minute").notNull(), // estimated match minute
   entryOdds: numeric("entry_odds", { precision: 6, scale: 2 }).notNull(),
   stake: numeric("stake", { precision: 10, scale: 2 }).notNull(),
-  // OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID
+  // TRADE_OUT (original) | LAY_LOCK (resting lay at entry)
+  strategy: text("strategy").notNull().default("TRADE_OUT"),
+  // LAY_LOCK: the resting lay order (same stake as the back)
+  layPrice: numeric("lay_price", { precision: 6, scale: 2 }),
+  layMatchedAt: timestamp("lay_matched_at", { withTimezone: true }),
+  // OPEN | HEDGED (lay matched, awaiting FT) | TRADED_OUT | EXITED_AFTER_GOAL
+  // | SETTLED_WON | SETTLED_LOST | VOID
   status: text("status").notNull().default("OPEN"),
   exitOdds: numeric("exit_odds", { precision: 6, scale: 2 }),
   exitReason: text("exit_reason"),

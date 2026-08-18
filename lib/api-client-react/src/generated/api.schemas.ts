@@ -269,7 +269,9 @@ export interface SoccerConfig {
   minLiquidity: number;
   checkIntervalSeconds: number;
   paperMode: boolean;
-  blockReEntryAfterProfit: boolean;
+  strategyTradeOutEnabled?: boolean;
+  strategyLayLockEnabled?: boolean;
+  layTargetPct?: number;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -287,7 +289,9 @@ export interface SoccerConfigUpdate {
   minLiquidity?: number;
   checkIntervalSeconds?: number;
   paperMode?: boolean;
-  blockReEntryAfterProfit?: boolean;
+  strategyTradeOutEnabled?: boolean;
+  strategyLayLockEnabled?: boolean;
+  layTargetPct?: number;
 }
 
 export interface SoccerStatus {
@@ -349,7 +353,13 @@ export interface SoccerTrade {
   entryMinute: number;
   entryOdds: number;
   stake: number;
-  /** OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID */
+  /** TRADE_OUT | LAY_LOCK */
+  strategy?: string;
+  /** @nullable */
+  layPrice?: number | null;
+  /** @nullable */
+  layMatchedAt?: string | null;
+  /** OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID */
   status: string;
   /** @nullable */
   exitOdds?: number | null;
@@ -370,6 +380,16 @@ export interface SoccerDailyPnl {
   trades: number;
 }
 
+export interface SoccerStrategySummary {
+  /** TRADE_OUT | LAY_LOCK */
+  strategy: string;
+  trades: number;
+  openTrades: number;
+  pnl: number;
+  staked: number;
+  roiPct: number;
+}
+
 export interface SoccerSummary {
   totalTrades: number;
   openTrades: number;
@@ -384,6 +404,7 @@ export interface SoccerSummary {
   avgEntryOdds: number;
   winRatePct: number;
   dailyPnl?: SoccerDailyPnl[];
+  byStrategy?: SoccerStrategySummary[];
 }
 
 export interface SoccerLogEntry {

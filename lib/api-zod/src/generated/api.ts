@@ -466,6 +466,9 @@ export const GetSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
+  strategyTradeOutEnabled: zod.boolean().optional(),
+  strategyLayLockEnabled: zod.boolean().optional(),
+  layTargetPct: zod.number().optional(),
   updatedAt: zod.string().nullish(),
 });
 
@@ -485,6 +488,9 @@ export const UpdateSoccerConfigBody = zod.object({
   minLiquidity: zod.number().optional(),
   checkIntervalSeconds: zod.number().optional(),
   paperMode: zod.boolean().optional(),
+  strategyTradeOutEnabled: zod.boolean().optional(),
+  strategyLayLockEnabled: zod.boolean().optional(),
+  layTargetPct: zod.number().optional(),
 });
 
 export const UpdateSoccerConfigResponse = zod.object({
@@ -502,6 +508,9 @@ export const UpdateSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
+  strategyTradeOutEnabled: zod.boolean().optional(),
+  strategyLayLockEnabled: zod.boolean().optional(),
+  layTargetPct: zod.number().optional(),
   updatedAt: zod.string().nullish(),
 });
 
@@ -599,10 +608,13 @@ export const ListSoccerTradesResponseItem = zod.object({
   entryMinute: zod.number(),
   entryOdds: zod.number(),
   stake: zod.number(),
+  strategy: zod.string().optional().describe("TRADE_OUT | LAY_LOCK"),
+  layPrice: zod.number().nullish(),
+  layMatchedAt: zod.string().nullish(),
   status: zod
     .string()
     .describe(
-      "OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID",
+      "OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID",
     ),
   exitOdds: zod.number().nullish(),
   exitReason: zod.string().nullish(),
@@ -636,6 +648,18 @@ export const GetSoccerSummaryResponse = zod.object({
         date: zod.string(),
         pnl: zod.number(),
         trades: zod.number(),
+      }),
+    )
+    .optional(),
+  byStrategy: zod
+    .array(
+      zod.object({
+        strategy: zod.string().describe("TRADE_OUT | LAY_LOCK"),
+        trades: zod.number(),
+        openTrades: zod.number(),
+        pnl: zod.number(),
+        staked: zod.number(),
+        roiPct: zod.number(),
       }),
     )
     .optional(),

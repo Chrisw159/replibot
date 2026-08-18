@@ -1102,6 +1102,9 @@ components:
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean }
+        strategyTradeOutEnabled: { type: boolean }
+        strategyLayLockEnabled: { type: boolean }
+        layTargetPct: { type: number }
         updatedAt: { type: ["string", "null"] }
 
     SoccerConfigUpdate:
@@ -1119,6 +1122,9 @@ components:
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean }
+        strategyTradeOutEnabled: { type: boolean }
+        strategyLayLockEnabled: { type: boolean }
+        layTargetPct: { type: number }
 
     SoccerStatus:
       type: object
@@ -1172,7 +1178,10 @@ components:
         entryMinute: { type: integer }
         entryOdds: { type: number }
         stake: { type: number }
-        status: { type: string, description: "OPEN | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID" }
+        strategy: { type: string, description: "TRADE_OUT | LAY_LOCK" }
+        layPrice: { type: ["number", "null"] }
+        layMatchedAt: { type: ["string", "null"] }
+        status: { type: string, description: "OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID" }
         exitOdds: { type: ["number", "null"] }
         exitReason: { type: ["string", "null"] }
         profit: { type: ["number", "null"] }
@@ -1201,6 +1210,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SoccerDailyPnl"
+        byStrategy:
+          type: array
+          items:
+            $ref: "#/components/schemas/SoccerStrategySummary"
+
+    SoccerStrategySummary:
+      type: object
+      required: [strategy, trades, openTrades, pnl, staked, roiPct]
+      properties:
+        strategy: { type: string, description: "TRADE_OUT | LAY_LOCK" }
+        trades: { type: integer }
+        openTrades: { type: integer }
+        pnl: { type: number }
+        staked: { type: number }
+        roiPct: { type: number }
 
     SoccerDailyPnl:
       type: object
