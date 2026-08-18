@@ -43,6 +43,7 @@ import {
   ouLineFromMarketType,
   hedgeProfit,
 } from "./soccerHelpers";
+import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 
 const SOCCER_EVENT_TYPE = "1";
 
@@ -291,6 +292,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   }
 
   const csBooks = await getBooks(lateGames.map((m) => m.marketId));
+  const feedGames = await fetchLiveScores();
   let slots = config.maxConcurrent - openRows.length;
 
   for (const cs of lateGames) {
@@ -314,14 +316,28 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const book = csBooks.get(cs.marketId);
     if (!book || !book.inplay || book.status === "CLOSED") continue;
 
+    // Primary score source: real live-score feed. Fallback: Correct Score
+    // market inference (obscure competitions the feed doesn't cover).
     const inferred = inferScore(cs, book);
-    const score = inferred.score;
+    const feed = matchFeedScore(feedGames, eventName);
+    let score = inferred.score;
+    let scoreSource = "odds";
+    if (feed) {
+      if (score && (score.home !== feed.home || score.away !== feed.away)) {
+        await slog(
+          "warn",
+          `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — trusting the feed`,
+        );
+      }
+      score = { home: feed.home, away: feed.away };
+      scoreSource = "feed";
+    }
     if (!score) {
       snap.push({
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
-        reason: `Score not readable from Correct Score market (${inferred.detail})`,
+        reason: `No live-score feed match and score not readable from Correct Score market (${inferred.detail})`,
       });
       continue;
     }
@@ -460,7 +476,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     await slog(
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
-        `(${isBuffer ? "BUFFER line, 2-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)})`,
+        `(${isBuffer ? "BUFFER line, 2-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"})`,
     );
     snap.push({
       ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
@@ -499,11 +515,21 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
 
   const books = await getBooks(open.map((t) => t.marketId));
 
-  // Goal detection: re-read the CORRECT_SCORE market for open trades' events
-  // and compare the inferred total goals with entryTotalGoals. Far more
-  // reliable than price heuristics.
+  // Goal detection, primary source: the real live-score feed (matched by
+  // event name). Secondary: re-read the CORRECT_SCORE market and compare the
+  // inferred total goals with entryTotalGoals. Last resort: price spike.
   const currentTotals = new Map<string, number>(); // eventId -> total goals
   const openEventIds = [...new Set(open.map((t) => t.eventId).filter((x): x is string => !!x))];
+  try {
+    const feedGames = await fetchLiveScores();
+    for (const t of open) {
+      if (!t.eventId) continue;
+      const feed = matchFeedScore(feedGames, t.eventName);
+      if (feed) currentTotals.set(t.eventId, feed.home + feed.away);
+    }
+  } catch {
+    /* feed is best-effort */
+  }
   if (openEventIds.length > 0) {
     try {
       const csMarkets = await apiBetfairRequest<CatalogueMarket[]>(
@@ -520,7 +546,10 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
           const b = csBooks.get(cs.marketId);
           if (!b || !cs.event?.id) continue;
           const { score } = inferScore(cs, b);
-          if (score) currentTotals.set(cs.event.id, score.home + score.away);
+          // Feed score (if matched) wins; CS inference only fills gaps.
+          if (score && !currentTotals.has(cs.event.id)) {
+            currentTotals.set(cs.event.id, score.home + score.away);
+          }
         }
       }
     } catch {
