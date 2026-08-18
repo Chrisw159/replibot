@@ -1,5 +1,9 @@
 # REPLIBOT — Betfair AI Betting Bot
 
+## User preferences
+
+- **NO daily stop-loss on the soccer bot.** The user has said this multiple times. `dailyStopLoss` stays 0 (disabled) — never re-enable it or "fix" it back to a limit without an explicit request.
+
 ## Overview
 
 Full-stack automated betting bot for the Betfair Exchange with AI decision-making, live market browsing, strategy management, and P&L tracking. Similar to MarketFeederPro.
