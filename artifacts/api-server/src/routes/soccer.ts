@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { soccerConfigTable, soccerTradesTable, botLogsTable } from "@workspace/db/schema";
 import {
@@ -150,22 +150,50 @@ router.get("/soccer/status", async (_req, res) => {
   res.json(await statusPayload());
 });
 
-router.get("/soccer/candidates", async (_req, res) => {
-  res.json(getSoccerCandidatesSnapshot());
+router.get("/soccer/candidates", async (req, res) => {
+  const strategy =
+    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
+      ? req.query.strategy
+      : undefined;
+  res.json(getSoccerCandidatesSnapshot(strategy));
 });
 
 router.get("/soccer/trades", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 100), 500);
   const status = typeof req.query.status === "string" ? req.query.status : null;
+  const strategy =
+    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
+      ? req.query.strategy
+      : null;
   const base = db.select().from(soccerTradesTable);
-  const rows = status
-    ? await base.where(eq(soccerTradesTable.status, status)).orderBy(desc(soccerTradesTable.placedAt)).limit(limit)
-    : await base.orderBy(desc(soccerTradesTable.placedAt)).limit(limit);
+  const rows =
+    status && strategy
+      ? await base
+          .where(and(eq(soccerTradesTable.status, status), eq(soccerTradesTable.strategy, strategy)))
+          .orderBy(desc(soccerTradesTable.placedAt))
+          .limit(limit)
+      : status
+        ? await base
+            .where(eq(soccerTradesTable.status, status))
+            .orderBy(desc(soccerTradesTable.placedAt))
+            .limit(limit)
+        : strategy
+          ? await base
+              .where(eq(soccerTradesTable.strategy, strategy))
+              .orderBy(desc(soccerTradesTable.placedAt))
+              .limit(limit)
+          : await base.orderBy(desc(soccerTradesTable.placedAt)).limit(limit);
   res.json(rows.map(serializeTrade));
 });
 
-router.get("/soccer/summary", async (_req, res) => {
-  const rows = await db.select().from(soccerTradesTable);
+router.get("/soccer/summary", async (req, res) => {
+  const strategy =
+    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
+      ? req.query.strategy
+      : null;
+  const rows = strategy
+    ? await db.select().from(soccerTradesTable).where(eq(soccerTradesTable.strategy, strategy))
+    : await db.select().from(soccerTradesTable);
   const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
   const count = (s: string) => rows.filter((t) => t.status === s).length;
   const totalPnl = closed.reduce((s, t) => s + num(t.profit), 0);
@@ -173,9 +201,8 @@ router.get("/soccer/summary", async (_req, res) => {
   const winners = closed.filter((t) => num(t.profit) > 0).length;
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const todayPnl = closed
-    .filter((t) => t.closedAt && t.closedAt >= todayStart)
-    .reduce((s, t) => s + num(t.profit), 0);
+  const todayClosed = closed.filter((t) => t.closedAt && t.closedAt >= todayStart);
+  const todayPnl = todayClosed.reduce((s, t) => s + num(t.profit), 0);
 
   const byDay = new Map<string, { pnl: number; trades: number }>();
   for (const t of closed) {
@@ -212,6 +239,7 @@ router.get("/soccer/summary", async (_req, res) => {
     totalStaked: Math.round(totalStaked * 100) / 100,
     roiPct: totalStaked > 0 ? Math.round((totalPnl / totalStaked) * 10000) / 100 : 0,
     todayPnl: Math.round(todayPnl * 100) / 100,
+    todayTrades: todayClosed.length,
     avgEntryOdds:
       rows.length > 0
         ? Math.round((rows.reduce((s, t) => s + num(t.entryOdds), 0) / rows.length) * 100) / 100

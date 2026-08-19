@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Target, Power, PowerOff, ShieldAlert, Loader2, AlertCircle,
-  TrendingUp, Clock, Settings2, X, CircleOff, CheckCircle2
+  TrendingUp, Clock, Settings2, X, CircleOff
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -17,16 +17,28 @@ import {
   useGetSoccerCandidates,
   useListSoccerTrades,
   useGetSoccerSummary,
-  useGetSoccerLogs,
   getGetSoccerConfigQueryKey,
   getGetSoccerStatusQueryKey,
   getGetSoccerCandidatesQueryKey,
   getListSoccerTradesQueryKey,
   getGetSoccerSummaryQueryKey,
-  getGetSoccerLogsQueryKey,
 } from "@workspace/api-client-react";
 
 const inputClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+type SoccerStrategy = "TRADE_OUT" | "LAY_LOCK";
+
+const STRATEGIES: Record<SoccerStrategy, { tab: string; title: string; description: string }> = {
+  TRADE_OUT: {
+    tab: "Strategy 1",
+    title: "Trade Out",
+    description: "Waits for the market to reach the profit target, then trades out.",
+  },
+  LAY_LOCK: {
+    tab: "Strategy 2",
+    title: "Lay Lock",
+    description: "Rests a lay immediately to lock a win or return the stake.",
+  },
+};
 
 function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
   const [formData, setFormData] = useState<any>(null);
@@ -166,19 +178,30 @@ export default function SoccerBot() {
   const qc = useQueryClient();
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [activeStrategy, setActiveStrategy] = useState<SoccerStrategy>("TRADE_OUT");
 
   const { data: status } = useGetSoccerStatus({ query: { queryKey: getGetSoccerStatusQueryKey(), refetchInterval: 5000 } });
   const isRunning = status?.isRunning ?? false;
 
   const { data: config } = useGetSoccerConfig();
   
-  const { data: candidates, isLoading: candidatesLoading } = useGetSoccerCandidates({ query: { queryKey: getGetSoccerCandidatesQueryKey(), refetchInterval: isRunning ? 5000 : 30000 } });
+  const candidateParams = { strategy: activeStrategy };
+  const { data: candidates, isLoading: candidatesLoading } = useGetSoccerCandidates(
+    candidateParams,
+    { query: { queryKey: getGetSoccerCandidatesQueryKey(candidateParams), refetchInterval: isRunning ? 5000 : 30000 } },
+  );
   
-  const { data: trades, isLoading: tradesLoading } = useListSoccerTrades({ limit: 50 }, { query: { queryKey: getListSoccerTradesQueryKey({ limit: 50 }), refetchInterval: isRunning ? 5000 : 30000 } });
+  const tradeParams = { limit: 50, strategy: activeStrategy };
+  const { data: trades, isLoading: tradesLoading } = useListSoccerTrades(
+    tradeParams,
+    { query: { queryKey: getListSoccerTradesQueryKey(tradeParams), refetchInterval: isRunning ? 5000 : 30000 } },
+  );
   
-  const { data: summary } = useGetSoccerSummary({ query: { queryKey: getGetSoccerSummaryQueryKey(), refetchInterval: 15000 } });
-  
-  const { data: logs } = useGetSoccerLogs({ limit: 50 }, { query: { queryKey: getGetSoccerLogsQueryKey({ limit: 50 }), refetchInterval: 5000 } });
+  const summaryParams = { strategy: activeStrategy };
+  const { data: summary } = useGetSoccerSummary(
+    summaryParams,
+    { query: { queryKey: getGetSoccerSummaryQueryKey(summaryParams), refetchInterval: 15000 } },
+  );
 
   const updateConfig = useUpdateSoccerConfig();
   const startBot = useStartSoccerBot();
@@ -212,7 +235,8 @@ export default function SoccerBot() {
   const won = summary?.settledWon ?? 0;
   const lost = summary?.settledLost ?? 0;
   const totalPnl = summary?.totalPnl ?? 0;
-  const todayPnl = status?.todayPnl ?? 0;
+  const todayPnl = summary?.todayPnl ?? 0;
+  const strategy = STRATEGIES[activeStrategy];
 
   return (
     <div className="space-y-6">
@@ -235,7 +259,7 @@ export default function SoccerBot() {
             )}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Watches dead games (≥85', 2+ gap) · Backs Under X.5 · Trades out at +15%
+            {strategy.description}
           </p>
           {config && (
             <p className="text-xs text-muted-foreground mt-1">
@@ -243,7 +267,9 @@ export default function SoccerBot() {
               Loss stop {Number(config.dailyStopLoss) > 0
                 ? <span className="font-semibold text-red-400">−£{config.dailyStopLoss}</span>
                 : <span className="font-semibold text-muted-foreground">off</span>} ·
-              Target <span className="font-semibold text-emerald-400">+{config.profitTargetPct}%</span>
+              Target <span className="font-semibold text-emerald-400">
+                +{activeStrategy === "LAY_LOCK" ? config.layTargetPct : config.profitTargetPct}%
+              </span>
             </p>
           )}
         </div>
@@ -290,6 +316,28 @@ export default function SoccerBot() {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/60 bg-card/40 p-1.5">
+        {(Object.keys(STRATEGIES) as SoccerStrategy[]).map((key) => {
+          const item = STRATEGIES[key];
+          const selected = activeStrategy === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveStrategy(key)}
+              className={`rounded-lg px-4 py-3 text-left transition-colors ${
+                selected
+                  ? "bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+              }`}
+            >
+              <div className="text-xs font-semibold uppercase tracking-wide">{item.tab}</div>
+              <div className="mt-0.5 text-sm font-bold">{item.title}</div>
+            </button>
+          );
+        })}
+      </div>
+
       {status?.dailyStopHit && (
         <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 flex items-start gap-3">
           <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
@@ -307,10 +355,10 @@ export default function SoccerBot() {
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "Today's P&L", value: `${todayPnl >= 0 ? "+" : ""}£${todayPnl.toFixed(2)}`, sub: `${status?.todayTrades ?? 0} trades`, color: todayPnl > 0 ? "text-emerald-400" : todayPnl < 0 ? "text-red-400" : "text-foreground" },
+          { label: "Today's P&L", value: `${todayPnl >= 0 ? "+" : ""}£${todayPnl.toFixed(2)}`, sub: `${summary?.todayTrades ?? 0} trades`, color: todayPnl > 0 ? "text-emerald-400" : todayPnl < 0 ? "text-red-400" : "text-foreground" },
           { label: "All-time P&L", value: `${totalPnl >= 0 ? "+" : ""}£${totalPnl.toFixed(2)}`, sub: `${summary?.totalTrades ?? 0} trades`, color: totalPnl > 0 ? "text-emerald-400" : totalPnl < 0 ? "text-red-400" : "text-foreground" },
           { label: "Win Rate", value: `${summary?.winRatePct ?? 0}%`, sub: `${won} won · ${lost} lost`, color: "text-foreground" },
-          { label: "Open Trades", value: String(status?.openTrades ?? 0), sub: `${status?.watchedGames ?? 0} games watched`, color: "text-blue-400" },
+          { label: "Open Trades", value: String(summary?.openTrades ?? 0), sub: `${strategy.tab} only`, color: "text-blue-400" },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-border/60 bg-card/40 px-5 py-4 flex flex-col justify-center">
              <div className="text-xs text-muted-foreground mb-1">{s.label}</div>
@@ -319,25 +367,6 @@ export default function SoccerBot() {
           </div>
         ))}
       </div>
-
-      {/* Strategy comparison */}
-      {summary?.byStrategy && summary.byStrategy.some(s => s.trades > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {summary.byStrategy.map(s => (
-            <div key={s.strategy} className="rounded-xl border border-border/60 bg-card/40 px-5 py-4">
-              <div className="text-xs text-muted-foreground mb-1">
-                {s.strategy === "LAY_LOCK" ? "Strategy 2 — Instant lay lock" : "Strategy 1 — Trade out"}
-              </div>
-              <div className={`text-xl font-bold tabular-nums ${s.pnl > 0 ? "text-emerald-400" : s.pnl < 0 ? "text-red-400" : "text-foreground"}`}>
-                {s.pnl >= 0 ? "+" : ""}£{s.pnl.toFixed(2)}
-              </div>
-              <div className="text-xs text-muted-foreground mt-0.5">
-                {s.trades} trades · {s.openTrades} open · ROI {s.roiPct}%
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Watchlist & Trades */}
@@ -348,7 +377,7 @@ export default function SoccerBot() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
                 <Target className="w-4 h-4" />
-                Live Watchlist ({candidates?.length ?? 0})
+                {strategy.title} Watchlist ({candidates?.length ?? 0})
               </h2>
             </div>
             
@@ -358,7 +387,7 @@ export default function SoccerBot() {
                 <div className="rounded-xl border border-dashed border-border/60 py-8 text-center text-muted-foreground text-sm flex flex-col items-center">
                   <CircleOff className="w-6 h-6 mb-2 opacity-20" />
                   No live games matching criteria right now.
-                  {isRunning && <span className="text-xs mt-1">Bot is watching {status?.watchedGames ?? 0} active games...</span>}
+                  {isRunning && <span className="text-xs mt-1">Scanning for {strategy.title} entries...</span>}
                 </div>
               )}
               {candidates?.map(c => {
@@ -408,7 +437,7 @@ export default function SoccerBot() {
              <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
                 <TrendingUp className="w-4 h-4" />
-                Recent Trades
+                {strategy.title} Trades
               </h2>
             </div>
             
@@ -446,9 +475,6 @@ export default function SoccerBot() {
                             t.status === "EXITED_AFTER_GOAL" || t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
                             "bg-muted text-muted-foreground border-border"
                           }`}>{t.status === "HEDGED" ? "LAY MATCHED" : t.status.replace(/_/g, ' ')}</Badge>
-                          <Badge className="text-[9px] uppercase tracking-wider bg-muted/60 text-muted-foreground border-border">
-                            {t.strategy === "LAY_LOCK" ? "S2 · lay lock" : "S1 · trade out"}
-                          </Badge>
                         </div>
                      </div>
                      <div className="flex justify-between items-end">
@@ -475,11 +501,11 @@ export default function SoccerBot() {
 
         </div>
 
-        {/* Right Column: Chart & Logs */}
+        {/* Right Column: strategy-only chart */}
         <div className="space-y-6">
           
           <section className="space-y-3">
-             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Daily Performance</h2>
+             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{strategy.title} Daily P&L</h2>
              <div className="rounded-xl border border-border/60 bg-card/40 p-4 h-[220px]">
                 {!summary?.dailyPnl || summary.dailyPnl.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-xs text-muted-foreground">No P&L data yet</div>
@@ -506,34 +532,6 @@ export default function SoccerBot() {
                   </ResponsiveContainer>
                 )}
              </div>
-          </section>
-
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Activity Log</h2>
-            <div className="rounded-xl border border-border/60 bg-card/40 overflow-hidden">
-              {!logs || logs.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted-foreground">No activity yet</div>
-              ) : (
-                <div className="divide-y divide-border/40 max-h-[400px] overflow-y-auto">
-                  {logs.map(log => (
-                    <div key={log.id} className="px-3 py-2.5">
-                      <div className="flex items-start gap-2">
-                        {log.level === "error"
-                          ? <span className="text-[10px] text-red-400 font-bold uppercase flex-shrink-0 mt-0.5">ERR</span>
-                          : log.level === "warn"
-                            ? <span className="text-[10px] text-amber-400 font-bold uppercase flex-shrink-0 mt-0.5">WARN</span>
-                            : <CheckCircle2 className="w-3 h-3 text-blue-400/60 flex-shrink-0 mt-0.5" />
-                        }
-                        <span className="text-xs text-foreground/80 leading-snug break-words">{log.message}</span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5 ml-5">
-                        {new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </section>
 
         </div>

@@ -57,6 +57,7 @@ let dailyStopHit = false;
 let dailyStopDate = "";
 
 export interface SoccerCandidateSnapshot {
+  strategies: SoccerStrategy[];
   eventName: string;
   competition: string | null;
   marketId: string | null;
@@ -72,6 +73,8 @@ export interface SoccerCandidateSnapshot {
   reason: string;
 }
 
+type SoccerStrategy = "TRADE_OUT" | "LAY_LOCK";
+
 let candidates: SoccerCandidateSnapshot[] = [];
 let watchedGames = 0;
 
@@ -84,8 +87,10 @@ export function getSoccerBotStartedAt(): Date | null {
 export function getSoccerLastCycleAt(): Date | null {
   return lastCycleAt;
 }
-export function getSoccerCandidatesSnapshot(): SoccerCandidateSnapshot[] {
-  return candidates;
+export function getSoccerCandidatesSnapshot(strategy?: SoccerStrategy): SoccerCandidateSnapshot[] {
+  return strategy
+    ? candidates.filter((candidate) => candidate.strategies.includes(strategy))
+    : candidates;
 }
 export function getWatchedGameCount(): number {
   return watchedGames;
@@ -250,6 +255,10 @@ async function runCycle(): Promise<void> {
 
 // ── Entry scan ──────────────────────────────────────────────────────────────
 async function scanForEntries(config: SoccerConfig): Promise<void> {
+  const enabledStrategies: SoccerStrategy[] = [];
+  if (config.strategyTradeOutEnabled) enabledStrategies.push("TRADE_OUT");
+  if (config.strategyLayLockEnabled) enabledStrategies.push("LAY_LOCK");
+
   const openRows = await db
     .select()
     .from(soccerTradesTable)
@@ -306,6 +315,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (eventId && profitedEventIds.has(eventId)) {
       snap.push({
+        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -333,6 +343,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
           `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — standing aside this cycle`,
         );
         snap.push({
+          strategies: enabledStrategies,
           eventName, competition, marketId: null,
           score: `${feed.home}-${feed.away}?`, goalGap: 0, minute,
           tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
@@ -346,6 +357,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     }
     if (!score) {
       snap.push({
+        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -360,6 +372,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (gap < config.minGoalGap) {
       snap.push({
+        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: scoreStr, goalGap: gap, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -437,6 +450,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       config.preferBufferLine && inBand(buffer) ? buffer : inBand(tight) ? tight : null;
 
     const base = {
+      strategies: enabledStrategies,
       eventName, competition, score: scoreStr, goalGap: gap, minute,
       tightLine: tight ? tight.line : null,
       tightOdds: tight ? tight.odds : null,
@@ -520,7 +534,16 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 }
 
 function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
+  const strategy = t.strategy === "LAY_LOCK" ? "LAY_LOCK" : "TRADE_OUT";
+  const reason =
+    strategy === "LAY_LOCK"
+      ? t.status === "HEDGED"
+        ? `Lay matched @ ${num(t.layPrice)} — waiting for full-time settlement`
+        : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — resting lay @ ${num(t.layPrice)} waiting to match`
+      : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — waiting for trade-out target`;
+
   return {
+    strategies: [strategy],
     eventName: t.eventName,
     competition: t.competition,
     marketId: t.marketId,
@@ -533,7 +556,7 @@ function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
     bufferOdds: num(t.entryOdds),
     liquidity: null,
     verdict: "OPEN",
-    reason: `Open: BACK ${t.selectionName} @ ${num(t.entryOdds)} — waiting for trade-out`,
+    reason,
   };
 }
 

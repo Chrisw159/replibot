@@ -520,6 +520,13 @@ paths:
       operationId: getSoccerCandidates
       tags: [soccer]
       summary: Live watchlist of in-play games being evaluated
+      parameters:
+        - name: strategy
+          in: query
+          description: Return only the selected strategy's watchlist
+          schema:
+            type: ["string", "null"]
+            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Current candidate games and why they do/don't qualify
@@ -544,6 +551,12 @@ paths:
           in: query
           schema:
             type: ["integer", "null"]
+        - name: strategy
+          in: query
+          description: Return only one isolated strategy
+          schema:
+            type: ["string", "null"]
+            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Trades
@@ -559,6 +572,13 @@ paths:
       operationId: getSoccerSummary
       tags: [soccer]
       summary: Aggregate P&L and performance for the soccer bot
+      parameters:
+        - name: strategy
+          in: query
+          description: Aggregate only one isolated strategy
+          schema:
+            type: ["string", "null"]
+            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Summary
@@ -1143,8 +1163,13 @@ components:
 
     SoccerCandidate:
       type: object
-      required: [eventName, score, minute, verdict, reason]
+      required: [strategies, eventName, score, minute, verdict, reason]
       properties:
+        strategies:
+          type: array
+          items:
+            type: string
+            enum: [TRADE_OUT, LAY_LOCK]
         eventName: { type: string }
         competition: { type: ["string", "null"] }
         marketId: { type: ["string", "null"] }
@@ -1192,7 +1217,7 @@ components:
 
     SoccerSummary:
       type: object
-      required: [totalTrades, openTrades, tradedOut, exitedAfterGoal, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, avgEntryOdds, winRatePct]
+      required: [totalTrades, openTrades, tradedOut, exitedAfterGoal, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, todayTrades, avgEntryOdds, winRatePct]
       properties:
         totalTrades: { type: integer }
         openTrades: { type: integer }
@@ -1204,6 +1229,7 @@ components:
         totalStaked: { type: number }
         roiPct: { type: number }
         todayPnl: { type: number }
+        todayTrades: { type: integer }
         avgEntryOdds: { type: number }
         winRatePct: { type: number }
         dailyPnl:

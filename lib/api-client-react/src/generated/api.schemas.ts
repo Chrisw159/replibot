@@ -309,7 +309,16 @@ export interface SoccerStatus {
   betfairConnected?: boolean;
 }
 
+export type SoccerCandidateStrategiesItem =
+  (typeof SoccerCandidateStrategiesItem)[keyof typeof SoccerCandidateStrategiesItem];
+
+export const SoccerCandidateStrategiesItem = {
+  TRADE_OUT: "TRADE_OUT",
+  LAY_LOCK: "LAY_LOCK",
+} as const;
+
 export interface SoccerCandidate {
+  strategies: SoccerCandidateStrategiesItem[];
   eventName: string;
   /** @nullable */
   competition?: string | null;
@@ -401,6 +410,7 @@ export interface SoccerSummary {
   totalStaked: number;
   roiPct: number;
   todayPnl: number;
+  todayTrades: number;
   avgEntryOdds: number;
   winRatePct: number;
   dailyPnl?: SoccerDailyPnl[];
@@ -466,6 +476,23 @@ export type GetPnlChartParams = {
   days?: number | null;
 };
 
+export type GetSoccerCandidatesParams = {
+  /**
+   * Return only the selected strategy's watchlist
+   * @nullable
+   */
+  strategy?: GetSoccerCandidatesStrategy;
+};
+
+export type GetSoccerCandidatesStrategy =
+  | (typeof GetSoccerCandidatesStrategy)[keyof typeof GetSoccerCandidatesStrategy]
+  | null;
+
+export const GetSoccerCandidatesStrategy = {
+  TRADE_OUT: "TRADE_OUT",
+  LAY_LOCK: "LAY_LOCK",
+} as const;
+
 export type ListSoccerTradesParams = {
   /**
    * @nullable
@@ -475,7 +502,38 @@ export type ListSoccerTradesParams = {
    * @nullable
    */
   limit?: number | null;
+  /**
+   * Return only one isolated strategy
+   * @nullable
+   */
+  strategy?: ListSoccerTradesStrategy;
 };
+
+export type ListSoccerTradesStrategy =
+  | (typeof ListSoccerTradesStrategy)[keyof typeof ListSoccerTradesStrategy]
+  | null;
+
+export const ListSoccerTradesStrategy = {
+  TRADE_OUT: "TRADE_OUT",
+  LAY_LOCK: "LAY_LOCK",
+} as const;
+
+export type GetSoccerSummaryParams = {
+  /**
+   * Aggregate only one isolated strategy
+   * @nullable
+   */
+  strategy?: GetSoccerSummaryStrategy;
+};
+
+export type GetSoccerSummaryStrategy =
+  | (typeof GetSoccerSummaryStrategy)[keyof typeof GetSoccerSummaryStrategy]
+  | null;
+
+export const GetSoccerSummaryStrategy = {
+  TRADE_OUT: "TRADE_OUT",
+  LAY_LOCK: "LAY_LOCK",
+} as const;
 
 export type GetSoccerLogsParams = {
   /**
