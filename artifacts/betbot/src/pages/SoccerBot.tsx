@@ -155,7 +155,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="blockReEntryAfterProfit" checked={formData.blockReEntryAfterProfit ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Block re-entry after profit taken on same game today</span>
+              <span>Block repeat entries on the same game</span>
             </label>
           </div>
         </div>

@@ -13,5 +13,7 @@ Key design decisions:
 - Paper exits must be executable: equal-profit lay stake = S·B/O and the quoted lay depth must cover it, else skip the tick. **Why:** review found the naive version credited fictitious green-outs on thin books.
 - Goal-after-entry detection: re-read CS market and compare total vs entryTotalGoals; price-spike (≥1.4× entry) only as fallback when score unreadable.
 - Strategy 1 trades out at its target. Strategy 2 rests a same-stake lay intended to lock the configured return if the Under wins and return the stake if it loses.
+- Each Betfair event may be entered only once. A settled win or loss must block every later scan from re-entering that fixture, including after a bot restart.
+- **Why:** allowing re-entry after losses created repeated £50 positions on the same late-game market.
 - The two strategies must remain completely separate in the operator dashboard: separate tabs, P&L, trade history, open bets, daily chart, and watchlist context. Never show combined strategy totals as the main view.
 - **Why:** combined views made it impossible for the operator to understand what each strategy actually did.

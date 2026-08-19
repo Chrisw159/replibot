@@ -270,19 +270,16 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     return;
   }
 
-  // Events where we already banked profit today — block re-entry when the
-  // flag is set, to avoid doubling exposure on the same game.
-  const profitedEventIds = new Set<string>();
+  // A Betfair event id is unique to one fixture. Once this bot has entered an
+  // event, never enter it again: a settled loss can leave the same in-play
+  // market visible for another scan and must not create another £50 position.
+  const enteredEventIds = new Set<string>();
   if (config.blockReEntryAfterProfit) {
-    const profited = await db
+    const priorEntries = await db
       .select({ eventId: soccerTradesTable.eventId })
-      .from(soccerTradesTable)
-      .where(
-        sql`${soccerTradesTable.status} IN ('TRADED_OUT', 'EXITED_AFTER_GOAL')
-          AND ${soccerTradesTable.closedAt} >= date_trunc('day', now())`,
-      );
-    for (const r of profited) {
-      if (r.eventId) profitedEventIds.add(r.eventId);
+      .from(soccerTradesTable);
+    for (const row of priorEntries) {
+      if (row.eventId) enteredEventIds.add(row.eventId);
     }
   }
 
@@ -313,13 +310,13 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const minute = estimateMinute(cs.marketStartTime);
     if (eventId && openEventIds.has(eventId)) continue;
 
-    if (eventId && profitedEventIds.has(eventId)) {
+    if (eventId && enteredEventIds.has(eventId)) {
       snap.push({
         strategies: enabledStrategies,
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
-        reason: "Already banked profit on this game today — re-entry blocked (blockReEntryAfterProfit)",
+        reason: "Already entered this game — repeat entry blocked",
       });
       continue;
     }
