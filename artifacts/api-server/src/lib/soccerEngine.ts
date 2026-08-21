@@ -8,10 +8,8 @@
  *    → Under 3.5) when it is above its odds threshold. Otherwise take the
  *    tight line (current total + 0.5, e.g. 2-0 → Under 2.5) only when it is
  *    above its own odds threshold.
- *  - Trade out (hedge with a lay) as soon as +`profitTargetPct`% of stake is
- *    available. Otherwise let the bet settle at full time.
- *  - If a goal is scored after entry: green/scratch out the moment breakeven
- *    or better is available, else ride to full time.
+ *  - Immediately rest a lay for the same stake. If it matches, the position
+ *    locks the configured return when the Under wins and £0 when it loses.
  *
  * Score inference: the Betfair betting API exposes no scoreline, so the
  * engine reads the CORRECT_SCORE market — at the 85th minute the true score
@@ -19,7 +17,7 @@
  * territory covered only by "Any Other Home Win") are skipped and logged.
  * Match minute is estimated from kick-off time (+15 min half-time break).
  */
-import { eq, desc, sql, inArray } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   soccerConfigTable,
@@ -43,7 +41,6 @@ import {
   layLockPrice,
   layLockWinProfit,
   ouLineFromMarketType,
-  hedgeProfit,
 } from "./soccerHelpers";
 import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 
@@ -55,11 +52,8 @@ let startedAt: Date | null = null;
 let lastCycleAt: Date | null = null;
 let cycleTimer: ReturnType<typeof setTimeout> | null = null;
 let processing = false;
-let dailyStopHit = false;
-let dailyStopDate = "";
 
 export interface SoccerCandidateSnapshot {
-  strategies: SoccerStrategy[];
   eventName: string;
   competition: string | null;
   marketId: string | null;
@@ -75,8 +69,6 @@ export interface SoccerCandidateSnapshot {
   reason: string;
 }
 
-type SoccerStrategy = "TRADE_OUT" | "LAY_LOCK";
-
 let candidates: SoccerCandidateSnapshot[] = [];
 let watchedGames = 0;
 
@@ -89,16 +81,11 @@ export function getSoccerBotStartedAt(): Date | null {
 export function getSoccerLastCycleAt(): Date | null {
   return lastCycleAt;
 }
-export function getSoccerCandidatesSnapshot(strategy?: SoccerStrategy): SoccerCandidateSnapshot[] {
-  return strategy
-    ? candidates.filter((candidate) => candidate.strategies.includes(strategy))
-    : candidates;
+export function getSoccerCandidatesSnapshot(): SoccerCandidateSnapshot[] {
+  return candidates;
 }
 export function getWatchedGameCount(): number {
   return watchedGames;
-}
-export function isDailyStopHit(): boolean {
-  return dailyStopHit;
 }
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -199,16 +186,6 @@ async function getBooks(marketIds: string[]): Promise<Map<string, Book>> {
   return out;
 }
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
-async function todayPnl(): Promise<{ pnl: number; trades: number }> {
-  const rows = await db
-    .select({
-      pnl: sql<string>`coalesce(sum(${soccerTradesTable.profit}), 0)`,
-      trades: sql<number>`count(*)`,
-    })
-    .from(soccerTradesTable)
-    .where(sql`${soccerTradesTable.closedAt} >= date_trunc('day', now())`);
-  return { pnl: num(rows[0]?.pnl), trades: Number(rows[0]?.trades ?? 0) };
-}
 
 // ── Main cycle ──────────────────────────────────────────────────────────────
 async function runCycle(): Promise<void> {
@@ -224,43 +201,20 @@ async function runCycle(): Promise<void> {
     await slog("info", "Connected to Betfair");
   }
 
-  // Daily stop-loss latch (resets at midnight)
-  const today = new Date().toISOString().slice(0, 10);
-  if (dailyStopDate !== today) {
-    dailyStopDate = today;
-    dailyStopHit = false;
-  }
-
-  // 1) Manage open trades first (exits are always allowed)
+  // 1) Manage open trades first
   await manageOpenTrades(config);
 
   // 2) Settle closed markets
   await settleTrades(config);
 
-  // 3) Re-check the daily stop AFTER exits/settlements so a loss realized
-  //    this cycle blocks entries in this same cycle.
-  const day = await todayPnl();
-  const stopLoss = num(config.dailyStopLoss);
-  if (!dailyStopHit && stopLoss > 0 && day.pnl <= -stopLoss) {
-    dailyStopHit = true;
-    await slog(
-      "warn",
-      `DAILY STOP-LOSS HIT (£${day.pnl.toFixed(2)}) — no new entries today`,
-    );
-  }
-
-  // 4) Scan for new entries
-  if (!dailyStopHit) await scanForEntries(config);
+  // 3) Scan for new entries. There is deliberately no daily stop-loss.
+  await scanForEntries(config);
 
   lastCycleAt = new Date();
 }
 
 // ── Entry scan ──────────────────────────────────────────────────────────────
 async function scanForEntries(config: SoccerConfig): Promise<void> {
-  const enabledStrategies: SoccerStrategy[] = [];
-  if (config.strategyTradeOutEnabled) enabledStrategies.push("TRADE_OUT");
-  if (config.strategyLayLockEnabled) enabledStrategies.push("LAY_LOCK");
-
   const openRows = await db
     .select()
     .from(soccerTradesTable)
@@ -314,7 +268,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (eventId && enteredEventIds.has(eventId)) {
       snap.push({
-        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -342,7 +295,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
           `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — standing aside this cycle`,
         );
         snap.push({
-          strategies: enabledStrategies,
           eventName, competition, marketId: null,
           score: `${feed.home}-${feed.away}?`, goalGap: 0, minute,
           tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
@@ -356,7 +308,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     }
     if (!score) {
       snap.push({
-        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -371,7 +322,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (gap < config.minGoalGap) {
       snap.push({
-        strategies: enabledStrategies,
         eventName, competition, marketId: null, score: scoreStr, goalGap: gap, minute,
         tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
         liquidity: null, verdict: "SKIPPED",
@@ -451,7 +401,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     );
 
     const base = {
-      strategies: enabledStrategies,
       eventName, competition, score: scoreStr, goalGap: gap, minute,
       tightLine: tight ? tight.line : null,
       tightOdds: tight ? tight.odds : null,
@@ -498,32 +447,23 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       status: "OPEN",
       paper: config.paperMode,
     };
-    const entered: string[] = [];
-    if (config.strategyTradeOutEnabled) {
-      await db.insert(soccerTradesTable).values({ ...baseTrade, strategy: "TRADE_OUT" });
-      entered.push("TRADE_OUT");
-    }
-    if (config.strategyLayLockEnabled) {
-      // Resting lay, same stake: matched ⇒ layTargetPct% net if the under
-      // holds, breakeven if a goal breaks it. Net target needs gross B−L of
-      // target/(1−commission). Floor at 1.01 (max lock available).
-      const targetFrac = num(config.layTargetPct) / 100;
-      const ideal = pick.odds - targetFrac / (1 - COMMISSION);
-      const layPrice = layLockPrice(pick.odds, num(config.layTargetPct));
-      await db.insert(soccerTradesTable).values({
-        ...baseTrade,
-        strategy: "LAY_LOCK",
-        layPrice: layPrice.toFixed(2),
-      });
-      entered.push(`LAY_LOCK (resting lay @ ${layPrice.toFixed(2)}${ideal < 1.01 ? ", capped at 1.01 — full target not reachable from these odds" : ""})`);
-    }
-    if (entered.length === 0) continue; // both strategies disabled
+    // Immediately rest the same-stake lay. A match locks layTargetPct net if
+    // the Under wins and £0 if it loses.
+    const targetFrac = num(config.layTargetPct) / 100;
+    const ideal = pick.odds - targetFrac / (1 - COMMISSION);
+    const layPrice = layLockPrice(pick.odds, num(config.layTargetPct));
+    await db.insert(soccerTradesTable).values({
+      ...baseTrade,
+      strategy: "LAY_LOCK",
+      layPrice: layPrice.toFixed(2),
+    });
     slots--;
     if (eventId) openEventIds.add(eventId);
     await slog(
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
-        `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) [${entered.join(" + ")}]`,
+        `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) ` +
+        `[resting same-stake lay @ ${layPrice.toFixed(2)}${ideal < 1.01 ? ", target capped at 1.01" : ""}]`,
     );
     snap.push({
       ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
@@ -535,16 +475,12 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 }
 
 function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
-  const strategy = t.strategy === "LAY_LOCK" ? "LAY_LOCK" : "TRADE_OUT";
   const reason =
-    strategy === "LAY_LOCK"
-      ? t.status === "HEDGED"
-        ? `Lay matched @ ${num(t.layPrice)} — waiting for full-time settlement`
-        : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — resting lay @ ${num(t.layPrice)} waiting to match`
-      : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — waiting for trade-out target`;
+    t.status === "HEDGED"
+      ? `Lay matched @ ${num(t.layPrice)} — waiting for full-time settlement`
+      : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — resting lay @ ${num(t.layPrice)} waiting to match`;
 
   return {
-    strategies: [strategy],
     eventName: t.eventName,
     competition: t.competition,
     marketId: t.marketId,
@@ -676,53 +612,6 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
       continue;
     }
 
-    if (!layOffer || book.status !== "OPEN") continue;
-
-    // Executable-hedge check: the equal-profit lay stake is S*B/O — the quoted
-    // lay depth must cover it or the paper exit would be fiction.
-    const layStakeNeeded = (stake * entryOdds) / layOffer.price;
-    if (layOffer.size < layStakeNeeded) continue; // not enough depth this tick
-
-    const grossIfHedge = hedgeProfit(stake, entryOdds, layOffer.price);
-    // Target is +profitTargetPct% NET of commission ⇒ gross must clear target/(1-c)
-    const target = ((num(config.profitTargetPct) / 100) * stake) / (1 - COMMISSION);
-
-    if (!goalAfterEntry && grossIfHedge >= target) {
-      // Normal green-out at +15%
-      const net = grossIfHedge * (1 - COMMISSION);
-      await db
-        .update(soccerTradesTable)
-        .set({
-          status: "TRADED_OUT",
-          exitOdds: layOffer.price.toFixed(2),
-          exitReason: `Profit target hit: +£${grossIfHedge.toFixed(2)} (${((grossIfHedge / stake) * 100).toFixed(1)}% of stake)`,
-          profit: net.toFixed(2),
-          closedAt: new Date(),
-        })
-        .where(eq(soccerTradesTable.id, trade.id));
-      await slog(
-        "info",
-        `TRADED OUT ${trade.eventName} — ${trade.selectionName} ${entryOdds} → ${layOffer.price}, net +£${net.toFixed(2)}`,
-      );
-    } else if (goalAfterEntry && grossIfHedge >= 0) {
-      // After a goal: take breakeven or better the moment it exists
-      const net = grossIfHedge > 0 ? grossIfHedge * (1 - COMMISSION) : grossIfHedge;
-      await db
-        .update(soccerTradesTable)
-        .set({
-          status: "EXITED_AFTER_GOAL",
-          exitOdds: layOffer.price.toFixed(2),
-          exitReason: `Goal after entry — scratched at ${grossIfHedge >= 0.01 ? `+£${grossIfHedge.toFixed(2)}` : "breakeven"}`,
-          profit: net.toFixed(2),
-          closedAt: new Date(),
-        })
-        .where(eq(soccerTradesTable.id, trade.id));
-      await slog(
-        "info",
-        `SCRATCHED ${trade.eventName} after goal — ${entryOdds} → ${layOffer.price}, £${net.toFixed(2)}`,
-      );
-    }
-    // else: ride to full time (settlement pass decides)
   }
 }
 

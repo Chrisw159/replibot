@@ -36,14 +36,12 @@ export const soccerConfigTable = pgTable("soccer_config", {
   minLiquidity: numeric("min_liquidity", { precision: 12, scale: 2 }).notNull().default("5000.00"),
   checkIntervalSeconds: integer("check_interval_seconds").notNull().default(20),
   paperMode: boolean("paper_mode").notNull().default(true),
-  // When true (default), any event with a TRADED_OUT or EXITED_AFTER_GOAL trade
-  // placed today is blocked from re-entry — prevents doubling exposure to one
-  // late goal in the same game after profit has already been banked.
+  // Legacy configuration retained for database compatibility. The engine now
+  // always blocks repeat entry on any event it has traded.
   blockReEntryAfterProfit: boolean("block_re_entry_after_profit").notNull().default(true),
-  // Strategy toggles: TRADE_OUT = original (+15% net trade-out, breakeven after
-  // goal). LAY_LOCK = immediately rest a lay at entry sized so a match locks
-  // layTargetPct net profit if the bet wins and breakeven if it loses.
-  strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(true),
+  // Legacy comparison flags retained for database compatibility. The engine
+  // now runs only the same-stake LAY_LOCK strategy.
+  strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(false),
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -68,8 +66,8 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   entryMinute: integer("entry_minute").notNull(), // estimated match minute
   entryOdds: numeric("entry_odds", { precision: 6, scale: 2 }).notNull(),
   stake: numeric("stake", { precision: 10, scale: 2 }).notNull(),
-  // TRADE_OUT (original) | LAY_LOCK (resting lay at entry)
-  strategy: text("strategy").notNull().default("TRADE_OUT"),
+  // LAY_LOCK (same-stake resting lay at entry)
+  strategy: text("strategy").notNull().default("LAY_LOCK"),
   // LAY_LOCK: the resting lay order (same stake as the back)
   layPrice: numeric("lay_price", { precision: 6, scale: 2 }),
   layMatchedAt: timestamp("lay_matched_at", { withTimezone: true }),

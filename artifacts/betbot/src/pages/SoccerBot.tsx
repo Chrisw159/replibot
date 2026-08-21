@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Target, Power, PowerOff, ShieldAlert, Loader2, AlertCircle,
+  Target, Power, PowerOff, Loader2, AlertCircle,
   TrendingUp, Clock, Settings2, X, CircleOff
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -25,20 +25,8 @@ import {
 } from "@workspace/api-client-react";
 
 const inputClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
-type SoccerStrategy = "TRADE_OUT" | "LAY_LOCK";
-
-const STRATEGIES: Record<SoccerStrategy, { tab: string; title: string; description: string }> = {
-  TRADE_OUT: {
-    tab: "Strategy 1",
-    title: "Equal-Profit Trade Out",
-    description: "Trades out for equal profit on either outcome when the target is available.",
-  },
-  LAY_LOCK: {
-    tab: "Strategy 2",
-    title: "Same-Stake Lay Lock",
-    description: "Rests the same £50 lay immediately: target win if no more goals, £0 if the line breaks.",
-  },
-};
+const BOT_TITLE = "No More Goals Lay Lock";
+const BOT_DESCRIPTION = "Rests the same-stake lay immediately: target win if no more goals, £0 if the backed Under loses.";
 
 function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
   const [formData, setFormData] = useState<any>(null);
@@ -65,7 +53,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-muted-foreground" />
-            Strategy Configuration
+            Bot Configuration
           </h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="w-5 h-5" />
@@ -73,15 +61,9 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
         </div>
         
         <div className="p-4 overflow-y-auto space-y-4 text-sm">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Stake (£)</label>
-              <input type="number" name="stake" value={formData.stake} onChange={handleChange} className={inputClass} />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Daily Stop Loss (£)</label>
-              <input type="number" name="dailyStopLoss" value={formData.dailyStopLoss} onChange={handleChange} className={inputClass} />
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-muted-foreground text-xs">Stake (£)</label>
+            <input type="number" name="stake" value={formData.stake} onChange={handleChange} className={inputClass} />
           </div>
           
           <div className="grid grid-cols-2 gap-4">
@@ -106,15 +88,9 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Profit Target (%)</label>
-              <input type="number" name="profitTargetPct" value={formData.profitTargetPct} onChange={handleChange} className={inputClass} />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Max Concurrent Trades</label>
-              <input type="number" name="maxConcurrent" value={formData.maxConcurrent} onChange={handleChange} className={inputClass} />
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-muted-foreground text-xs">Max Concurrent Trades</label>
+            <input type="number" name="maxConcurrent" value={formData.maxConcurrent} onChange={handleChange} className={inputClass} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -129,17 +105,9 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
           </div>
           
           <div className="space-y-3 pt-2 border-t border-border/60 mt-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Strategies</div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" name="strategyTradeOutEnabled" checked={formData.strategyTradeOutEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Strategy 1 — Equal-profit trade out</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" name="strategyLayLockEnabled" checked={formData.strategyLayLockEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Strategy 2 — Same-stake resting lay (target win / £0)</span>
-            </label>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay Lock</div>
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Strategy 2 no-more-goals return (%)</label>
+              <label className="text-muted-foreground text-xs">No-more-goals return (%)</label>
               <input type="number" name="layTargetPct" value={formData.layTargetPct ?? 40} onChange={handleChange} className={inputClass} />
               <div className="text-[11px] text-muted-foreground">
                 £{((Number(formData.stake) || 0) * (Number(formData.layTargetPct) || 0) / 100).toFixed(2)} target; £0 if the backed Under loses.
@@ -177,29 +145,24 @@ export default function SoccerBot() {
   const qc = useQueryClient();
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [activeStrategy, setActiveStrategy] = useState<SoccerStrategy>("TRADE_OUT");
 
   const { data: status } = useGetSoccerStatus({ query: { queryKey: getGetSoccerStatusQueryKey(), refetchInterval: 5000 } });
   const isRunning = status?.isRunning ?? false;
 
   const { data: config } = useGetSoccerConfig();
   
-  const candidateParams = { strategy: activeStrategy };
   const { data: candidates, isLoading: candidatesLoading } = useGetSoccerCandidates(
-    candidateParams,
-    { query: { queryKey: getGetSoccerCandidatesQueryKey(candidateParams), refetchInterval: isRunning ? 5000 : 30000 } },
+    { query: { queryKey: getGetSoccerCandidatesQueryKey(), refetchInterval: isRunning ? 5000 : 30000 } },
   );
   
-  const tradeParams = { limit: 50, strategy: activeStrategy };
+  const tradeParams = { limit: 50 };
   const { data: trades, isLoading: tradesLoading } = useListSoccerTrades(
     tradeParams,
     { query: { queryKey: getListSoccerTradesQueryKey(tradeParams), refetchInterval: isRunning ? 5000 : 30000 } },
   );
   
-  const summaryParams = { strategy: activeStrategy };
   const { data: summary } = useGetSoccerSummary(
-    summaryParams,
-    { query: { queryKey: getGetSoccerSummaryQueryKey(summaryParams), refetchInterval: 15000 } },
+    { query: { queryKey: getGetSoccerSummaryQueryKey(), refetchInterval: 15000 } },
   );
 
   const updateConfig = useUpdateSoccerConfig();
@@ -235,7 +198,6 @@ export default function SoccerBot() {
   const lost = summary?.settledLost ?? 0;
   const totalPnl = summary?.totalPnl ?? 0;
   const todayPnl = summary?.todayPnl ?? 0;
-  const strategy = STRATEGIES[activeStrategy];
 
   return (
     <div className="space-y-6">
@@ -258,16 +220,13 @@ export default function SoccerBot() {
             )}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {strategy.description}
+            {BOT_DESCRIPTION}
           </p>
           {config && (
             <p className="text-xs text-muted-foreground mt-1">
               Stake <span className="font-semibold text-foreground">£{config.stake}</span> ·
-              Loss stop {Number(config.dailyStopLoss) > 0
-                ? <span className="font-semibold text-red-400">−£{config.dailyStopLoss}</span>
-                : <span className="font-semibold text-muted-foreground">off</span>} ·
               Target <span className="font-semibold text-emerald-400">
-                +{activeStrategy === "LAY_LOCK" ? config.layTargetPct : config.profitTargetPct}%
+                +{config.layTargetPct}%
               </span>
             </p>
           )}
@@ -277,13 +236,9 @@ export default function SoccerBot() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs">
               <span className={`w-2 h-2 rounded-full ${
-                status?.dailyStopHit ? "bg-red-400 animate-pulse" :
-                isRunning ? "bg-emerald-400 animate-pulse" :
-                "bg-muted-foreground/40"}`}
+                isRunning ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"}`}
               />
-              {status?.dailyStopHit
-                ? <span className="text-red-400">Paused — daily stop hit</span>
-                : isRunning
+              {isRunning
                 ? <span className="text-emerald-400">Running{status?.startedAt ? ` since ${new Date(status.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ""}</span>
                 : <span className="text-muted-foreground">Stopped</span>}
             </div>
@@ -315,49 +270,13 @@ export default function SoccerBot() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/60 bg-card/40 p-1.5">
-        {(Object.keys(STRATEGIES) as SoccerStrategy[]).map((key) => {
-          const item = STRATEGIES[key];
-          const selected = activeStrategy === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setActiveStrategy(key)}
-              className={`rounded-lg px-4 py-3 text-left transition-colors ${
-                selected
-                  ? "bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30"
-                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              }`}
-            >
-              <div className="text-xs font-semibold uppercase tracking-wide">{item.tab}</div>
-              <div className="mt-0.5 text-sm font-bold">{item.title}</div>
-            </button>
-          );
-        })}
-      </div>
-
-      {status?.dailyStopHit && (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-4 flex items-start gap-3">
-          <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-red-300">
-              Daily stop loss reached
-            </div>
-            <div className="text-xs text-red-200/80 mt-1">
-              Bot has paused taking new entries. Already open trades will continue to be managed.
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: "Today's P&L", value: `${todayPnl >= 0 ? "+" : ""}£${todayPnl.toFixed(2)}`, sub: `${summary?.todayTrades ?? 0} trades`, color: todayPnl > 0 ? "text-emerald-400" : todayPnl < 0 ? "text-red-400" : "text-foreground" },
           { label: "All-time P&L", value: `${totalPnl >= 0 ? "+" : ""}£${totalPnl.toFixed(2)}`, sub: `${summary?.totalTrades ?? 0} trades`, color: totalPnl > 0 ? "text-emerald-400" : totalPnl < 0 ? "text-red-400" : "text-foreground" },
           { label: "Win Rate", value: `${summary?.winRatePct ?? 0}%`, sub: `${won} won · ${lost} lost`, color: "text-foreground" },
-          { label: "Open Trades", value: String(summary?.openTrades ?? 0), sub: `${strategy.tab} only`, color: "text-blue-400" },
+          { label: "Open Trades", value: String(summary?.openTrades ?? 0), sub: "Lay lock only", color: "text-blue-400" },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-border/60 bg-card/40 px-5 py-4 flex flex-col justify-center">
              <div className="text-xs text-muted-foreground mb-1">{s.label}</div>
@@ -376,7 +295,7 @@ export default function SoccerBot() {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
                 <Target className="w-4 h-4" />
-                {strategy.title} Watchlist ({candidates?.length ?? 0})
+                {BOT_TITLE} Watchlist ({candidates?.length ?? 0})
               </h2>
             </div>
             
@@ -386,7 +305,7 @@ export default function SoccerBot() {
                 <div className="rounded-xl border border-dashed border-border/60 py-8 text-center text-muted-foreground text-sm flex flex-col items-center">
                   <CircleOff className="w-6 h-6 mb-2 opacity-20" />
                   No live games matching criteria right now.
-                  {isRunning && <span className="text-xs mt-1">Scanning for {strategy.title} entries...</span>}
+                  {isRunning && <span className="text-xs mt-1">Scanning for lay-lock entries...</span>}
                 </div>
               )}
               {candidates?.map(c => {
@@ -441,7 +360,7 @@ export default function SoccerBot() {
              <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
                 <TrendingUp className="w-4 h-4" />
-                {strategy.title} Trades
+                {BOT_TITLE} Trades
               </h2>
             </div>
             
@@ -475,8 +394,8 @@ export default function SoccerBot() {
                           <Badge className={`text-[10px] uppercase font-bold tracking-wider ${
                             t.status === "OPEN" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                             t.status === "HEDGED" ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
-                            t.status === "TRADED_OUT" || t.status === "SETTLED_WON" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
-                            t.status === "EXITED_AFTER_GOAL" || t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                             t.status === "SETTLED_WON" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                             t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
                             "bg-muted text-muted-foreground border-border"
                           }`}>{t.status === "HEDGED" ? "LAY MATCHED" : t.status.replace(/_/g, ' ')}</Badge>
                         </div>
@@ -484,7 +403,7 @@ export default function SoccerBot() {
                      <div className="flex justify-between items-end">
                        <div className="text-xs text-muted-foreground space-y-0.5">
                           <div>Stake: £{t.stake} <span className="font-medium text-foreground">@ {t.entryOdds.toFixed(2)}</span></div>
-                          {t.strategy === "LAY_LOCK" && t.layPrice != null && t.status === "OPEN" && (
+                           {t.layPrice != null && t.status === "OPEN" && (
                             <div>Resting lay <span className="font-medium text-foreground">@ {t.layPrice.toFixed(2)}</span> (waiting to match)</div>
                           )}
                           {(t.exitOdds || t.exitReason) && (
@@ -505,11 +424,11 @@ export default function SoccerBot() {
 
         </div>
 
-        {/* Right Column: strategy-only chart */}
+        {/* Right Column: daily chart */}
         <div className="space-y-6">
           
           <section className="space-y-3">
-             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{strategy.title} Daily P&L</h2>
+             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{BOT_TITLE} Daily P&L</h2>
              <div className="rounded-xl border border-border/60 bg-card/40 p-4 h-[220px]">
                 {!summary?.dailyPnl || summary.dailyPnl.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-xs text-muted-foreground">No P&L data yet</div>

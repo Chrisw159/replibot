@@ -465,16 +465,12 @@ export const GetSoccerConfigResponse = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  profitTargetPct: zod.number(),
   entryMinute: zod.number(),
   minGoalGap: zod.number(),
   maxConcurrent: zod.number(),
-  dailyStopLoss: zod.number(),
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  strategyTradeOutEnabled: zod.boolean().optional(),
-  strategyLayLockEnabled: zod.boolean().optional(),
   layTargetPct: zod.number().optional(),
   updatedAt: zod.string().nullish(),
 });
@@ -496,16 +492,12 @@ export const UpdateSoccerConfigBody = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  profitTargetPct: zod.number().optional(),
   entryMinute: zod.number().optional(),
   minGoalGap: zod.number().optional(),
   maxConcurrent: zod.number().optional(),
-  dailyStopLoss: zod.number().optional(),
   minLiquidity: zod.number().optional(),
   checkIntervalSeconds: zod.number().optional(),
   paperMode: zod.boolean().optional(),
-  strategyTradeOutEnabled: zod.boolean().optional(),
-  strategyLayLockEnabled: zod.boolean().optional(),
   layTargetPct: zod.number().optional(),
 });
 
@@ -523,16 +515,12 @@ export const UpdateSoccerConfigResponse = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  profitTargetPct: zod.number(),
   entryMinute: zod.number(),
   minGoalGap: zod.number(),
   maxConcurrent: zod.number(),
-  dailyStopLoss: zod.number(),
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  strategyTradeOutEnabled: zod.boolean().optional(),
-  strategyLayLockEnabled: zod.boolean().optional(),
   layTargetPct: zod.number().optional(),
   updatedAt: zod.string().nullish(),
 });
@@ -547,7 +535,6 @@ export const StartSoccerBotResponse = zod.object({
   watchedGames: zod.number(),
   todayPnl: zod.number(),
   todayTrades: zod.number(),
-  dailyStopHit: zod.boolean(),
   paperMode: zod.boolean(),
   lastCycleAt: zod.string().nullish(),
   betfairConnected: zod.boolean().optional(),
@@ -563,7 +550,6 @@ export const StopSoccerBotResponse = zod.object({
   watchedGames: zod.number(),
   todayPnl: zod.number(),
   todayTrades: zod.number(),
-  dailyStopHit: zod.boolean(),
   paperMode: zod.boolean(),
   lastCycleAt: zod.string().nullish(),
   betfairConnected: zod.boolean().optional(),
@@ -579,7 +565,6 @@ export const GetSoccerStatusResponse = zod.object({
   watchedGames: zod.number(),
   todayPnl: zod.number(),
   todayTrades: zod.number(),
-  dailyStopHit: zod.boolean(),
   paperMode: zod.boolean(),
   lastCycleAt: zod.string().nullish(),
   betfairConnected: zod.boolean().optional(),
@@ -588,19 +573,7 @@ export const GetSoccerStatusResponse = zod.object({
 /**
  * @summary Live watchlist of in-play games being evaluated
  */
-export const GetSoccerCandidatesQueryParams = zod.object({
-  strategy: zod
-    .union([
-      zod.literal("TRADE_OUT"),
-      zod.literal("LAY_LOCK"),
-      zod.literal(null),
-    ])
-    .nullish()
-    .describe("Return only the selected strategy's watchlist"),
-});
-
 export const GetSoccerCandidatesResponseItem = zod.object({
-  strategies: zod.array(zod.enum(["TRADE_OUT", "LAY_LOCK"])),
   eventName: zod.string(),
   competition: zod.string().nullish(),
   marketId: zod.string().nullish(),
@@ -625,14 +598,6 @@ export const GetSoccerCandidatesResponse = zod.array(
 export const ListSoccerTradesQueryParams = zod.object({
   status: zod.coerce.string().nullish(),
   limit: zod.coerce.number().nullish(),
-  strategy: zod
-    .union([
-      zod.literal("TRADE_OUT"),
-      zod.literal("LAY_LOCK"),
-      zod.literal(null),
-    ])
-    .nullish()
-    .describe("Return only one isolated strategy"),
 });
 
 export const ListSoccerTradesResponseItem = zod.object({
@@ -651,14 +616,11 @@ export const ListSoccerTradesResponseItem = zod.object({
   entryMinute: zod.number(),
   entryOdds: zod.number(),
   stake: zod.number(),
-  strategy: zod.string().optional().describe("TRADE_OUT | LAY_LOCK"),
   layPrice: zod.number().nullish(),
   layMatchedAt: zod.string().nullish(),
   status: zod
     .string()
-    .describe(
-      "OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID",
-    ),
+    .describe("OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID"),
   exitOdds: zod.number().nullish(),
   exitReason: zod.string().nullish(),
   profit: zod.number().nullish(),
@@ -672,22 +634,9 @@ export const ListSoccerTradesResponse = zod.array(ListSoccerTradesResponseItem);
 /**
  * @summary Aggregate P&L and performance for the soccer bot
  */
-export const GetSoccerSummaryQueryParams = zod.object({
-  strategy: zod
-    .union([
-      zod.literal("TRADE_OUT"),
-      zod.literal("LAY_LOCK"),
-      zod.literal(null),
-    ])
-    .nullish()
-    .describe("Aggregate only one isolated strategy"),
-});
-
 export const GetSoccerSummaryResponse = zod.object({
   totalTrades: zod.number(),
   openTrades: zod.number(),
-  tradedOut: zod.number(),
-  exitedAfterGoal: zod.number(),
   settledWon: zod.number(),
   settledLost: zod.number(),
   totalPnl: zod.number(),
@@ -703,18 +652,6 @@ export const GetSoccerSummaryResponse = zod.object({
         date: zod.string(),
         pnl: zod.number(),
         trades: zod.number(),
-      }),
-    )
-    .optional(),
-  byStrategy: zod
-    .array(
-      zod.object({
-        strategy: zod.string().describe("TRADE_OUT | LAY_LOCK"),
-        trades: zod.number(),
-        openTrades: zod.number(),
-        pnl: zod.number(),
-        staked: zod.number(),
-        roiPct: zod.number(),
       }),
     )
     .optional(),

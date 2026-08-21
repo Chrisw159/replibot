@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { desc, eq, like, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { soccerConfigTable, soccerTradesTable, botLogsTable } from "@workspace/db/schema";
 import {
@@ -11,7 +11,6 @@ import {
   getSoccerLastCycleAt,
   getSoccerCandidatesSnapshot,
   getWatchedGameCount,
-  isDailyStopHit,
 } from "../lib/soccerEngine";
 import { getSession } from "../lib/betfair";
 
@@ -25,17 +24,13 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     stake: num(c.stake),
     minOdds: num(c.minOdds),
     maxOdds: num(c.maxOdds),
-    profitTargetPct: num(c.profitTargetPct),
     entryMinute: c.entryMinute,
     minGoalGap: c.minGoalGap,
     maxConcurrent: c.maxConcurrent,
-    dailyStopLoss: num(c.dailyStopLoss),
     minLiquidity: num(c.minLiquidity),
     checkIntervalSeconds: c.checkIntervalSeconds,
     paperMode: c.paperMode,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
-    strategyTradeOutEnabled: c.strategyTradeOutEnabled,
-    strategyLayLockEnabled: c.strategyLayLockEnabled,
     layTargetPct: num(c.layTargetPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
@@ -58,7 +53,6 @@ function serializeTrade(t: typeof soccerTradesTable.$inferSelect) {
     entryMinute: t.entryMinute,
     entryOdds: num(t.entryOdds),
     stake: num(t.stake),
-    strategy: t.strategy,
     layPrice: t.layPrice === null ? null : num(t.layPrice),
     layMatchedAt: t.layMatchedAt?.toISOString() ?? null,
     status: t.status,
@@ -92,7 +86,6 @@ async function statusPayload() {
     watchedGames: getWatchedGameCount(),
     todayPnl: num(today[0]?.pnl),
     todayTrades: Number(today[0]?.trades ?? 0),
-    dailyStopHit: isDailyStopHit(),
     paperMode: config.paperMode,
     lastCycleAt: getSoccerLastCycleAt()?.toISOString() ?? null,
     betfairConnected: !!getSession(),
@@ -110,18 +103,14 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.stake !== undefined) patch.stake = numeric2(b.stake);
   if (b.minOdds !== undefined) patch.minOdds = numeric2(b.minOdds);
   if (b.maxOdds !== undefined) patch.maxOdds = numeric2(b.maxOdds);
-  if (b.profitTargetPct !== undefined) patch.profitTargetPct = numeric2(b.profitTargetPct);
   if (b.entryMinute !== undefined) patch.entryMinute = Math.trunc(Number(b.entryMinute));
   if (b.minGoalGap !== undefined) patch.minGoalGap = Math.trunc(Number(b.minGoalGap));
   if (b.maxConcurrent !== undefined) patch.maxConcurrent = Math.trunc(Number(b.maxConcurrent));
-  if (b.dailyStopLoss !== undefined) patch.dailyStopLoss = numeric2(b.dailyStopLoss);
   if (b.minLiquidity !== undefined) patch.minLiquidity = numeric2(b.minLiquidity);
   if (b.checkIntervalSeconds !== undefined)
     patch.checkIntervalSeconds = Math.max(10, Math.trunc(Number(b.checkIntervalSeconds)));
   if (b.paperMode !== undefined) patch.paperMode = Boolean(b.paperMode);
   if (b.blockReEntryAfterProfit !== undefined) patch.blockReEntryAfterProfit = Boolean(b.blockReEntryAfterProfit);
-  if (b.strategyTradeOutEnabled !== undefined) patch.strategyTradeOutEnabled = Boolean(b.strategyTradeOutEnabled);
-  if (b.strategyLayLockEnabled !== undefined) patch.strategyLayLockEnabled = Boolean(b.strategyLayLockEnabled);
   if (b.layTargetPct !== undefined) {
     const v = Number(b.layTargetPct);
     if (Number.isFinite(v) && v >= 0) patch.layTargetPct = v.toFixed(2);
@@ -148,50 +137,26 @@ router.get("/soccer/status", async (_req, res) => {
   res.json(await statusPayload());
 });
 
-router.get("/soccer/candidates", async (req, res) => {
-  const strategy =
-    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
-      ? req.query.strategy
-      : undefined;
-  res.json(getSoccerCandidatesSnapshot(strategy));
+router.get("/soccer/candidates", async (_req, res) => {
+  res.json(getSoccerCandidatesSnapshot());
 });
 
 router.get("/soccer/trades", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 100), 500);
   const status = typeof req.query.status === "string" ? req.query.status : null;
-  const strategy =
-    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
-      ? req.query.strategy
-      : null;
   const base = db.select().from(soccerTradesTable);
   const rows =
-    status && strategy
+    status
       ? await base
-          .where(and(eq(soccerTradesTable.status, status), eq(soccerTradesTable.strategy, strategy)))
+          .where(eq(soccerTradesTable.status, status))
           .orderBy(desc(soccerTradesTable.placedAt))
           .limit(limit)
-      : status
-        ? await base
-            .where(eq(soccerTradesTable.status, status))
-            .orderBy(desc(soccerTradesTable.placedAt))
-            .limit(limit)
-        : strategy
-          ? await base
-              .where(eq(soccerTradesTable.strategy, strategy))
-              .orderBy(desc(soccerTradesTable.placedAt))
-              .limit(limit)
-          : await base.orderBy(desc(soccerTradesTable.placedAt)).limit(limit);
+      : await base.orderBy(desc(soccerTradesTable.placedAt)).limit(limit);
   res.json(rows.map(serializeTrade));
 });
 
-router.get("/soccer/summary", async (req, res) => {
-  const strategy =
-    req.query.strategy === "TRADE_OUT" || req.query.strategy === "LAY_LOCK"
-      ? req.query.strategy
-      : null;
-  const rows = strategy
-    ? await db.select().from(soccerTradesTable).where(eq(soccerTradesTable.strategy, strategy))
-    : await db.select().from(soccerTradesTable);
+router.get("/soccer/summary", async (_req, res) => {
+  const rows = await db.select().from(soccerTradesTable);
   const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
   const count = (s: string) => rows.filter((t) => t.status === s).length;
   const totalPnl = closed.reduce((s, t) => s + num(t.profit), 0);
@@ -211,26 +176,9 @@ router.get("/soccer/summary", async (req, res) => {
     byDay.set(d, e);
   }
 
-  const byStrategy = ["TRADE_OUT", "LAY_LOCK"].map((strat) => {
-    const all = rows.filter((t) => t.strategy === strat);
-    const done = all.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
-    const pnl = done.reduce((s, t) => s + num(t.profit), 0);
-    const staked = done.reduce((s, t) => s + num(t.stake), 0);
-    return {
-      strategy: strat,
-      trades: all.length,
-      openTrades: all.length - done.length,
-      pnl: Math.round(pnl * 100) / 100,
-      staked: Math.round(staked * 100) / 100,
-      roiPct: staked > 0 ? Math.round((pnl / staked) * 10000) / 100 : 0,
-    };
-  });
-
   res.json({
     totalTrades: rows.length,
     openTrades: count("OPEN") + count("HEDGED"),
-    tradedOut: count("TRADED_OUT"),
-    exitedAfterGoal: count("EXITED_AFTER_GOAL"),
     settledWon: count("SETTLED_WON"),
     settledLost: count("SETTLED_LOST"),
     totalPnl: Math.round(totalPnl * 100) / 100,
@@ -246,7 +194,6 @@ router.get("/soccer/summary", async (req, res) => {
     dailyPnl: [...byDay.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, e]) => ({ date, pnl: Math.round(e.pnl * 100) / 100, trades: e.trades })),
-    byStrategy,
   });
 });
 

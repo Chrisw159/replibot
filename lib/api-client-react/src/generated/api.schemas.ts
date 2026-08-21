@@ -262,16 +262,12 @@ export interface SoccerConfig {
   minOdds: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds: number;
-  profitTargetPct: number;
   entryMinute: number;
   minGoalGap: number;
   maxConcurrent: number;
-  dailyStopLoss: number;
   minLiquidity: number;
   checkIntervalSeconds: number;
   paperMode: boolean;
-  strategyTradeOutEnabled?: boolean;
-  strategyLayLockEnabled?: boolean;
   layTargetPct?: number;
   /** @nullable */
   updatedAt?: string | null;
@@ -283,16 +279,12 @@ export interface SoccerConfigUpdate {
   minOdds?: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds?: number;
-  profitTargetPct?: number;
   entryMinute?: number;
   minGoalGap?: number;
   maxConcurrent?: number;
-  dailyStopLoss?: number;
   minLiquidity?: number;
   checkIntervalSeconds?: number;
   paperMode?: boolean;
-  strategyTradeOutEnabled?: boolean;
-  strategyLayLockEnabled?: boolean;
   layTargetPct?: number;
 }
 
@@ -304,23 +296,13 @@ export interface SoccerStatus {
   watchedGames: number;
   todayPnl: number;
   todayTrades: number;
-  dailyStopHit: boolean;
   paperMode: boolean;
   /** @nullable */
   lastCycleAt?: string | null;
   betfairConnected?: boolean;
 }
 
-export type SoccerCandidateStrategiesItem =
-  (typeof SoccerCandidateStrategiesItem)[keyof typeof SoccerCandidateStrategiesItem];
-
-export const SoccerCandidateStrategiesItem = {
-  TRADE_OUT: "TRADE_OUT",
-  LAY_LOCK: "LAY_LOCK",
-} as const;
-
 export interface SoccerCandidate {
-  strategies: SoccerCandidateStrategiesItem[];
   eventName: string;
   /** @nullable */
   competition?: string | null;
@@ -364,13 +346,11 @@ export interface SoccerTrade {
   entryMinute: number;
   entryOdds: number;
   stake: number;
-  /** TRADE_OUT | LAY_LOCK */
-  strategy?: string;
   /** @nullable */
   layPrice?: number | null;
   /** @nullable */
   layMatchedAt?: string | null;
-  /** OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID */
+  /** OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID */
   status: string;
   /** @nullable */
   exitOdds?: number | null;
@@ -391,21 +371,9 @@ export interface SoccerDailyPnl {
   trades: number;
 }
 
-export interface SoccerStrategySummary {
-  /** TRADE_OUT | LAY_LOCK */
-  strategy: string;
-  trades: number;
-  openTrades: number;
-  pnl: number;
-  staked: number;
-  roiPct: number;
-}
-
 export interface SoccerSummary {
   totalTrades: number;
   openTrades: number;
-  tradedOut: number;
-  exitedAfterGoal: number;
   settledWon: number;
   settledLost: number;
   totalPnl: number;
@@ -416,7 +384,6 @@ export interface SoccerSummary {
   avgEntryOdds: number;
   winRatePct: number;
   dailyPnl?: SoccerDailyPnl[];
-  byStrategy?: SoccerStrategySummary[];
 }
 
 export interface SoccerLogEntry {
@@ -478,23 +445,6 @@ export type GetPnlChartParams = {
   days?: number | null;
 };
 
-export type GetSoccerCandidatesParams = {
-  /**
-   * Return only the selected strategy's watchlist
-   * @nullable
-   */
-  strategy?: GetSoccerCandidatesStrategy;
-};
-
-export type GetSoccerCandidatesStrategy =
-  | (typeof GetSoccerCandidatesStrategy)[keyof typeof GetSoccerCandidatesStrategy]
-  | null;
-
-export const GetSoccerCandidatesStrategy = {
-  TRADE_OUT: "TRADE_OUT",
-  LAY_LOCK: "LAY_LOCK",
-} as const;
-
 export type ListSoccerTradesParams = {
   /**
    * @nullable
@@ -504,38 +454,7 @@ export type ListSoccerTradesParams = {
    * @nullable
    */
   limit?: number | null;
-  /**
-   * Return only one isolated strategy
-   * @nullable
-   */
-  strategy?: ListSoccerTradesStrategy;
 };
-
-export type ListSoccerTradesStrategy =
-  | (typeof ListSoccerTradesStrategy)[keyof typeof ListSoccerTradesStrategy]
-  | null;
-
-export const ListSoccerTradesStrategy = {
-  TRADE_OUT: "TRADE_OUT",
-  LAY_LOCK: "LAY_LOCK",
-} as const;
-
-export type GetSoccerSummaryParams = {
-  /**
-   * Aggregate only one isolated strategy
-   * @nullable
-   */
-  strategy?: GetSoccerSummaryStrategy;
-};
-
-export type GetSoccerSummaryStrategy =
-  | (typeof GetSoccerSummaryStrategy)[keyof typeof GetSoccerSummaryStrategy]
-  | null;
-
-export const GetSoccerSummaryStrategy = {
-  TRADE_OUT: "TRADE_OUT",
-  LAY_LOCK: "LAY_LOCK",
-} as const;
 
 export type GetSoccerLogsParams = {
   /**

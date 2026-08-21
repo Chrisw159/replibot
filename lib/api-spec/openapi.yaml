@@ -520,13 +520,6 @@ paths:
       operationId: getSoccerCandidates
       tags: [soccer]
       summary: Live watchlist of in-play games being evaluated
-      parameters:
-        - name: strategy
-          in: query
-          description: Return only the selected strategy's watchlist
-          schema:
-            type: ["string", "null"]
-            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Current candidate games and why they do/don't qualify
@@ -551,12 +544,6 @@ paths:
           in: query
           schema:
             type: ["integer", "null"]
-        - name: strategy
-          in: query
-          description: Return only one isolated strategy
-          schema:
-            type: ["string", "null"]
-            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Trades
@@ -572,13 +559,6 @@ paths:
       operationId: getSoccerSummary
       tags: [soccer]
       summary: Aggregate P&L and performance for the soccer bot
-      parameters:
-        - name: strategy
-          in: query
-          description: Aggregate only one isolated strategy
-          schema:
-            type: ["string", "null"]
-            enum: [TRADE_OUT, LAY_LOCK, null]
       responses:
         "200":
           description: Summary
@@ -1106,23 +1086,19 @@ components:
 
     SoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, maxOdds, profitTargetPct, entryMinute, minGoalGap, maxConcurrent, dailyStopLoss, minLiquidity, checkIntervalSeconds, paperMode]
+      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
         stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
-        profitTargetPct: { type: number }
         entryMinute: { type: integer }
         minGoalGap: { type: integer }
         maxConcurrent: { type: integer }
-        dailyStopLoss: { type: number }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean }
-        strategyTradeOutEnabled: { type: boolean }
-        strategyLayLockEnabled: { type: boolean }
         layTargetPct: { type: number }
         updatedAt: { type: ["string", "null"] }
 
@@ -1132,21 +1108,17 @@ components:
         stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
-        profitTargetPct: { type: number }
         entryMinute: { type: integer }
         minGoalGap: { type: integer }
         maxConcurrent: { type: integer }
-        dailyStopLoss: { type: number }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean }
-        strategyTradeOutEnabled: { type: boolean }
-        strategyLayLockEnabled: { type: boolean }
         layTargetPct: { type: number }
 
     SoccerStatus:
       type: object
-      required: [isRunning, openTrades, watchedGames, todayPnl, todayTrades, dailyStopHit, paperMode]
+      required: [isRunning, openTrades, watchedGames, todayPnl, todayTrades, paperMode]
       properties:
         isRunning: { type: boolean }
         startedAt: { type: ["string", "null"] }
@@ -1154,20 +1126,14 @@ components:
         watchedGames: { type: integer }
         todayPnl: { type: number }
         todayTrades: { type: integer }
-        dailyStopHit: { type: boolean }
         paperMode: { type: boolean }
         lastCycleAt: { type: ["string", "null"] }
         betfairConnected: { type: boolean }
 
     SoccerCandidate:
       type: object
-      required: [strategies, eventName, score, minute, verdict, reason]
+      required: [eventName, score, minute, verdict, reason]
       properties:
-        strategies:
-          type: array
-          items:
-            type: string
-            enum: [TRADE_OUT, LAY_LOCK]
         eventName: { type: string }
         competition: { type: ["string", "null"] }
         marketId: { type: ["string", "null"] }
@@ -1201,10 +1167,9 @@ components:
         entryMinute: { type: integer }
         entryOdds: { type: number }
         stake: { type: number }
-        strategy: { type: string, description: "TRADE_OUT | LAY_LOCK" }
         layPrice: { type: ["number", "null"] }
         layMatchedAt: { type: ["string", "null"] }
-        status: { type: string, description: "OPEN | HEDGED | TRADED_OUT | EXITED_AFTER_GOAL | SETTLED_WON | SETTLED_LOST | VOID" }
+        status: { type: string, description: "OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID" }
         exitOdds: { type: ["number", "null"] }
         exitReason: { type: ["string", "null"] }
         profit: { type: ["number", "null"] }
@@ -1215,12 +1180,10 @@ components:
 
     SoccerSummary:
       type: object
-      required: [totalTrades, openTrades, tradedOut, exitedAfterGoal, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, todayTrades, avgEntryOdds, winRatePct]
+      required: [totalTrades, openTrades, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, todayTrades, avgEntryOdds, winRatePct]
       properties:
         totalTrades: { type: integer }
         openTrades: { type: integer }
-        tradedOut: { type: integer }
-        exitedAfterGoal: { type: integer }
         settledWon: { type: integer }
         settledLost: { type: integer }
         totalPnl: { type: number }
@@ -1234,22 +1197,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SoccerDailyPnl"
-        byStrategy:
-          type: array
-          items:
-            $ref: "#/components/schemas/SoccerStrategySummary"
-
-    SoccerStrategySummary:
-      type: object
-      required: [strategy, trades, openTrades, pnl, staked, roiPct]
-      properties:
-        strategy: { type: string, description: "TRADE_OUT | LAY_LOCK" }
-        trades: { type: integer }
-        openTrades: { type: integer }
-        pnl: { type: number }
-        staked: { type: number }
-        roiPct: { type: number }
-
     SoccerDailyPnl:
       type: object
       required: [date, pnl, trades]

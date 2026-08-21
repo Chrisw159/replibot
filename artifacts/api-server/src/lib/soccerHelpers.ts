@@ -121,17 +121,3 @@ export function ouLineFromMarketType(
   if (!m) return null;
   return Number(m[1]) + 0.5;
 }
-
-// ── Trade-out math ───────────────────────────────────────────────────────────
-
-/**
- * Gross profit from an equal-profit hedge: back S at B; lay at O.
- * Returns S * (B/O - 1).  Commission is applied by the caller.
- */
-export function hedgeProfit(
-  stake: number,
-  entryOdds: number,
-  layOdds: number,
-): number {
-  return stake * (entryOdds / layOdds - 1);
-}

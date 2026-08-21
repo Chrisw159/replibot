@@ -7,7 +7,6 @@ import {
   layLockPrice,
   layLockWinProfit,
   ouLineFromMarketType,
-  hedgeProfit,
   COMMISSION,
 } from "./soccerHelpers";
 
@@ -330,72 +329,5 @@ describe("ouLineFromMarketType", () => {
   it("returns null for a whole-number variant without trailing 5", () => {
     // e.g. "OVER_UNDER_2" doesn't match the regex
     expect(ouLineFromMarketType("OVER_UNDER_2")).toBeNull();
-  });
-});
-
-// ── hedgeProfit ──────────────────────────────────────────────────────────────
-
-describe("hedgeProfit", () => {
-  it("returns 0 when lay odds equal entry odds (no movement)", () => {
-    expect(hedgeProfit(10, 1.5, 1.5)).toBeCloseTo(0);
-  });
-
-  it("returns positive profit when lay odds are lower than entry odds", () => {
-    // Back £10 @ 1.40, lay @ 1.30 → 10*(1.40/1.30 - 1) ≈ 0.769
-    expect(hedgeProfit(10, 1.4, 1.3)).toBeCloseTo(10 * (1.4 / 1.3 - 1));
-  });
-
-  it("returns negative (loss) when lay odds are higher than entry odds", () => {
-    expect(hedgeProfit(10, 1.3, 1.4)).toBeCloseTo(10 * (1.3 / 1.4 - 1));
-  });
-
-  it("scales linearly with stake", () => {
-    const single = hedgeProfit(1, 1.4, 1.3);
-    expect(hedgeProfit(50, 1.4, 1.3)).toBeCloseTo(single * 50);
-  });
-
-  // Net-of-commission +15% trigger check
-  it("net profit after commission clears 15% target on a textbook trade-out", () => {
-    // Back £10 @ 1.40, lay @ 1.28
-    // gross ≈ 10*(1.40/1.28 - 1) ≈ 0.9375
-    // net   ≈ 0.9375 * 0.95 ≈ 0.8906
-    // target = 15% of £10 = £1.50 net → this does NOT clear (odds too tight)
-    // Demonstrate the formula the engine uses:
-    //   target = (profitTargetPct/100 * stake) / (1 - COMMISSION)
-    const stake = 10;
-    const entryOdds = 1.4;
-    const layOdds = 1.28;
-    const profitTargetPct = 15;
-
-    const gross = hedgeProfit(stake, entryOdds, layOdds);
-    const target = ((profitTargetPct / 100) * stake) / (1 - COMMISSION);
-    const net = gross * (1 - COMMISSION);
-
-    // gross is positive (price moved in our favour)
-    expect(gross).toBeGreaterThan(0);
-    // net is what we keep after Betfair takes their cut
-    expect(net).toBeCloseTo(gross * (1 - COMMISSION));
-    // compare to engine's commission-adjusted target
-    expect(typeof (gross >= target)).toBe("boolean");
-  });
-
-  it("confirms +15% net trigger fires at the right gross threshold", () => {
-    // For £10 stake, 15% net target:
-    //   net target = £1.50; gross target = 1.50 / 0.95 ≈ 1.5789
-    //   gross = stake * (B/O - 1) >= 1.5789
-    //   B/O >= 1 + 1.5789/10 = 1.15789
-    //   So entry @ 1.40, we need lay <= 1.40 / 1.15789 ≈ 1.209
-    const stake = 10;
-    const entryOdds = 1.4;
-    const profitTargetPct = 15;
-    const target = ((profitTargetPct / 100) * stake) / (1 - COMMISSION);
-
-    // Just above the threshold lay price: should NOT trigger
-    const layTooHigh = 1.21;
-    expect(hedgeProfit(stake, entryOdds, layTooHigh)).toBeLessThan(target);
-
-    // Just below the threshold lay price: should trigger
-    const layOk = 1.20;
-    expect(hedgeProfit(stake, entryOdds, layOk)).toBeGreaterThanOrEqual(target);
   });
 });
