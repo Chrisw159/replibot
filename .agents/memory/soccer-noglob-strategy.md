@@ -12,6 +12,7 @@ Key design decisions:
 - **Why:** disagreement often means a goal is in flight and one source is delayed; refusing that cycle avoids entering from stale score data.
 - Goal-after-entry detection: re-read CS market and compare total vs entryTotalGoals; price-spike (≥1.4× entry) only as fallback when score unreadable.
 - The only active strategy mirrors the operator's manual method: rest a same-stake lay immediately to lock a £20 return (40% of £50) if the Under wins and break even if it loses. Do not reintroduce comparison strategies.
+- Paper resting lays need a dedicated fast monitor independent of the slower entry scan. **Why:** a 20-second check missed a brief lay-price crossing before a goal and falsely booked a £50 loss while the real resting lay had matched.
 - Each Betfair event may be entered only once. A settled win or loss must block every later scan from re-entering that fixture, including after a bot restart.
 - **Why:** allowing re-entry after losses created repeated £50 positions on the same late-game market.
 - The operator dashboard is single-strategy. Do not add strategy tabs or combined/comparison totals.

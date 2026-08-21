@@ -6,6 +6,9 @@ import {
   chooseEntryLine,
   layLockPrice,
   layLockWinProfit,
+  restingLayHasEnoughTradedVolume,
+  tradedVolumeAtPrice,
+  immediateLayFill,
   ouLineFromMarketType,
   COMMISSION,
 } from "./soccerHelpers";
@@ -296,6 +299,47 @@ describe("same-stake lay lock", () => {
     const backLoss = -stake;
     const layWin = stake;
     expect(backLoss + layWin).toBe(0);
+  });
+});
+
+describe("restingLayHasEnoughTradedVolume", () => {
+  it("requires enough new volume to clear the queue and full stake", () => {
+    expect(restingLayHasEnoughTradedVolume(169.98, 100, 20, 50)).toBe(false);
+    expect(restingLayHasEnoughTradedVolume(170, 100, 20, 50)).toBe(true);
+  });
+
+  it("does not count volume traded before the resting order was created", () => {
+    expect(restingLayHasEnoughTradedVolume(149, 100, 0, 50)).toBe(false);
+    expect(restingLayHasEnoughTradedVolume(150, 100, 0, 50)).toBe(true);
+  });
+});
+
+describe("paper resting-lay evidence", () => {
+  it("counts traded volume only at the exact lay target", () => {
+    expect(
+      tradedVolumeAtPrice(
+        [
+          { price: 1.22, size: 100 },
+          { price: 1.23, size: 50 },
+          { price: 1.24, size: 75 },
+        ],
+        1.23,
+      ),
+    ).toBe(50);
+  });
+
+  it("consumes immediate availableToLay demand only at target or better", () => {
+    expect(
+      immediateLayFill(
+        [
+          { price: 1.22, size: 20 },
+          { price: 1.23, size: 40 },
+          { price: 1.24, size: 100 },
+        ],
+        1.23,
+        50,
+      ),
+    ).toEqual({ matchedStake: 50, priceStake: 61.3 });
   });
 });
 

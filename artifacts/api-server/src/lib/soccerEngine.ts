@@ -17,7 +17,7 @@
  * territory covered only by "Any Other Home Win") are skipped and logged.
  * Match minute is estimated from kick-off time (+15 min half-time break).
  */
-import { eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   soccerConfigTable,
@@ -40,18 +40,27 @@ import {
   chooseEntryLine,
   layLockPrice,
   layLockWinProfit,
+  restingLayHasEnoughTradedVolume,
+  tradedVolumeAtPrice,
+  immediateLayFill,
   ouLineFromMarketType,
 } from "./soccerHelpers";
 import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 
 const SOCCER_EVENT_TYPE = "1";
+const RESTING_LAY_MONITOR_MS = 1_000;
 
 // ── In-memory state ─────────────────────────────────────────────────────────
 let running = false;
 let startedAt: Date | null = null;
 let lastCycleAt: Date | null = null;
 let cycleTimer: ReturnType<typeof setTimeout> | null = null;
+let layMonitorTimer: ReturnType<typeof setTimeout> | null = null;
 let processing = false;
+let layMonitorProcessing = false;
+let layMonitorPromise: Promise<void> | null = null;
+let layMonitorPromiseGeneration: number | null = null;
+let runGeneration = 0;
 
 export interface SoccerCandidateSnapshot {
   eventName: string;
@@ -130,6 +139,7 @@ interface BookRunner {
   ex?: {
     availableToBack?: Array<{ price: number; size: number }>;
     availableToLay?: Array<{ price: number; size: number }>;
+    tradedVolume?: Array<{ price: number; size: number }>;
   };
 }
 
@@ -185,10 +195,85 @@ async function getBooks(marketIds: string[]): Promise<Map<string, Book>> {
   }
   return out;
 }
+
+async function getBooksWithTradedVolume(
+  marketIds: string[],
+): Promise<Map<string, Book>> {
+  const out = new Map<string, Book>();
+  for (let i = 0; i < marketIds.length; i += 40) {
+    const books = await apiBetfairRequest<Book[]>(
+      "SportsAPING/v1.0/listMarketBook",
+      {
+        marketIds: marketIds.slice(i, i + 40),
+        priceProjection: {
+          priceData: ["EX_TRADED"],
+        },
+      },
+    );
+    if (Array.isArray(books)) {
+      for (const book of books) out.set(book.marketId, book);
+    }
+  }
+  return out;
+}
+
+async function getRestingLayEvidence(
+  marketId: string,
+  selectionId: number,
+  layPrice: number,
+  stake: number,
+): Promise<{
+  tradedVolumeBaseline: number;
+  queueAhead: number;
+  immediateMatchedStake: number;
+  immediatePriceStake: number;
+}> {
+  const books = await apiBetfairRequest<Book[]>(
+    "SportsAPING/v1.0/listMarketBook",
+    {
+      marketIds: [marketId],
+      priceProjection: {
+        priceData: ["EX_ALL_OFFERS", "EX_TRADED"],
+        virtualise: true,
+      },
+    },
+  );
+  const book = books?.[0];
+  const runner = book?.runners?.find(
+    (item) => item.selectionId === selectionId,
+  );
+  if (!book || book.status !== "OPEN" || !runner) {
+    throw new Error("Market book unavailable while creating resting lay");
+  }
+
+  const queueAhead =
+    runner.ex?.availableToBack?.find(
+      (level) => Math.abs(level.price - layPrice) < 0.0001,
+    )?.size ?? 0;
+
+  // availableToLay is opposing BACK demand that a new lay can consume
+  // immediately at the requested price or better (lower odds for the layer).
+  const immediate = immediateLayFill(
+    runner.ex?.availableToLay ?? [],
+    layPrice,
+    stake,
+  );
+
+  return {
+    tradedVolumeBaseline: tradedVolumeAtPrice(
+      runner.ex?.tradedVolume ?? [],
+      layPrice,
+    ),
+    queueAhead,
+    immediateMatchedStake: immediate.matchedStake,
+    immediatePriceStake: immediate.priceStake,
+  };
+}
+
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
 // ── Main cycle ──────────────────────────────────────────────────────────────
-async function runCycle(): Promise<void> {
+async function runCycle(generation: number): Promise<void> {
   const config = await getSoccerConfig();
 
   // Session
@@ -201,13 +286,21 @@ async function runCycle(): Promise<void> {
     await slog("info", "Connected to Betfair");
   }
 
-  // 1) Manage open trades first
+  if (!running || generation !== runGeneration) return;
+
+  // 1) Capture durable resting-lay fill evidence before settlement. The fast
+  // monitor shares this same promise, so it cannot race settlement.
+  await runRestingLayMonitor(generation);
+
+  // 2) Manage open trades
   await manageOpenTrades(config);
 
-  // 2) Settle closed markets
+  // 3) Settle closed markets
   await settleTrades(config);
 
-  // 3) Scan for new entries. There is deliberately no daily stop-loss.
+  if (!running || generation !== runGeneration) return;
+
+  // 4) Scan for new entries. There is deliberately no daily stop-loss.
   await scanForEntries(config);
 
   lastCycleAt = new Date();
@@ -452,10 +545,48 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const targetFrac = num(config.layTargetPct) / 100;
     const ideal = pick.odds - targetFrac / (1 - COMMISSION);
     const layPrice = layLockPrice(pick.odds, num(config.layTargetPct));
+    let layEvidence: Awaited<ReturnType<typeof getRestingLayEvidence>>;
+    try {
+      layEvidence = await getRestingLayEvidence(
+        pick.market.marketId,
+        pick.selectionId,
+        layPrice,
+        stake,
+      );
+    } catch (err) {
+      await slog(
+        "warn",
+        `SKIPPED ${eventName} — could not establish resting-lay fill baseline`,
+        { err: err instanceof Error ? err.message : String(err) },
+      );
+      continue;
+    }
+    const immediatelyHedged =
+      layEvidence.immediateMatchedStake + 0.01 >= stake;
+    const immediateAveragePrice = immediatelyHedged
+      ? layEvidence.immediatePriceStake / stake
+      : null;
+    const storedLayPrice = immediateAveragePrice ?? layPrice;
+
     await db.insert(soccerTradesTable).values({
       ...baseTrade,
       strategy: "LAY_LOCK",
-      layPrice: layPrice.toFixed(2),
+      status: immediatelyHedged ? "HEDGED" : "OPEN",
+      layPrice: storedLayPrice.toFixed(2),
+      layTradedVolumeBaseline:
+        layEvidence.tradedVolumeBaseline.toFixed(2),
+      layQueueAhead: layEvidence.queueAhead.toFixed(2),
+      layImmediateMatchedStake:
+        layEvidence.immediateMatchedStake.toFixed(2),
+      layImmediatePriceStake:
+        layEvidence.immediatePriceStake.toFixed(2),
+      layMatchedAt: immediatelyHedged ? new Date() : null,
+      exitOdds: immediatelyHedged
+        ? storedLayPrice.toFixed(2)
+        : null,
+      exitReason: immediatelyHedged
+        ? `Resting lay immediately matched @ average ${storedLayPrice.toFixed(2)} — locked`
+        : null,
     });
     slots--;
     if (eventId) openEventIds.add(eventId);
@@ -463,8 +594,14 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
         `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) ` +
-        `[resting same-stake lay @ ${layPrice.toFixed(2)}${ideal < 1.01 ? ", target capped at 1.01" : ""}]`,
+        `[resting same-stake lay @ ${layPrice.toFixed(2)}${layEvidence.immediateMatchedStake > 0 ? `, £${layEvidence.immediateMatchedStake.toFixed(2)} matched immediately` : ""}${ideal < 1.01 ? ", target capped at 1.01" : ""}]`,
     );
+    if (immediatelyHedged) {
+      await slog(
+        "info",
+        `LAY MATCHED ${eventName} immediately — ${pick.selectionName} layed £${stake} @ average ${storedLayPrice.toFixed(2)}; outcome locked to +£${layLockWinProfit(stake, pick.odds, storedLayPrice).toFixed(2)} or £0`,
+      );
+    }
     snap.push({
       ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
       reason: `BACK ${pick.selectionName} @ ${pick.odds} (${isInsured ? "insured" : "tight"} line)`,
@@ -497,7 +634,122 @@ function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
   };
 }
 
-// ── Open-trade management: trade-out, goal handling ─────────────────────────
+// ── Resting lay monitor ──────────────────────────────────────────────────────
+async function monitorRestingLays(generation: number): Promise<void> {
+  if (
+    !running ||
+    generation !== runGeneration ||
+    !getSession()
+  ) {
+    return;
+  }
+
+  const open = await db
+    .select()
+    .from(soccerTradesTable)
+    .where(
+      and(
+        eq(soccerTradesTable.status, "OPEN"),
+        eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      ),
+    );
+  if (open.length === 0) return;
+
+  const books = await getBooksWithTradedVolume(
+    open.map((trade) => trade.marketId),
+  );
+  if (!running || generation !== runGeneration) return;
+
+  for (const trade of open) {
+    if (!trade.layPrice) continue;
+    const book = books.get(trade.marketId);
+    if (!book) continue;
+
+    const runner = book.runners?.find((item) => item.selectionId === trade.selectionId);
+    if (!runner) continue;
+
+    const layPrice = num(trade.layPrice);
+    const tradedSinceEntry =
+      tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], layPrice) -
+      num(trade.layTradedVolumeBaseline);
+    const immediateMatchedStake = num(
+      trade.layImmediateMatchedStake,
+    );
+    const remainingStake = Math.max(
+      0,
+      num(trade.stake) - immediateMatchedStake,
+    );
+
+    // Exact-price cumulative volume remains available after a transient
+    // crossing or suspension. Lower-price trades are deliberately excluded:
+    // they can be unrelated aggressive lay orders and do not prove our queued
+    // lay at this target was consumed.
+    if (
+      !restingLayHasEnoughTradedVolume(
+        tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], layPrice),
+        num(trade.layTradedVolumeBaseline),
+        num(trade.layQueueAhead),
+        remainingStake,
+      )
+    ) {
+      continue;
+    }
+    if (!running || generation !== runGeneration) return;
+
+    const stake = num(trade.stake);
+    const matchedPriceStake =
+      num(trade.layImmediatePriceStake) +
+      remainingStake * layPrice;
+    const averageLayPrice = matchedPriceStake / stake;
+    const updated = await db
+      .update(soccerTradesTable)
+      .set({
+        status: "HEDGED",
+        layMatchedAt: new Date(),
+        layPrice: averageLayPrice.toFixed(2),
+        exitOdds: averageLayPrice.toFixed(2),
+        exitReason: `Resting lay fully matched @ average ${averageLayPrice.toFixed(2)} — locked: win = target %, lose = breakeven`,
+      })
+      .where(
+        and(
+          eq(soccerTradesTable.id, trade.id),
+          eq(soccerTradesTable.status, "OPEN"),
+        ),
+      )
+      .returning({ id: soccerTradesTable.id });
+
+    if (updated.length === 0) continue;
+    const entryOdds = num(trade.entryOdds);
+    await slog(
+      "info",
+      `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ average ${averageLayPrice.toFixed(2)} (backed @ ${entryOdds}); ` +
+        `£${tradedSinceEntry.toFixed(2)} traded at target after £${num(trade.layQueueAhead).toFixed(2)} queue; ` +
+        `outcome locked to +£${layLockWinProfit(stake, entryOdds, averageLayPrice).toFixed(2)} or £0`,
+    );
+  }
+}
+
+async function runRestingLayMonitor(generation: number): Promise<void> {
+  if (layMonitorPromise) {
+    const existingGeneration = layMonitorPromiseGeneration;
+    await layMonitorPromise;
+    if (existingGeneration === generation) return;
+  }
+  if (!running || generation !== runGeneration) return;
+  if (layMonitorPromise) return layMonitorPromise;
+
+  const promise = monitorRestingLays(generation).finally(() => {
+    if (layMonitorPromise === promise) {
+      layMonitorPromise = null;
+      layMonitorPromiseGeneration = null;
+    }
+  });
+  layMonitorPromise = promise;
+  layMonitorPromiseGeneration = generation;
+  await promise;
+}
+
+// ── Open-trade management: goal handling ────────────────────────────────────
 async function manageOpenTrades(config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
@@ -554,7 +806,6 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
     if (!book) continue;
     if (book.status === "CLOSED") continue; // settlement pass handles it
 
-    const stake = num(trade.stake);
     const entryOdds = num(trade.entryOdds);
     const runner = book.runners?.find((r) => r.selectionId === trade.selectionId);
     const layOffer = runner?.ex?.availableToLay?.[0];
@@ -571,47 +822,24 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
       const priceSaysGoal = !!layOffer && layOffer.price >= entryOdds * 1.4;
       if (scoreSaysGoal || (currentTotal === undefined && priceSaysGoal)) {
         goalAfterEntry = true;
-        await db
+        const updated = await db
           .update(soccerTradesTable)
           .set({ goalAfterEntry: true })
-          .where(eq(soccerTradesTable.id, trade.id));
-        await slog(
-          "warn",
-          `GOAL against us in ${trade.eventName} (${scoreSaysGoal ? `score now totals ${currentTotal}` : `${trade.selectionName} spiked to ${layOffer?.price}`}) — switching to breakeven-exit mode`,
-        );
+          .where(
+            and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "OPEN"),
+            ),
+          )
+          .returning({ id: soccerTradesTable.id });
+        if (updated.length > 0) {
+          await slog(
+            "warn",
+            `GOAL against us in ${trade.eventName} (${scoreSaysGoal ? `score now totals ${currentTotal}` : `${trade.selectionName} spiked to ${layOffer?.price}`}) — resting lay was not yet confirmed matched`,
+          );
+        }
       }
     }
-
-    // LAY_LOCK strategy: the only management is watching the resting lay.
-    // It matches (paper) when the market's best back offer trades down to
-    // our price with enough size to absorb the stake.
-    if (trade.strategy === "LAY_LOCK") {
-      if (book.status !== "OPEN" || !trade.layPrice) continue;
-      // Paper fill heuristic (threshold-cross): our resting lay at L sits in
-      // the availableToBack queue. Once the best OTHER back offer is strictly
-      // below L, our price is the best in the book and incoming back flow
-      // takes it. Strict `<` keeps the simulation conservative — touching L
-      // exactly doesn't count (we'd be behind the existing queue at L).
-      const backOffer = runner?.ex?.availableToBack?.[0];
-      const layPrice = num(trade.layPrice);
-      if (backOffer && backOffer.price < layPrice) {
-        await db
-          .update(soccerTradesTable)
-          .set({
-            status: "HEDGED",
-            layMatchedAt: new Date(),
-            exitOdds: layPrice.toFixed(2),
-            exitReason: `Resting lay matched @ ${layPrice.toFixed(2)} — locked: win = target %, lose = breakeven`,
-          })
-          .where(eq(soccerTradesTable.id, trade.id));
-        await slog(
-          "info",
-          `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ ${layPrice.toFixed(2)} (backed @ ${entryOdds}); outcome locked to +£${layLockWinProfit(stake, entryOdds, layPrice).toFixed(2)} or £0`,
-        );
-      }
-      continue;
-    }
-
   }
 }
 
@@ -661,7 +889,12 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
             profit: net.toFixed(2),
             closedAt: new Date(),
           })
-          .where(eq(soccerTradesTable.id, trade.id));
+          .where(
+            and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "HEDGED"),
+            ),
+          );
         await slog("info", `SETTLED WON (LAY_LOCK) ${trade.eventName} +£${net.toFixed(2)}`);
       } else if (runner.status === "LOSER") {
         await db
@@ -672,20 +905,30 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
             profit: "0.00",
             closedAt: new Date(),
           })
-          .where(eq(soccerTradesTable.id, trade.id));
+          .where(
+            and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "HEDGED"),
+            ),
+          );
         await slog("info", `SETTLED BREAKEVEN (LAY_LOCK) ${trade.eventName} £0.00 — hedge did its job`);
       } else if (runner.status === "REMOVED") {
         await db
           .update(soccerTradesTable)
           .set({ status: "VOID", exitReason: "Market voided/removed", profit: "0.00", closedAt: new Date() })
-          .where(eq(soccerTradesTable.id, trade.id));
+          .where(
+            and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "HEDGED"),
+            ),
+          );
       }
       continue;
     }
 
     if (runner.status === "WINNER") {
       const net = stake * (entryOdds - 1) * (1 - COMMISSION);
-      await db
+      const settled = await db
         .update(soccerTradesTable)
         .set({
           status: "SETTLED_WON",
@@ -693,10 +936,18 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
           profit: net.toFixed(2),
           closedAt: new Date(),
         })
-        .where(eq(soccerTradesTable.id, trade.id));
-      await slog("info", `SETTLED WON ${trade.eventName} ${trade.selectionName} +£${net.toFixed(2)}`);
+        .where(
+          and(
+            eq(soccerTradesTable.id, trade.id),
+            eq(soccerTradesTable.status, "OPEN"),
+          ),
+        )
+        .returning({ id: soccerTradesTable.id });
+      if (settled.length > 0) {
+        await slog("info", `SETTLED WON ${trade.eventName} ${trade.selectionName} +£${net.toFixed(2)}`);
+      }
     } else if (runner.status === "LOSER") {
-      await db
+      const settled = await db
         .update(soccerTradesTable)
         .set({
           status: "SETTLED_LOST",
@@ -704,8 +955,16 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
           profit: (-stake).toFixed(2),
           closedAt: new Date(),
         })
-        .where(eq(soccerTradesTable.id, trade.id));
-      await slog("warn", `SETTLED LOST ${trade.eventName} ${trade.selectionName} -£${stake.toFixed(2)}`);
+        .where(
+          and(
+            eq(soccerTradesTable.id, trade.id),
+            eq(soccerTradesTable.status, "OPEN"),
+          ),
+        )
+        .returning({ id: soccerTradesTable.id });
+      if (settled.length > 0) {
+        await slog("warn", `SETTLED LOST ${trade.eventName} ${trade.selectionName} -£${stake.toFixed(2)}`);
+      }
     } else if (runner.status === "REMOVED") {
       await db
         .update(soccerTradesTable)
@@ -715,18 +974,23 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
           profit: "0.00",
           closedAt: new Date(),
         })
-        .where(eq(soccerTradesTable.id, trade.id));
+        .where(
+          and(
+            eq(soccerTradesTable.id, trade.id),
+            eq(soccerTradesTable.status, "OPEN"),
+          ),
+        );
     }
   }
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
-async function loop(): Promise<void> {
-  if (!running) return;
+async function loop(generation: number): Promise<void> {
+  if (!running || generation !== runGeneration) return;
   if (!processing) {
     processing = true;
     try {
-      await runCycle();
+      await runCycle(generation);
     } catch (err) {
       logger.error({ err }, "[SOCCER] cycle error");
     } finally {
@@ -735,24 +999,51 @@ async function loop(): Promise<void> {
   }
   const config = await getSoccerConfig().catch(() => null);
   const interval = (config?.checkIntervalSeconds ?? 20) * 1000;
-  if (running) cycleTimer = setTimeout(() => void loop(), interval);
+  if (running && generation === runGeneration) {
+    cycleTimer = setTimeout(() => void loop(generation), interval);
+  }
+}
+
+async function layMonitorLoop(generation: number): Promise<void> {
+  if (!running || generation !== runGeneration) return;
+  if (!processing && !layMonitorProcessing) {
+    layMonitorProcessing = true;
+    try {
+      await runRestingLayMonitor(generation);
+    } catch (err) {
+      logger.error({ err }, "[SOCCER] resting lay monitor error");
+    } finally {
+      layMonitorProcessing = false;
+    }
+  }
+  if (running && generation === runGeneration) {
+    layMonitorTimer = setTimeout(
+      () => void layMonitorLoop(generation),
+      RESTING_LAY_MONITOR_MS,
+    );
+  }
 }
 
 export async function startSoccerBot(): Promise<void> {
   if (running) return;
   running = true;
+  const generation = ++runGeneration;
   startedAt = new Date();
   await db.update(soccerConfigTable).set({ isRunning: true });
   await slog("info", "Soccer in-play bot STARTED (paper mode until proven)");
-  void loop();
+  void loop(generation);
+  void layMonitorLoop(generation);
 }
 
 export async function stopSoccerBot(): Promise<void> {
   if (!running) return;
   running = false;
+  runGeneration++;
   startedAt = null;
   if (cycleTimer) clearTimeout(cycleTimer);
   cycleTimer = null;
+  if (layMonitorTimer) clearTimeout(layMonitorTimer);
+  layMonitorTimer = null;
   candidates = [];
   watchedGames = 0;
   await db.update(soccerConfigTable).set({ isRunning: false });
@@ -764,10 +1055,13 @@ export async function autoResumeSoccerBot(): Promise<void> {
   try {
     const config = await getSoccerConfig();
     if (config.isRunning) {
+      if (running) return;
       await slog("info", "Auto-resuming soccer bot after restart");
       running = true;
+      const generation = ++runGeneration;
       startedAt = new Date();
-      void loop();
+      void loop(generation);
+      void layMonitorLoop(generation);
     }
   } catch (err) {
     logger.error({ err }, "[SOCCER] auto-resume failed");

@@ -111,6 +111,63 @@ export function layLockWinProfit(stake: number, entryOdds: number, layOdds: numb
   return stake * (entryOdds - layOdds) * (1 - COMMISSION);
 }
 
+/**
+ * A simulated resting lay is fully matched only after post-entry traded volume
+ * clears both the queue already at that price and the complete stake.
+ */
+export function restingLayHasEnoughTradedVolume(
+  currentVolume: number,
+  baselineVolume: number,
+  queueAhead: number,
+  stake: number,
+): boolean {
+  const tradedSinceEntry = currentVolume - baselineVolume;
+  return tradedSinceEntry + 0.01 >= queueAhead + stake;
+}
+
+export interface PriceVolume {
+  price: number;
+  size: number;
+}
+
+/** Only exact-price trades can be attributed to a queued paper lay. */
+export function tradedVolumeAtPrice(
+  levels: PriceVolume[],
+  targetPrice: number,
+): number {
+  return levels.reduce(
+    (total, level) =>
+      Math.abs(level.price - targetPrice) < 0.0001
+        ? total + level.size
+        : total,
+    0,
+  );
+}
+
+/**
+ * A new lay can immediately consume availableToLay liquidity at its requested
+ * odds or lower. Lower odds are a better execution for the layer.
+ */
+export function immediateLayFill(
+  availableToLay: PriceVolume[],
+  targetPrice: number,
+  stake: number,
+): { matchedStake: number; priceStake: number } {
+  let matchedStake = 0;
+  let priceStake = 0;
+  const executable = [...availableToLay]
+    .filter((level) => level.price <= targetPrice + 0.0001)
+    .sort((a, b) => a.price - b.price);
+
+  for (const level of executable) {
+    const fill = Math.min(stake - matchedStake, level.size);
+    if (fill <= 0) break;
+    matchedStake += fill;
+    priceStake += fill * level.price;
+  }
+  return { matchedStake, priceStake };
+}
+
 // ── O/U market line parsing ──────────────────────────────────────────────────
 
 /** Extract the numeric line from a Betfair marketType string, e.g. "OVER_UNDER_25" → 2.5 */

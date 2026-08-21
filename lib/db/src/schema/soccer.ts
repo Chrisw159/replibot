@@ -70,6 +70,20 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   strategy: text("strategy").notNull().default("LAY_LOCK"),
   // LAY_LOCK: the resting lay order (same stake as the back)
   layPrice: numeric("lay_price", { precision: 6, scale: 2 }),
+  // Paper fill evidence captured when the resting lay is created. The monitor
+  // later requires enough traded volume to clear the queue plus the full stake.
+  layTradedVolumeBaseline: numeric("lay_traded_volume_baseline", { precision: 14, scale: 2 })
+    .notNull()
+    .default("0.00"),
+  layQueueAhead: numeric("lay_queue_ahead", { precision: 14, scale: 2 })
+    .notNull()
+    .default("0.00"),
+  layImmediateMatchedStake: numeric("lay_immediate_matched_stake", { precision: 10, scale: 2 })
+    .notNull()
+    .default("0.00"),
+  layImmediatePriceStake: numeric("lay_immediate_price_stake", { precision: 14, scale: 2 })
+    .notNull()
+    .default("0.00"),
   layMatchedAt: timestamp("lay_matched_at", { withTimezone: true }),
   // OPEN | HEDGED (lay matched, awaiting FT) | TRADED_OUT | EXITED_AFTER_GOAL
   // | SETTLED_WON | SETTLED_LOST | VOID
