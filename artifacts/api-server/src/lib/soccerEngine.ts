@@ -2,7 +2,7 @@
  * SOCCER IN-PLAY "NO MORE GOALS" ENGINE
  *
  * Strategy (frozen with the user, 17 Aug 2026 — paper mode until proven):
- *  - From `entryMinute` (default 80') onward, find live soccer games with a
+ *  - From `entryMinute` (default 73') onward, find live soccer games with a
  *    goal gap >= `minGoalGap` (default 2) — dead games where nobody chases.
  *  - Prefer the one-goal-insured Under line (current total + 1.5, e.g. 2-0
  *    → Under 3.5) when it is above its odds threshold. Otherwise take the
@@ -984,6 +984,52 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
   }
 }
 
+/**
+ * One-time, idempotent correction for the confirmed Johor paper-simulation
+ * miss. The operator's real £50 lay at 1.23 matched before the goal, so the
+ * backed-line loss was a £0 overall result rather than -£50.
+ */
+async function repairConfirmedJohorLayFill(): Promise<void> {
+  const [trade] = await db
+    .select()
+    .from(soccerTradesTable)
+    .where(
+      and(
+        eq(soccerTradesTable.eventId, "35962946"),
+        eq(soccerTradesTable.marketId, "1.261344329"),
+        eq(soccerTradesTable.status, "SETTLED_LOST"),
+        eq(soccerTradesTable.profit, "-50.00"),
+      ),
+    )
+    .limit(1);
+  if (!trade || trade.layMatchedAt) return;
+
+  const updated = await db
+    .update(soccerTradesTable)
+    .set({
+      layMatchedAt: trade.placedAt,
+      exitOdds: "1.23",
+      exitReason:
+        "Corrected — confirmed real resting lay matched @ 1.23 before the goal; overall result breakeven",
+      profit: "0.00",
+    })
+    .where(
+      and(
+        eq(soccerTradesTable.id, trade.id),
+        eq(soccerTradesTable.status, "SETTLED_LOST"),
+        eq(soccerTradesTable.profit, "-50.00"),
+      ),
+    )
+    .returning({ id: soccerTradesTable.id });
+
+  if (updated.length > 0) {
+    await slog(
+      "info",
+      "CORRECTED Johor Darul Ta'zim v Kuching FA paper result from -£50 to £0 after confirmed resting-lay match",
+    );
+  }
+}
+
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 async function loop(generation: number): Promise<void> {
   if (!running || generation !== runGeneration) return;
@@ -1053,6 +1099,7 @@ export async function stopSoccerBot(): Promise<void> {
 /** Resume after process restart if the persisted flag says running. */
 export async function autoResumeSoccerBot(): Promise<void> {
   try {
+    await repairConfirmedJohorLayFill();
     const config = await getSoccerConfig();
     if (config.isRunning) {
       if (running) return;

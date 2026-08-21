@@ -4,7 +4,7 @@ description: Frozen rules + design decisions for the soccer in-play under-goals 
 ---
 
 Frozen entry rules (updated 21 Aug 2026, paper mode only until proven):
-- 80'+ in-play, goal gap ≥ 2. First back the one-goal-insured Under (total+1.5) only above 1.60; otherwise back tight Under (total+0.5) only above 1.50. Otherwise do not enter. Stake £50, £5k min liquidity.
+- 73'+ in-play, goal gap ≥ 2. First back the one-goal-insured Under (total+1.5) only above 1.60; otherwise back tight Under (total+0.5) only above 1.50. Otherwise do not enter. Stake £50, £5k min liquidity.
 - There is no daily stop-loss. Do not add or re-enable one.
 
 Key design decisions:
