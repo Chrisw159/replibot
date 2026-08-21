@@ -30,13 +30,13 @@ type SoccerStrategy = "TRADE_OUT" | "LAY_LOCK";
 const STRATEGIES: Record<SoccerStrategy, { tab: string; title: string; description: string }> = {
   TRADE_OUT: {
     tab: "Strategy 1",
-    title: "Trade Out",
-    description: "Waits for the market to reach the profit target, then trades out.",
+    title: "Equal-Profit Trade Out",
+    description: "Trades out for equal profit on either outcome when the target is available.",
   },
   LAY_LOCK: {
     tab: "Strategy 2",
-    title: "Lay Lock",
-    description: "Rests a lay immediately to lock a win or return the stake.",
+    title: "Same-Stake Lay Lock",
+    description: "Rests the same £50 lay immediately: target win if no more goals, £0 if the line breaks.",
   },
 };
 
@@ -86,7 +86,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
           
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Entry Minute (e.g. 85)</label>
+              <label className="text-muted-foreground text-xs">Entry Minute (e.g. 80)</label>
               <input type="number" name="entryMinute" value={formData.entryMinute} onChange={handleChange} className={inputClass} />
             </div>
             <div className="space-y-1.5">
@@ -97,11 +97,11 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Min Odds</label>
+              <label className="text-muted-foreground text-xs">Tight line minimum odds</label>
               <input type="number" step="0.01" name="minOdds" value={formData.minOdds} onChange={handleChange} className={inputClass} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Max Odds</label>
+              <label className="text-muted-foreground text-xs">Insured line minimum odds</label>
               <input type="number" step="0.01" name="maxOdds" value={formData.maxOdds} onChange={handleChange} className={inputClass} />
             </div>
           </div>
@@ -132,23 +132,22 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Strategies</div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="strategyTradeOutEnabled" checked={formData.strategyTradeOutEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Strategy 1 — Trade out at profit target</span>
+              <span>Strategy 1 — Equal-profit trade out</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="strategyLayLockEnabled" checked={formData.strategyLayLockEnabled ?? true} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Strategy 2 — Instant resting lay (lock win% / breakeven)</span>
+              <span>Strategy 2 — Same-stake resting lay (target win / £0)</span>
             </label>
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Strategy 2 locked return (%)</label>
-              <input type="number" name="layTargetPct" value={formData.layTargetPct ?? 30} onChange={handleChange} className={inputClass} />
+              <label className="text-muted-foreground text-xs">Strategy 2 no-more-goals return (%)</label>
+              <input type="number" name="layTargetPct" value={formData.layTargetPct ?? 40} onChange={handleChange} className={inputClass} />
+              <div className="text-[11px] text-muted-foreground">
+                £{((Number(formData.stake) || 0) * (Number(formData.layTargetPct) || 0) / 100).toFixed(2)} target; £0 if the backed Under loses.
+              </div>
             </div>
           </div>
 
           <div className="space-y-3 pt-2">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" name="preferBufferLine" checked={formData.preferBufferLine} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
-              <span>Prefer Buffer Line (Under X.5 + 1)</span>
-            </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="paperMode" checked={formData.paperMode} onChange={handleChange} className="h-4 w-4 rounded border-border bg-transparent text-primary" />
               <span>Paper Trading Mode</span>
@@ -418,7 +417,12 @@ export default function SoccerBot() {
                         )}
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <div className="text-xs font-mono">{c.tightLine ? `U${c.tightLine}` : 'Line?'} @ <span className="font-bold text-foreground">{c.tightOdds?.toFixed(2) ?? '-'}</span></div>
+                         <div className="text-xs font-mono">{c.tightLine ? `Tight U${c.tightLine}` : 'Tight?'} @ <span className="font-bold text-foreground">{c.tightOdds?.toFixed(2) ?? '-'}</span></div>
+                         {c.bufferLine != null && (
+                           <div className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                             Insured U{c.bufferLine} @ {c.bufferOdds?.toFixed(2) ?? '-'}
+                           </div>
+                         )}
                         <div className={`text-[10px] mt-1 px-1.5 py-0.5 rounded inline-block font-semibold tracking-wide ${
                           c.verdict === "ENTERED" ? "bg-emerald-500/20 text-emerald-400" :
                           c.verdict === "WATCHING" ? "bg-amber-500/20 text-amber-400" :

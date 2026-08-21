@@ -1106,17 +1106,16 @@ components:
 
     SoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, maxOdds, profitTargetPct, entryMinute, minGoalGap, preferBufferLine, maxConcurrent, dailyStopLoss, minLiquidity, checkIntervalSeconds, paperMode]
+      required: [id, isRunning, stake, minOdds, maxOdds, profitTargetPct, entryMinute, minGoalGap, maxConcurrent, dailyStopLoss, minLiquidity, checkIntervalSeconds, paperMode]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
         stake: { type: number }
-        minOdds: { type: number }
-        maxOdds: { type: number }
+        minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
+        maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
         profitTargetPct: { type: number }
         entryMinute: { type: integer }
         minGoalGap: { type: integer }
-        preferBufferLine: { type: boolean }
         maxConcurrent: { type: integer }
         dailyStopLoss: { type: number }
         minLiquidity: { type: number }
@@ -1131,12 +1130,11 @@ components:
       type: object
       properties:
         stake: { type: number }
-        minOdds: { type: number }
-        maxOdds: { type: number }
+        minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
+        maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
         profitTargetPct: { type: number }
         entryMinute: { type: integer }
         minGoalGap: { type: integer }
-        preferBufferLine: { type: boolean }
         maxConcurrent: { type: integer }
         dailyStopLoss: { type: number }
         minLiquidity: { type: number }

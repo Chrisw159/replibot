@@ -455,12 +455,19 @@ export const GetSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
   stake: zod.number(),
-  minOdds: zod.number(),
-  maxOdds: zod.number(),
+  minOdds: zod
+    .number()
+    .describe(
+      "Tight-line minimum odds; entry requires a strictly higher price",
+    ),
+  maxOdds: zod
+    .number()
+    .describe(
+      "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
+    ),
   profitTargetPct: zod.number(),
   entryMinute: zod.number(),
   minGoalGap: zod.number(),
-  preferBufferLine: zod.boolean(),
   maxConcurrent: zod.number(),
   dailyStopLoss: zod.number(),
   minLiquidity: zod.number(),
@@ -477,12 +484,21 @@ export const GetSoccerConfigResponse = zod.object({
  */
 export const UpdateSoccerConfigBody = zod.object({
   stake: zod.number().optional(),
-  minOdds: zod.number().optional(),
-  maxOdds: zod.number().optional(),
+  minOdds: zod
+    .number()
+    .optional()
+    .describe(
+      "Tight-line minimum odds; entry requires a strictly higher price",
+    ),
+  maxOdds: zod
+    .number()
+    .optional()
+    .describe(
+      "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
+    ),
   profitTargetPct: zod.number().optional(),
   entryMinute: zod.number().optional(),
   minGoalGap: zod.number().optional(),
-  preferBufferLine: zod.boolean().optional(),
   maxConcurrent: zod.number().optional(),
   dailyStopLoss: zod.number().optional(),
   minLiquidity: zod.number().optional(),
@@ -497,12 +513,19 @@ export const UpdateSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
   stake: zod.number(),
-  minOdds: zod.number(),
-  maxOdds: zod.number(),
+  minOdds: zod
+    .number()
+    .describe(
+      "Tight-line minimum odds; entry requires a strictly higher price",
+    ),
+  maxOdds: zod
+    .number()
+    .describe(
+      "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
+    ),
   profitTargetPct: zod.number(),
   entryMinute: zod.number(),
   minGoalGap: zod.number(),
-  preferBufferLine: zod.boolean(),
   maxConcurrent: zod.number(),
   dailyStopLoss: zod.number(),
   minLiquidity: zod.number(),

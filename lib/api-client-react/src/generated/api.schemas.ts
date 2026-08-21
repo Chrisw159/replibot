@@ -258,12 +258,13 @@ export interface SoccerConfig {
   id: number;
   isRunning: boolean;
   stake: number;
+  /** Tight-line minimum odds; entry requires a strictly higher price */
   minOdds: number;
+  /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds: number;
   profitTargetPct: number;
   entryMinute: number;
   minGoalGap: number;
-  preferBufferLine: boolean;
   maxConcurrent: number;
   dailyStopLoss: number;
   minLiquidity: number;
@@ -278,12 +279,13 @@ export interface SoccerConfig {
 
 export interface SoccerConfigUpdate {
   stake?: number;
+  /** Tight-line minimum odds; entry requires a strictly higher price */
   minOdds?: number;
+  /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds?: number;
   profitTargetPct?: number;
   entryMinute?: number;
   minGoalGap?: number;
-  preferBufferLine?: boolean;
   maxConcurrent?: number;
   dailyStopLoss?: number;
   minLiquidity?: number;

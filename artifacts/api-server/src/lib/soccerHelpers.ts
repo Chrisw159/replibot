@@ -79,6 +79,38 @@ export function estimateMinute(kickOff: string | undefined): number {
   return Math.min(90, Math.floor(elapsedMin - 15));
 }
 
+// ── Entry-line selection ─────────────────────────────────────────────────────
+
+/**
+ * Mirror the operator's manual entry rule:
+ * 1. Prefer the one-goal-insured line when its odds are strictly above its
+ *    threshold.
+ * 2. Otherwise take the tight line only when it is strictly above its own
+ *    threshold.
+ * 3. Otherwise stand aside.
+ */
+export function chooseEntryLine<T extends { odds: number }>(
+  tight: T | null,
+  insured: T | null,
+  tightMinOdds: number,
+  insuredMinOdds: number,
+): T | null {
+  if (insured && insured.odds > insuredMinOdds) return insured;
+  if (tight && tight.odds > tightMinOdds) return tight;
+  return null;
+}
+
+/** Resting same-stake lay price that locks at least targetPct net if the Under wins. */
+export function layLockPrice(entryOdds: number, targetPct: number): number {
+  const ideal = entryOdds - (targetPct / 100) / (1 - COMMISSION);
+  return Math.max(1.01, Math.floor((ideal + Number.EPSILON) * 100) / 100);
+}
+
+/** Net market profit when equal back and lay stakes both match and the Under wins. */
+export function layLockWinProfit(stake: number, entryOdds: number, layOdds: number): number {
+  return stake * (entryOdds - layOdds) * (1 - COMMISSION);
+}
+
 // ── O/U market line parsing ──────────────────────────────────────────────────
 
 /** Extract the numeric line from a Betfair marketType string, e.g. "OVER_UNDER_25" → 2.5 */

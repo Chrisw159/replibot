@@ -28,7 +28,6 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     profitTargetPct: num(c.profitTargetPct),
     entryMinute: c.entryMinute,
     minGoalGap: c.minGoalGap,
-    preferBufferLine: c.preferBufferLine,
     maxConcurrent: c.maxConcurrent,
     dailyStopLoss: num(c.dailyStopLoss),
     minLiquidity: num(c.minLiquidity),
@@ -114,7 +113,6 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.profitTargetPct !== undefined) patch.profitTargetPct = numeric2(b.profitTargetPct);
   if (b.entryMinute !== undefined) patch.entryMinute = Math.trunc(Number(b.entryMinute));
   if (b.minGoalGap !== undefined) patch.minGoalGap = Math.trunc(Number(b.minGoalGap));
-  if (b.preferBufferLine !== undefined) patch.preferBufferLine = Boolean(b.preferBufferLine);
   if (b.maxConcurrent !== undefined) patch.maxConcurrent = Math.trunc(Number(b.maxConcurrent));
   if (b.dailyStopLoss !== undefined) patch.dailyStopLoss = numeric2(b.dailyStopLoss);
   if (b.minLiquidity !== undefined) patch.minLiquidity = numeric2(b.minLiquidity);

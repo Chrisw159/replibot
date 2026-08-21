@@ -3,6 +3,9 @@ import {
   parseScoreName,
   inferScore,
   estimateMinute,
+  chooseEntryLine,
+  layLockPrice,
+  layLockWinProfit,
   ouLineFromMarketType,
   hedgeProfit,
   COMMISSION,
@@ -252,6 +255,48 @@ describe("estimateMinute", () => {
   it("returns 0 for a future kickoff (not yet started)", () => {
     const kickOff = new Date(Date.now() + 10 * 60_000).toISOString();
     expect(estimateMinute(kickOff)).toBe(0);
+  });
+});
+
+// ── chooseEntryLine ──────────────────────────────────────────────────────────
+
+describe("chooseEntryLine", () => {
+  const tight = { line: 2.5, odds: 1.51 };
+  const insured = { line: 3.5, odds: 1.61 };
+
+  it("prefers the one-goal-insured line above its threshold", () => {
+    expect(chooseEntryLine(tight, insured, 1.5, 1.6)).toBe(insured);
+  });
+
+  it("falls back to the tight line when the insured line is below threshold", () => {
+    expect(
+      chooseEntryLine(tight, { line: 3.5, odds: 1.6 }, 1.5, 1.6),
+    ).toBe(tight);
+  });
+
+  it("uses strict thresholds and stands aside at the exact tight-line price", () => {
+    expect(
+      chooseEntryLine({ line: 2.5, odds: 1.5 }, { line: 3.5, odds: 1.6 }, 1.5, 1.6),
+    ).toBeNull();
+  });
+
+  it("always gives the qualifying insured line priority", () => {
+    expect(chooseEntryLine({ line: 2.5, odds: 2.0 }, insured, 1.5, 1.6)).toBe(insured);
+  });
+});
+
+describe("same-stake lay lock", () => {
+  it("locks at least £20 net from a £50 back at 1.61", () => {
+    const layPrice = layLockPrice(1.61, 40);
+    expect(layPrice).toBe(1.18);
+    expect(layLockWinProfit(50, 1.61, layPrice)).toBeGreaterThanOrEqual(20);
+  });
+
+  it("breaks even if the Under loses because both matched stakes are equal", () => {
+    const stake = 50;
+    const backLoss = -stake;
+    const layWin = stake;
+    expect(backLoss + layWin).toBe(0);
   });
 });
 

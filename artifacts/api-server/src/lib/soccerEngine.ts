@@ -2,13 +2,12 @@
  * SOCCER IN-PLAY "NO MORE GOALS" ENGINE
  *
  * Strategy (frozen with the user, 17 Aug 2026 — paper mode until proven):
- *  - From `entryMinute` (default 85') onward, find live soccer games with a
+ *  - From `entryMinute` (default 80') onward, find live soccer games with a
  *    goal gap >= `minGoalGap` (default 2) — dead games where nobody chases.
- *  - Back "Under X.5" in the Over/Under goals market at odds 1.25–1.50.
- *    Line priority: if the BUFFER line (current total goals + 2, e.g. 2-0 →
- *    Under 4.5) is already inside the odds band, take it (a late goal does
- *    not kill the bet). Otherwise take the TIGHT line (total + 0.5, e.g.
- *    2-0 → Under 2.5).
+ *  - Prefer the one-goal-insured Under line (current total + 1.5, e.g. 2-0
+ *    → Under 3.5) when it is above its odds threshold. Otherwise take the
+ *    tight line (current total + 0.5, e.g. 2-0 → Under 2.5) only when it is
+ *    above its own odds threshold.
  *  - Trade out (hedge with a lay) as soon as +`profitTargetPct`% of stake is
  *    available. Otherwise let the bet settle at full time.
  *  - If a goal is scored after entry: green/scratch out the moment breakeven
@@ -40,6 +39,9 @@ import {
   parseScoreName,
   inferScore,
   estimateMinute,
+  chooseEntryLine,
+  layLockPrice,
+  layLockWinProfit,
   ouLineFromMarketType,
   hedgeProfit,
 } from "./soccerHelpers";
@@ -380,10 +382,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     // Fetch this event's O/U ladder
     const tightLine = total + 0.5;
-    const bufferLine = total + 2.5;
+    const insuredLine = total + 1.5;
     const wantedTypes = [
       `OVER_UNDER_${Math.floor(tightLine)}5`,
-      `OVER_UNDER_${Math.floor(bufferLine)}5`,
+      `OVER_UNDER_${Math.floor(insuredLine)}5`,
     ];
     let ouMarkets: CatalogueMarket[] = [];
     try {
@@ -436,30 +438,32 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     }
 
     const tight = quotes.get(tightLine) ?? null;
-    const buffer = quotes.get(bufferLine) ?? null;
-    const minOdds = num(config.minOdds);
-    const maxOdds = num(config.maxOdds);
-    const inBand = (q: LineQuote | null): q is LineQuote =>
-      !!q && q.odds >= minOdds && q.odds <= maxOdds;
-
-    // Priority: buffer line first (score+2), tight line second
-    const pick =
-      config.preferBufferLine && inBand(buffer) ? buffer : inBand(tight) ? tight : null;
+    const insured = quotes.get(insuredLine) ?? null;
+    // Legacy config names retained for API compatibility:
+    // minOdds = tight-line minimum; maxOdds = insured-line minimum.
+    const tightMinOdds = num(config.minOdds);
+    const insuredMinOdds = num(config.maxOdds);
+    const pick = chooseEntryLine(
+      tight,
+      insured,
+      tightMinOdds,
+      insuredMinOdds,
+    );
 
     const base = {
       strategies: enabledStrategies,
       eventName, competition, score: scoreStr, goalGap: gap, minute,
       tightLine: tight ? tight.line : null,
       tightOdds: tight ? tight.odds : null,
-      bufferLine: buffer ? buffer.line : null,
-      bufferOdds: buffer ? buffer.odds : null,
+      bufferLine: insured ? insured.line : null,
+      bufferOdds: insured ? insured.odds : null,
     };
 
     if (!pick) {
       snap.push({
         ...base, marketId: null, liquidity: null, verdict: "WATCHING",
-        reason: `No line in ${minOdds.toFixed(2)}–${maxOdds.toFixed(2)} band yet` +
-          (buffer ? ` (U${buffer.line} @ ${buffer.odds})` : "") +
+        reason: `Waiting for insured line > ${insuredMinOdds.toFixed(2)} or tight line > ${tightMinOdds.toFixed(2)}` +
+          (insured ? ` (insured U${insured.line} @ ${insured.odds})` : "") +
           (tight ? ` (U${tight.line} @ ${tight.odds})` : ""),
       });
       continue;
@@ -475,7 +479,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     // ENTER (paper): record at the visible back price — one trade per enabled strategy
     const stake = num(config.stake);
-    const isBuffer = pick.line === bufferLine;
+    const isInsured = pick.line === insuredLine;
     const baseTrade = {
       eventId,
       eventName,
@@ -485,7 +489,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       selectionId: pick.selectionId,
       selectionName: pick.selectionName,
       line: pick.line.toFixed(1),
-      bufferLine: isBuffer,
+      bufferLine: isInsured,
       entryScore: scoreStr,
       entryTotalGoals: total,
       entryMinute: minute,
@@ -505,7 +509,7 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       // target/(1−commission). Floor at 1.01 (max lock available).
       const targetFrac = num(config.layTargetPct) / 100;
       const ideal = pick.odds - targetFrac / (1 - COMMISSION);
-      const layPrice = Math.max(1.01, Math.round(ideal * 100) / 100);
+      const layPrice = layLockPrice(pick.odds, num(config.layTargetPct));
       await db.insert(soccerTradesTable).values({
         ...baseTrade,
         strategy: "LAY_LOCK",
@@ -519,11 +523,11 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     await slog(
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
-        `(${isBuffer ? "BUFFER line, 2-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) [${entered.join(" + ")}]`,
+        `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) [${entered.join(" + ")}]`,
     );
     snap.push({
       ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
-      reason: `BACK ${pick.selectionName} @ ${pick.odds} (${isBuffer ? "buffer" : "tight"} line)`,
+      reason: `BACK ${pick.selectionName} @ ${pick.odds} (${isInsured ? "insured" : "tight"} line)`,
     });
   }
 
@@ -666,7 +670,7 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
           .where(eq(soccerTradesTable.id, trade.id));
         await slog(
           "info",
-          `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ ${layPrice.toFixed(2)} (backed @ ${entryOdds}); outcome locked to +£${(stake * (entryOdds - layPrice) * (1 - COMMISSION)).toFixed(2)} or £0`,
+          `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ ${layPrice.toFixed(2)} (backed @ ${entryOdds}); outcome locked to +£${layLockWinProfit(stake, entryOdds, layPrice).toFixed(2)} or £0`,
         );
       }
       continue;
@@ -759,7 +763,7 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
       // Lay was matched: outcome is locked either way.
       const layPrice = num(trade.layPrice);
       if (runner.status === "WINNER") {
-        const net = stake * (entryOdds - layPrice) * (1 - COMMISSION);
+        const net = layLockWinProfit(stake, entryOdds, layPrice);
         await db
           .update(soccerTradesTable)
           .set({

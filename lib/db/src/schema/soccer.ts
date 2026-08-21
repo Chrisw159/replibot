@@ -13,21 +13,22 @@ import { z } from "zod/v4";
 /**
  * Soccer in-play "no more goals" bot — singleton config row.
  * Strategy: after `entryMinute`, in games with a goal gap >= minGoalGap,
- * back Under X.5 at odds within [minOdds, maxOdds]. Prefer the buffer line
- * (current total goals + 2) when its odds are already in range; otherwise
- * take the tight line (total + 0.5 above score). Trade out at
- * profitTargetPct; on a goal after entry, exit at breakeven-or-better or
- * ride to full time.
+ * prefer the one-goal-insured Under line (current total + 1.5) when its odds
+ * exceed maxOdds; otherwise take the tight line (current total + 0.5) only
+ * when its odds exceed minOdds. The legacy column names are retained for
+ * compatibility: minOdds is the tight minimum and maxOdds is the insured
+ * minimum.
  */
 export const soccerConfigTable = pgTable("soccer_config", {
   id: serial("id").primaryKey(),
   isRunning: boolean("is_running").notNull().default(false),
   stake: numeric("stake", { precision: 10, scale: 2 }).notNull().default("50.00"),
-  minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.25"),
-  maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
+  minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
+  maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.60"),
   profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("15.00"),
-  entryMinute: integer("entry_minute").notNull().default(85),
+  entryMinute: integer("entry_minute").notNull().default(80),
   minGoalGap: integer("min_goal_gap").notNull().default(2),
+  // Legacy column retained for database compatibility; insured-first is now fixed.
   preferBufferLine: boolean("prefer_buffer_line").notNull().default(true),
   maxConcurrent: integer("max_concurrent").notNull().default(2),
   // 0 = disabled (no daily stop-loss)
@@ -44,7 +45,7 @@ export const soccerConfigTable = pgTable("soccer_config", {
   // layTargetPct net profit if the bet wins and breakeven if it loses.
   strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(true),
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
-  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("30.00"),
+  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
@@ -61,7 +62,7 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   selectionId: integer("selection_id").notNull(),
   selectionName: text("selection_name").notNull(), // e.g. "Under 4.5 Goals"
   line: numeric("line", { precision: 4, scale: 1 }).notNull(), // 4.5
-  bufferLine: boolean("buffer_line").notNull().default(false), // true = score+2 line taken
+  bufferLine: boolean("buffer_line").notNull().default(false), // true = one-goal-insured line taken
   entryScore: text("entry_score").notNull(), // "2-0"
   entryTotalGoals: integer("entry_total_goals").notNull(),
   entryMinute: integer("entry_minute").notNull(), // estimated match minute
