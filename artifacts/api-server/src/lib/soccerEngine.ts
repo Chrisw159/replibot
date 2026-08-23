@@ -311,7 +311,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   const openRows = await db
     .select()
     .from(soccerTradesTable)
-    .where(inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]));
+    .where(and(
+      inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+      eq(soccerTradesTable.strategy, "LAY_LOCK"),
+    ));
   const openEventIds = new Set(openRows.map((t) => t.eventId).filter(Boolean));
   // Concurrency is per GAME (an event may carry one trade per strategy)
   if (openEventIds.size >= config.maxConcurrent) {
@@ -326,7 +329,8 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   if (config.blockReEntryAfterProfit) {
     const priorEntries = await db
       .select({ eventId: soccerTradesTable.eventId })
-      .from(soccerTradesTable);
+      .from(soccerTradesTable)
+      .where(eq(soccerTradesTable.strategy, "LAY_LOCK"));
     for (const row of priorEntries) {
       if (row.eventId) enteredEventIds.add(row.eventId);
     }
@@ -754,7 +758,10 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
     .from(soccerTradesTable)
-    .where(eq(soccerTradesTable.status, "OPEN"));
+    .where(and(
+      eq(soccerTradesTable.status, "OPEN"),
+      eq(soccerTradesTable.strategy, "LAY_LOCK"),
+    ));
   if (open.length === 0) return;
 
   const books = await getBooks(open.map((t) => t.marketId));
@@ -848,7 +855,10 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
     .from(soccerTradesTable)
-    .where(inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]));
+    .where(and(
+      inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+      eq(soccerTradesTable.strategy, "LAY_LOCK"),
+    ));
   if (open.length === 0) return;
 
   interface SettleBook {

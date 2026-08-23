@@ -15,5 +15,7 @@ Key design decisions:
 - Paper resting lays need a dedicated fast monitor independent of the slower entry scan. **Why:** a 20-second check missed a brief lay-price crossing before a goal and falsely booked a £50 loss while the real resting lay had matched.
 - Each Betfair event may be entered only once. A settled win or loss must block every later scan from re-entering that fixture, including after a bot restart.
 - **Why:** allowing re-entry after losses created repeated £50 positions on the same late-game market.
-- The operator dashboard is single-strategy. Do not add strategy tabs or combined/comparison totals.
-- **Why:** the operator chose the manual same-stake lay lock as the sole production direction after the comparison logic caused confusion.
+- Each bot remains single-strategy with no comparison totals, but the dashboard now has separate full-match and first-half bot views with independent controls and P&L.
+- First-half bot rule (confirmed 23 Aug 2026): paper-only, enter from 35' while the first-half market is live when the score gap is ≥2; back only the tight first-half Under (current total + 0.5) and rest the same-stake lay for a 40% target.
+- **Why:** the tight line makes the next first-half goal lose the Under so a fully matched same-stake lay produces the requested £0 result; no further goal produces the target return.
+- First-half and full-match running state, configuration, trade monitoring, settlement, and reporting must remain isolated.

@@ -288,6 +288,44 @@ export interface SoccerConfigUpdate {
   layTargetPct?: number;
 }
 
+export interface FirstHalfSoccerConfig {
+  id: number;
+  isRunning: boolean;
+  stake: number;
+  /** Minimum tight first-half Under price */
+  minOdds: number;
+  /**
+   * @minimum 35
+   * @maximum 45
+   */
+  entryMinute: number;
+  /** @minimum 2 */
+  minGoalGap: number;
+  maxConcurrent: number;
+  minLiquidity: number;
+  checkIntervalSeconds: number;
+  paperMode: true;
+  layTargetPct: number;
+  /** @nullable */
+  updatedAt?: string | null;
+}
+
+export interface FirstHalfSoccerConfigUpdate {
+  stake?: number;
+  minOdds?: number;
+  /**
+   * @minimum 35
+   * @maximum 45
+   */
+  entryMinute?: number;
+  /** @minimum 2 */
+  minGoalGap?: number;
+  maxConcurrent?: number;
+  minLiquidity?: number;
+  checkIntervalSeconds?: number;
+  layTargetPct?: number;
+}
+
 export interface SoccerStatus {
   isRunning: boolean;
   /** @nullable */
@@ -457,6 +495,17 @@ export type ListSoccerTradesParams = {
 };
 
 export type GetSoccerLogsParams = {
+  /**
+   * @nullable
+   */
+  limit?: number | null;
+};
+
+export type ListFirstHalfSoccerTradesParams = {
+  /**
+   * @nullable
+   */
+  status?: string | null;
   /**
    * @nullable
    */

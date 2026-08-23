@@ -79,6 +79,16 @@ export function estimateMinute(kickOff: string | undefined): number {
   return Math.min(90, Math.floor(elapsedMin - 15));
 }
 
+/** First-half entries are restricted to 35' through the live first-half window. */
+export function isEligibleFirstHalfEntry(
+  minute: number,
+  goalGap: number,
+  entryMinute = 35,
+  minGoalGap = 2,
+): boolean {
+  return minute >= entryMinute && minute <= 45 && goalGap >= minGoalGap;
+}
+
 // ── Entry-line selection ─────────────────────────────────────────────────────
 
 /**
@@ -100,15 +110,55 @@ export function chooseEntryLine<T extends { odds: number }>(
   return null;
 }
 
+/** Greatest valid Betfair exchange tick at or below a requested price. */
+export function betfairTickFloor(price: number): number {
+  const target = Math.max(1.01, Math.min(1000, price));
+  let tick = 1.01;
+  let best = tick;
+  while (tick <= 1000) {
+    if (tick <= target + 0.000001) best = tick;
+    else break;
+    const step =
+      tick < 2 ? 0.01 :
+      tick < 3 ? 0.02 :
+      tick < 4 ? 0.05 :
+      tick < 6 ? 0.1 :
+      tick < 10 ? 0.2 :
+      tick < 20 ? 0.5 :
+      tick < 30 ? 1 :
+      tick < 50 ? 2 :
+      tick < 100 ? 5 : 10;
+    tick = Math.round((tick + step) * 100) / 100;
+  }
+  return best;
+}
+
 /** Resting same-stake lay price that locks at least targetPct net if the Under wins. */
 export function layLockPrice(entryOdds: number, targetPct: number): number {
   const ideal = entryOdds - (targetPct / 100) / (1 - COMMISSION);
-  return Math.max(1.01, Math.floor((ideal + Number.EPSILON) * 100) / 100);
+  return betfairTickFloor(ideal);
 }
 
 /** Net market profit when equal back and lay stakes both match and the Under wins. */
 export function layLockWinProfit(stake: number, entryOdds: number, layOdds: number): number {
   return stake * (entryOdds - layOdds) * (1 - COMMISSION);
+}
+
+/**
+ * Settle the combined back and any fully/partially matched lay stake. Betfair
+ * commission is charged only when the combined market result is positive.
+ */
+export function layLockSettlementProfit(
+  backStake: number,
+  entryOdds: number,
+  underWon: boolean,
+  matchedLayStake: number,
+  averageLayOdds: number,
+): number {
+  const gross = underWon
+    ? backStake * (entryOdds - 1) - matchedLayStake * (averageLayOdds - 1)
+    : -backStake + matchedLayStake;
+  return gross > 0 ? gross * (1 - COMMISSION) : gross;
 }
 
 /**
@@ -177,4 +227,12 @@ export function ouLineFromMarketType(
   const m = marketType?.match(/^OVER_UNDER_(\d+)5$/);
   if (!m) return null;
   return Number(m[1]) + 0.5;
+}
+
+/** Extract a line such as 2.5 from FIRST_HALF_GOALS_25. */
+export function firstHalfGoalLineFromMarketType(
+  marketType: string | undefined,
+): number | null {
+  const match = marketType?.match(/^FIRST_HALF_GOALS_(\d+)5$/);
+  return match ? Number(match[1]) + 0.5 : null;
 }

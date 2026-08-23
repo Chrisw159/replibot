@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { soccerConfigTable, soccerTradesTable, botLogsTable } from "@workspace/db/schema";
 import {
@@ -70,14 +70,20 @@ async function statusPayload() {
   const open = await db
     .select({ n: sql<number>`count(*)` })
     .from(soccerTradesTable)
-    .where(sql`${soccerTradesTable.status} IN ('OPEN', 'HEDGED')`);
+    .where(and(
+      eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      sql`${soccerTradesTable.status} IN ('OPEN', 'HEDGED')`,
+    ));
   const today = await db
     .select({
       pnl: sql<string>`coalesce(sum(${soccerTradesTable.profit}), 0)`,
       trades: sql<number>`count(*)`,
     })
     .from(soccerTradesTable)
-    .where(sql`${soccerTradesTable.placedAt} >= date_trunc('day', now())`);
+    .where(and(
+      eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      sql`${soccerTradesTable.placedAt} >= date_trunc('day', now())`,
+    ));
   const config = await getSoccerConfig();
   return {
     isRunning: isSoccerBotRunning(),
@@ -153,15 +159,24 @@ router.get("/soccer/trades", async (req, res) => {
   const rows =
     status
       ? await base
-          .where(eq(soccerTradesTable.status, status))
+          .where(and(
+            eq(soccerTradesTable.strategy, "LAY_LOCK"),
+            eq(soccerTradesTable.status, status),
+          ))
           .orderBy(desc(soccerTradesTable.placedAt))
           .limit(limit)
-      : await base.orderBy(desc(soccerTradesTable.placedAt)).limit(limit);
+      : await base
+          .where(eq(soccerTradesTable.strategy, "LAY_LOCK"))
+          .orderBy(desc(soccerTradesTable.placedAt))
+          .limit(limit);
   res.json(rows.map(serializeTrade));
 });
 
 router.get("/soccer/summary", async (_req, res) => {
-  const rows = await db.select().from(soccerTradesTable);
+  const rows = await db
+    .select()
+    .from(soccerTradesTable)
+    .where(eq(soccerTradesTable.strategy, "LAY_LOCK"));
   const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
   const count = (s: string) => rows.filter((t) => t.status === s).length;
   const totalPnl = closed.reduce((s, t) => s + num(t.profit), 0);

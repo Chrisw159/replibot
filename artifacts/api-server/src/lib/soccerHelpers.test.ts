@@ -5,11 +5,15 @@ import {
   estimateMinute,
   chooseEntryLine,
   layLockPrice,
+  layLockSettlementProfit,
   layLockWinProfit,
+  betfairTickFloor,
   restingLayHasEnoughTradedVolume,
   tradedVolumeAtPrice,
   immediateLayFill,
   ouLineFromMarketType,
+  firstHalfGoalLineFromMarketType,
+  isEligibleFirstHalfEntry,
   COMMISSION,
 } from "./soccerHelpers";
 
@@ -50,6 +54,58 @@ describe("parseScoreName", () => {
 
   it("returns null for partial score '2-'", () => {
     expect(parseScoreName("2-")).toBeNull();
+  });
+});
+
+describe("first-half entry rules", () => {
+  it("accepts a two-goal lead at minute 35", () => {
+    expect(isEligibleFirstHalfEntry(35, 2)).toBe(true);
+  });
+
+  it("rejects entries before minute 35", () => {
+    expect(isEligibleFirstHalfEntry(34, 3)).toBe(false);
+  });
+
+  it("rejects entries after the first-half window", () => {
+    expect(isEligibleFirstHalfEntry(46, 3)).toBe(false);
+  });
+
+  it("rejects a one-goal lead", () => {
+    expect(isEligibleFirstHalfEntry(40, 1)).toBe(false);
+  });
+
+  it("honours configured entry and gap limits", () => {
+    expect(isEligibleFirstHalfEntry(38, 3, 38, 3)).toBe(true);
+    expect(isEligibleFirstHalfEntry(37, 3, 38, 3)).toBe(false);
+  });
+
+  it("parses Betfair first-half goal market lines", () => {
+    expect(firstHalfGoalLineFromMarketType("FIRST_HALF_GOALS_25")).toBe(2.5);
+    expect(firstHalfGoalLineFromMarketType("FIRST_HALF_GOALS_05")).toBe(0.5);
+  });
+
+  it("rejects non-first-half market types", () => {
+    expect(firstHalfGoalLineFromMarketType("OVER_UNDER_25")).toBeNull();
+    expect(firstHalfGoalLineFromMarketType(undefined)).toBeNull();
+  });
+});
+
+describe("first-half lay settlement", () => {
+  it("uses valid Betfair ticks above 2.0", () => {
+    expect(betfairTickFloor(2.57)).toBe(2.56);
+    expect(betfairTickFloor(3.08)).toBe(3.05);
+  });
+
+  it("settles a fully matched next-goal outcome at breakeven", () => {
+    expect(layLockSettlementProfit(50, 1.66, false, 50, 1.23)).toBe(0);
+  });
+
+  it("settles a partially matched next-goal outcome at its real exposure", () => {
+    expect(layLockSettlementProfit(50, 1.66, false, 10, 1.23)).toBe(-40);
+  });
+
+  it("includes partial lay liability when no further goal is scored", () => {
+    expect(layLockSettlementProfit(50, 1.66, true, 10, 1.23)).toBeCloseTo(29.165);
   });
 });
 

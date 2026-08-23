@@ -587,6 +587,127 @@ paths:
                 items:
                   $ref: "#/components/schemas/SoccerLogEntry"
 
+  /first-half-soccer/config:
+    get:
+      operationId: getFirstHalfSoccerConfig
+      tags: [soccer]
+      summary: Get first-half paper bot configuration
+      responses:
+        "200":
+          description: First-half bot config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FirstHalfSoccerConfig"
+    patch:
+      operationId: updateFirstHalfSoccerConfig
+      tags: [soccer]
+      summary: Update first-half paper bot configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FirstHalfSoccerConfigUpdate"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FirstHalfSoccerConfig"
+
+  /first-half-soccer/start:
+    post:
+      operationId: startFirstHalfSoccerBot
+      tags: [soccer]
+      summary: Start the first-half paper bot
+      responses:
+        "200":
+          description: Started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /first-half-soccer/stop:
+    post:
+      operationId: stopFirstHalfSoccerBot
+      tags: [soccer]
+      summary: Stop the first-half paper bot
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /first-half-soccer/status:
+    get:
+      operationId: getFirstHalfSoccerStatus
+      tags: [soccer]
+      summary: Get first-half paper bot status
+      responses:
+        "200":
+          description: Live status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerStatus"
+
+  /first-half-soccer/candidates:
+    get:
+      operationId: getFirstHalfSoccerCandidates
+      tags: [soccer]
+      summary: List first-half matches being evaluated
+      responses:
+        "200":
+          description: First-half candidates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoccerCandidate"
+
+  /first-half-soccer/trades:
+    get:
+      operationId: listFirstHalfSoccerTrades
+      tags: [soccer]
+      summary: List first-half paper trades
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: First-half trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SoccerTrade"
+
+  /first-half-soccer/summary:
+    get:
+      operationId: getFirstHalfSoccerSummary
+      tags: [soccer]
+      summary: Aggregate first-half paper bot performance
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SoccerSummary"
+
 components:
   schemas:
     HealthStatus:
@@ -1114,6 +1235,35 @@ components:
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean }
+        layTargetPct: { type: number }
+
+    FirstHalfSoccerConfig:
+      type: object
+      required: [id, isRunning, stake, minOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layTargetPct]
+      properties:
+        id: { type: integer }
+        isRunning: { type: boolean }
+        stake: { type: number }
+        minOdds: { type: number, description: "Minimum tight first-half Under price" }
+        entryMinute: { type: integer, minimum: 35, maximum: 45 }
+        minGoalGap: { type: integer, minimum: 2 }
+        maxConcurrent: { type: integer }
+        minLiquidity: { type: number }
+        checkIntervalSeconds: { type: integer }
+        paperMode: { type: boolean, const: true }
+        layTargetPct: { type: number }
+        updatedAt: { type: ["string", "null"] }
+
+    FirstHalfSoccerConfigUpdate:
+      type: object
+      properties:
+        stake: { type: number }
+        minOdds: { type: number }
+        entryMinute: { type: integer, minimum: 35, maximum: 45 }
+        minGoalGap: { type: integer, minimum: 2 }
+        maxConcurrent: { type: integer }
+        minLiquidity: { type: number }
+        checkIntervalSeconds: { type: integer }
         layTargetPct: { type: number }
 
     SoccerStatus:

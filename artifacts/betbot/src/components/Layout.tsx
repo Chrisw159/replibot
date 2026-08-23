@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Power, PowerOff, Target } from "lucide-react";
+import { Settings, Power, PowerOff, Target, Timer } from "lucide-react";
 
 interface SoccerStatus {
   isRunning?: boolean;
@@ -13,6 +13,12 @@ async function fetchSoccerStatus(): Promise<SoccerStatus> {
   return res.json();
 }
 
+async function fetchFirstHalfStatus(): Promise<SoccerStatus> {
+  const res = await fetch("/api/first-half-soccer/status");
+  if (!res.ok) return {};
+  return res.json();
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { data: status } = useQuery<SoccerStatus>({
@@ -21,11 +27,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
     refetchInterval: 5000,
   });
 
+  const { data: fhStatus } = useQuery<SoccerStatus>({
+    queryKey: ["first-half-status-nav"],
+    queryFn: fetchFirstHalfStatus,
+    refetchInterval: 5000,
+  });
+
   const isRunning = status?.isRunning ?? false;
-  const isPaperTrading = status?.paperMode ?? true;
+  const isFhRunning = fhStatus?.isRunning ?? false;
+
+  const isPaperTrading = location.startsWith("/first-half-soccer") || (status?.paperMode ?? true);
 
   const navItems = [
-    { href: "/soccerbot", label: "Soccer Bot", icon: Target },
+    { href: "/soccerbot", label: "Full Match Bot", icon: Target },
+    { href: "/first-half-soccer", label: "First-Half Bot", icon: Timer },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
@@ -70,7 +85,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
 
-        <div className="p-4 border-t border-sidebar-border">
+        <div className="p-4 border-t border-sidebar-border space-y-2">
           <div className="flex items-center justify-between p-3 rounded-md bg-card border border-card-border">
             <div className="flex items-center gap-2">
               {isRunning ? (
@@ -79,10 +94,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <PowerOff className="w-4 h-4 text-muted-foreground" />
               )}
               <span className="text-sm font-medium">
-                {isRunning ? "Bot Active" : "Bot Stopped"}
+                {isRunning ? "Full Match Active" : "Full Match Stopped"}
               </span>
             </div>
             <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-chart-1 animate-pulse" : "bg-muted-foreground"}`} />
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-md bg-card border border-card-border">
+            <div className="flex items-center gap-2">
+              {isFhRunning ? (
+                <Power className="w-4 h-4 text-amber-500" />
+              ) : (
+                <PowerOff className="w-4 h-4 text-muted-foreground" />
+              )}
+              <span className="text-sm font-medium">
+                {isFhRunning ? "1H Bot Active" : "1H Bot Stopped"}
+              </span>
+            </div>
+            <div className={`w-2 h-2 rounded-full ${isFhRunning ? "bg-amber-500 animate-pulse" : "bg-muted-foreground"}`} />
           </div>
         </div>
       </aside>

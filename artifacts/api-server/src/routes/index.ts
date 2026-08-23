@@ -11,6 +11,7 @@ import goalbotRouter from "./goalbot";
 import bookieRouter from "./bookie";
 import adminRouter from "./admin";
 import soccerRouter from "./soccer";
+import firstHalfSoccerRouter from "./firstHalfSoccer";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(goalbotRouter);
 router.use(bookieRouter);
 router.use(adminRouter);
 router.use(soccerRouter);
+router.use(firstHalfSoccerRouter);
 
 export default router;

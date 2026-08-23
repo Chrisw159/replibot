@@ -671,3 +671,214 @@ export const GetSoccerLogsResponseItem = zod.object({
   createdAt: zod.string(),
 });
 export const GetSoccerLogsResponse = zod.array(GetSoccerLogsResponseItem);
+
+/**
+ * @summary Get first-half paper bot configuration
+ */
+export const getFirstHalfSoccerConfigResponseEntryMinuteMin = 35;
+export const getFirstHalfSoccerConfigResponseEntryMinuteMax = 45;
+
+export const getFirstHalfSoccerConfigResponseMinGoalGapMin = 2;
+
+export const GetFirstHalfSoccerConfigResponse = zod.object({
+  id: zod.number(),
+  isRunning: zod.boolean(),
+  stake: zod.number(),
+  minOdds: zod.number().describe("Minimum tight first-half Under price"),
+  entryMinute: zod
+    .number()
+    .min(getFirstHalfSoccerConfigResponseEntryMinuteMin)
+    .max(getFirstHalfSoccerConfigResponseEntryMinuteMax),
+  minGoalGap: zod.number().min(getFirstHalfSoccerConfigResponseMinGoalGapMin),
+  maxConcurrent: zod.number(),
+  minLiquidity: zod.number(),
+  checkIntervalSeconds: zod.number(),
+  paperMode: zod.boolean(),
+  layTargetPct: zod.number(),
+  updatedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Update first-half paper bot configuration
+ */
+export const updateFirstHalfSoccerConfigBodyEntryMinuteMin = 35;
+export const updateFirstHalfSoccerConfigBodyEntryMinuteMax = 45;
+
+export const updateFirstHalfSoccerConfigBodyMinGoalGapMin = 2;
+
+export const UpdateFirstHalfSoccerConfigBody = zod.object({
+  stake: zod.number().optional(),
+  minOdds: zod.number().optional(),
+  entryMinute: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigBodyEntryMinuteMin)
+    .max(updateFirstHalfSoccerConfigBodyEntryMinuteMax)
+    .optional(),
+  minGoalGap: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigBodyMinGoalGapMin)
+    .optional(),
+  maxConcurrent: zod.number().optional(),
+  minLiquidity: zod.number().optional(),
+  checkIntervalSeconds: zod.number().optional(),
+  layTargetPct: zod.number().optional(),
+});
+
+export const updateFirstHalfSoccerConfigResponseEntryMinuteMin = 35;
+export const updateFirstHalfSoccerConfigResponseEntryMinuteMax = 45;
+
+export const updateFirstHalfSoccerConfigResponseMinGoalGapMin = 2;
+
+export const UpdateFirstHalfSoccerConfigResponse = zod.object({
+  id: zod.number(),
+  isRunning: zod.boolean(),
+  stake: zod.number(),
+  minOdds: zod.number().describe("Minimum tight first-half Under price"),
+  entryMinute: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigResponseEntryMinuteMin)
+    .max(updateFirstHalfSoccerConfigResponseEntryMinuteMax),
+  minGoalGap: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigResponseMinGoalGapMin),
+  maxConcurrent: zod.number(),
+  minLiquidity: zod.number(),
+  checkIntervalSeconds: zod.number(),
+  paperMode: zod.boolean(),
+  layTargetPct: zod.number(),
+  updatedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Start the first-half paper bot
+ */
+export const StartFirstHalfSoccerBotResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary Stop the first-half paper bot
+ */
+export const StopFirstHalfSoccerBotResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary Get first-half paper bot status
+ */
+export const GetFirstHalfSoccerStatusResponse = zod.object({
+  isRunning: zod.boolean(),
+  startedAt: zod.string().nullish(),
+  openTrades: zod.number(),
+  watchedGames: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  paperMode: zod.boolean(),
+  lastCycleAt: zod.string().nullish(),
+  betfairConnected: zod.boolean().optional(),
+});
+
+/**
+ * @summary List first-half matches being evaluated
+ */
+export const GetFirstHalfSoccerCandidatesResponseItem = zod.object({
+  eventName: zod.string(),
+  competition: zod.string().nullish(),
+  marketId: zod.string().nullish(),
+  score: zod.string(),
+  goalGap: zod.number().optional(),
+  minute: zod.number(),
+  tightLine: zod.number().nullish(),
+  tightOdds: zod.number().nullish(),
+  bufferLine: zod.number().nullish(),
+  bufferOdds: zod.number().nullish(),
+  liquidity: zod.number().nullish(),
+  verdict: zod.string().describe("ENTERED | WATCHING | SKIPPED | OPEN"),
+  reason: zod.string(),
+});
+export const GetFirstHalfSoccerCandidatesResponse = zod.array(
+  GetFirstHalfSoccerCandidatesResponseItem,
+);
+
+/**
+ * @summary List first-half paper trades
+ */
+export const ListFirstHalfSoccerTradesQueryParams = zod.object({
+  status: zod.coerce.string().nullish(),
+  limit: zod.coerce.number().nullish(),
+});
+
+export const ListFirstHalfSoccerTradesResponseItem = zod.object({
+  id: zod.number(),
+  eventId: zod.string().nullish(),
+  eventName: zod.string(),
+  competition: zod.string().nullish(),
+  marketId: zod.string(),
+  marketName: zod.string(),
+  selectionId: zod.number().nullish(),
+  selectionName: zod.string(),
+  line: zod.number(),
+  bufferLine: zod.boolean(),
+  entryScore: zod.string(),
+  entryTotalGoals: zod.number().nullish(),
+  entryMinute: zod.number(),
+  entryOdds: zod.number(),
+  stake: zod.number(),
+  layPrice: zod.number().nullish(),
+  layMatchedAt: zod.string().nullish(),
+  status: zod
+    .string()
+    .describe("OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID"),
+  exitOdds: zod.number().nullish(),
+  exitReason: zod.string().nullish(),
+  profit: zod.number().nullish(),
+  goalAfterEntry: zod.boolean().optional(),
+  paper: zod.boolean(),
+  placedAt: zod.string(),
+  closedAt: zod.string().nullish(),
+});
+export const ListFirstHalfSoccerTradesResponse = zod.array(
+  ListFirstHalfSoccerTradesResponseItem,
+);
+
+/**
+ * @summary Aggregate first-half paper bot performance
+ */
+export const GetFirstHalfSoccerSummaryResponse = zod.object({
+  totalTrades: zod.number(),
+  openTrades: zod.number(),
+  settledWon: zod.number(),
+  settledLost: zod.number(),
+  totalPnl: zod.number(),
+  totalStaked: zod.number(),
+  roiPct: zod.number(),
+  todayPnl: zod.number(),
+  todayTrades: zod.number(),
+  avgEntryOdds: zod.number(),
+  winRatePct: zod.number(),
+  dailyPnl: zod
+    .array(
+      zod.object({
+        date: zod.string(),
+        pnl: zod.number(),
+        trades: zod.number(),
+      }),
+    )
+    .optional(),
+});

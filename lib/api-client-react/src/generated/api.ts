@@ -27,11 +27,14 @@ import type {
   CreateStrategyBody,
   DashboardSummary,
   ErrorResponse,
+  FirstHalfSoccerConfig,
+  FirstHalfSoccerConfigUpdate,
   GetBotLogsParams,
   GetPnlChartParams,
   GetSoccerLogsParams,
   HealthStatus,
   ListBetsParams,
+  ListFirstHalfSoccerTradesParams,
   ListMarketsParams,
   ListSoccerTradesParams,
   Market,
@@ -2675,6 +2678,669 @@ export function useGetSoccerLogs<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetSoccerLogsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get first-half paper bot configuration
+ */
+export const getGetFirstHalfSoccerConfigUrl = () => {
+  return `/api/first-half-soccer/config`;
+};
+
+export const getFirstHalfSoccerConfig = async (
+  options?: RequestInit,
+): Promise<FirstHalfSoccerConfig> => {
+  return customFetch<FirstHalfSoccerConfig>(getGetFirstHalfSoccerConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFirstHalfSoccerConfigQueryKey = () => {
+  return [`/api/first-half-soccer/config`] as const;
+};
+
+export const getGetFirstHalfSoccerConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFirstHalfSoccerConfigQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>
+  > = ({ signal }) => getFirstHalfSoccerConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFirstHalfSoccerConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>
+>;
+export type GetFirstHalfSoccerConfigQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get first-half paper bot configuration
+ */
+
+export function useGetFirstHalfSoccerConfig<
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFirstHalfSoccerConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update first-half paper bot configuration
+ */
+export const getUpdateFirstHalfSoccerConfigUrl = () => {
+  return `/api/first-half-soccer/config`;
+};
+
+export const updateFirstHalfSoccerConfig = async (
+  firstHalfSoccerConfigUpdate: FirstHalfSoccerConfigUpdate,
+  options?: RequestInit,
+): Promise<FirstHalfSoccerConfig> => {
+  return customFetch<FirstHalfSoccerConfig>(
+    getUpdateFirstHalfSoccerConfigUrl(),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(firstHalfSoccerConfigUpdate),
+    },
+  );
+};
+
+export const getUpdateFirstHalfSoccerConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>,
+    TError,
+    { data: BodyType<FirstHalfSoccerConfigUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>,
+  TError,
+  { data: BodyType<FirstHalfSoccerConfigUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateFirstHalfSoccerConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>,
+    { data: BodyType<FirstHalfSoccerConfigUpdate> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateFirstHalfSoccerConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateFirstHalfSoccerConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>
+>;
+export type UpdateFirstHalfSoccerConfigMutationBody =
+  BodyType<FirstHalfSoccerConfigUpdate>;
+export type UpdateFirstHalfSoccerConfigMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update first-half paper bot configuration
+ */
+export const useUpdateFirstHalfSoccerConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>,
+    TError,
+    { data: BodyType<FirstHalfSoccerConfigUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateFirstHalfSoccerConfig>>,
+  TError,
+  { data: BodyType<FirstHalfSoccerConfigUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateFirstHalfSoccerConfigMutationOptions(options));
+};
+
+/**
+ * @summary Start the first-half paper bot
+ */
+export const getStartFirstHalfSoccerBotUrl = () => {
+  return `/api/first-half-soccer/start`;
+};
+
+export const startFirstHalfSoccerBot = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getStartFirstHalfSoccerBotUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStartFirstHalfSoccerBotMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startFirstHalfSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof startFirstHalfSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["startFirstHalfSoccerBot"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof startFirstHalfSoccerBot>>,
+    void
+  > = () => {
+    return startFirstHalfSoccerBot(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StartFirstHalfSoccerBotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof startFirstHalfSoccerBot>>
+>;
+
+export type StartFirstHalfSoccerBotMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Start the first-half paper bot
+ */
+export const useStartFirstHalfSoccerBot = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startFirstHalfSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof startFirstHalfSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStartFirstHalfSoccerBotMutationOptions(options));
+};
+
+/**
+ * @summary Stop the first-half paper bot
+ */
+export const getStopFirstHalfSoccerBotUrl = () => {
+  return `/api/first-half-soccer/stop`;
+};
+
+export const stopFirstHalfSoccerBot = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getStopFirstHalfSoccerBotUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStopFirstHalfSoccerBotMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["stopFirstHalfSoccerBot"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>,
+    void
+  > = () => {
+    return stopFirstHalfSoccerBot(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StopFirstHalfSoccerBotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>
+>;
+
+export type StopFirstHalfSoccerBotMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Stop the first-half paper bot
+ */
+export const useStopFirstHalfSoccerBot = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof stopFirstHalfSoccerBot>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStopFirstHalfSoccerBotMutationOptions(options));
+};
+
+/**
+ * @summary Get first-half paper bot status
+ */
+export const getGetFirstHalfSoccerStatusUrl = () => {
+  return `/api/first-half-soccer/status`;
+};
+
+export const getFirstHalfSoccerStatus = async (
+  options?: RequestInit,
+): Promise<SoccerStatus> => {
+  return customFetch<SoccerStatus>(getGetFirstHalfSoccerStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFirstHalfSoccerStatusQueryKey = () => {
+  return [`/api/first-half-soccer/status`] as const;
+};
+
+export const getGetFirstHalfSoccerStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFirstHalfSoccerStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>
+  > = ({ signal }) => getFirstHalfSoccerStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFirstHalfSoccerStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>
+>;
+export type GetFirstHalfSoccerStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get first-half paper bot status
+ */
+
+export function useGetFirstHalfSoccerStatus<
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFirstHalfSoccerStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List first-half matches being evaluated
+ */
+export const getGetFirstHalfSoccerCandidatesUrl = () => {
+  return `/api/first-half-soccer/candidates`;
+};
+
+export const getFirstHalfSoccerCandidates = async (
+  options?: RequestInit,
+): Promise<SoccerCandidate[]> => {
+  return customFetch<SoccerCandidate[]>(getGetFirstHalfSoccerCandidatesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFirstHalfSoccerCandidatesQueryKey = () => {
+  return [`/api/first-half-soccer/candidates`] as const;
+};
+
+export const getGetFirstHalfSoccerCandidatesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFirstHalfSoccerCandidatesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>
+  > = ({ signal }) =>
+    getFirstHalfSoccerCandidates({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFirstHalfSoccerCandidatesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>
+>;
+export type GetFirstHalfSoccerCandidatesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List first-half matches being evaluated
+ */
+
+export function useGetFirstHalfSoccerCandidates<
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerCandidates>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFirstHalfSoccerCandidatesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List first-half paper trades
+ */
+export const getListFirstHalfSoccerTradesUrl = (
+  params?: ListFirstHalfSoccerTradesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/first-half-soccer/trades?${stringifiedParams}`
+    : `/api/first-half-soccer/trades`;
+};
+
+export const listFirstHalfSoccerTrades = async (
+  params?: ListFirstHalfSoccerTradesParams,
+  options?: RequestInit,
+): Promise<SoccerTrade[]> => {
+  return customFetch<SoccerTrade[]>(getListFirstHalfSoccerTradesUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListFirstHalfSoccerTradesQueryKey = (
+  params?: ListFirstHalfSoccerTradesParams,
+) => {
+  return [
+    `/api/first-half-soccer/trades`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListFirstHalfSoccerTradesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListFirstHalfSoccerTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListFirstHalfSoccerTradesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>
+  > = ({ signal }) =>
+    listFirstHalfSoccerTrades(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListFirstHalfSoccerTradesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>
+>;
+export type ListFirstHalfSoccerTradesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List first-half paper trades
+ */
+
+export function useListFirstHalfSoccerTrades<
+  TData = Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListFirstHalfSoccerTradesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listFirstHalfSoccerTrades>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListFirstHalfSoccerTradesQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate first-half paper bot performance
+ */
+export const getGetFirstHalfSoccerSummaryUrl = () => {
+  return `/api/first-half-soccer/summary`;
+};
+
+export const getFirstHalfSoccerSummary = async (
+  options?: RequestInit,
+): Promise<SoccerSummary> => {
+  return customFetch<SoccerSummary>(getGetFirstHalfSoccerSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetFirstHalfSoccerSummaryQueryKey = () => {
+  return [`/api/first-half-soccer/summary`] as const;
+};
+
+export const getGetFirstHalfSoccerSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetFirstHalfSoccerSummaryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>
+  > = ({ signal }) => getFirstHalfSoccerSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetFirstHalfSoccerSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>
+>;
+export type GetFirstHalfSoccerSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregate first-half paper bot performance
+ */
+
+export function useGetFirstHalfSoccerSummary<
+  TData = Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getFirstHalfSoccerSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetFirstHalfSoccerSummaryQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

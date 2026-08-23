@@ -50,6 +50,30 @@ export const soccerConfigTable = pgTable("soccer_config", {
     .$onUpdate(() => new Date()),
 });
 
+/**
+ * Separate singleton configuration for the first-half paper strategy. Keeping
+ * this apart from soccer_config means either bot may run or be configured
+ * without changing the other's risk controls.
+ */
+export const firstHalfSoccerConfigTable = pgTable("first_half_soccer_config", {
+  id: serial("id").primaryKey(),
+  isRunning: boolean("is_running").notNull().default(false),
+  stake: numeric("stake", { precision: 10, scale: 2 }).notNull().default("50.00"),
+  minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
+  entryMinute: integer("entry_minute").notNull().default(35),
+  minGoalGap: integer("min_goal_gap").notNull().default(2),
+  maxConcurrent: integer("max_concurrent").notNull().default(2),
+  minLiquidity: numeric("min_liquidity", { precision: 12, scale: 2 }).notNull().default("5000.00"),
+  checkIntervalSeconds: integer("check_interval_seconds").notNull().default(10),
+  // This strategy is deliberately never allowed to place real-money orders.
+  paperMode: boolean("paper_mode").notNull().default(true),
+  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
 export const soccerTradesTable = pgTable("soccer_trades", {
   id: serial("id").primaryKey(),
   eventId: text("event_id"),
@@ -103,6 +127,13 @@ export const insertSoccerConfigSchema = createInsertSchema(soccerConfigTable).om
 });
 export type InsertSoccerConfig = z.infer<typeof insertSoccerConfigSchema>;
 export type SoccerConfig = typeof soccerConfigTable.$inferSelect;
+
+export const insertFirstHalfSoccerConfigSchema = createInsertSchema(firstHalfSoccerConfigTable).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertFirstHalfSoccerConfig = z.infer<typeof insertFirstHalfSoccerConfigSchema>;
+export type FirstHalfSoccerConfig = typeof firstHalfSoccerConfigTable.$inferSelect;
 
 export const insertSoccerTradeSchema = createInsertSchema(soccerTradesTable).omit({
   id: true,
