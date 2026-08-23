@@ -38,3 +38,12 @@ recently recreated ("Up N seconds/minutes"). Compose v2 renamed containers `repl
   divergence; pull/merge before pushing.
 - A stale `.git/refs/remotes/origin/main.lock` (months old) once blocked fetches AND platform task
   merges; if fetch says "reference already exists"/lock exists with no git process, delete the lock.
+
+## Access status (23 Aug 2026)
+- GitHub pushes still work, but direct production deployment is currently blocked: `DROPLET_ADMIN_TOKEN`
+  is absent, both stored passwords are rejected, and `DROPLET_SSH_KEY` is not a parseable private key.
+- The cron deploy also failed to pick up a confirmed GitHub push within two minutes; the new API route
+  remained 404 on the live IP.
+- **Why:** do not report a GitHub push as a live deployment; production can remain on the old revision.
+- **How to apply:** restore the admin token from `/opt/replibot-admin/token` via the secure Secrets UI,
+  or install a fresh SSH public key through the DigitalOcean console, then deploy and verify `/health`.
