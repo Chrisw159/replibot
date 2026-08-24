@@ -47,3 +47,6 @@ recently recreated ("Up N seconds/minutes"). Compose v2 renamed containers `repl
 - **Why:** do not report a GitHub push as a live deployment; production can remain on the old revision.
 - **How to apply:** restore the admin token from `/opt/replibot-admin/token` via the secure Secrets UI,
   or install a fresh SSH public key through the DigitalOcean console, then deploy and verify `/health`.
+- A replacement `DROPLET_SSH_KEY` can arrive as a valid OpenSSH envelope flattened onto one line.
+  Rewrap its base64 body between the header/footer before passing it to `ssh`; never print the private key.
+- **Why:** the flattened key parses after rewrapping, but direct OpenSSH loading fails with `libcrypto`.
