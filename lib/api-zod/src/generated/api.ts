@@ -620,7 +620,9 @@ export const ListSoccerTradesResponseItem = zod.object({
   layMatchedAt: zod.string().nullish(),
   status: zod
     .string()
-    .describe("OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID"),
+    .describe(
+      "OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID",
+    ),
   exitOdds: zod.number().nullish(),
   exitReason: zod.string().nullish(),
   profit: zod.number().nullish(),
@@ -638,6 +640,7 @@ export const GetSoccerSummaryResponse = zod.object({
   totalTrades: zod.number(),
   openTrades: zod.number(),
   settledWon: zod.number(),
+  settledBreakEven: zod.number(),
   settledLost: zod.number(),
   totalPnl: zod.number(),
   totalStaked: zod.number(),
@@ -646,6 +649,8 @@ export const GetSoccerSummaryResponse = zod.object({
   todayTrades: zod.number(),
   avgEntryOdds: zod.number(),
   winRatePct: zod.number(),
+  breakEvenRatePct: zod.number(),
+  lossRatePct: zod.number(),
   dailyPnl: zod
     .array(
       zod.object({
@@ -844,7 +849,9 @@ export const ListFirstHalfSoccerTradesResponseItem = zod.object({
   layMatchedAt: zod.string().nullish(),
   status: zod
     .string()
-    .describe("OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID"),
+    .describe(
+      "OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID",
+    ),
   exitOdds: zod.number().nullish(),
   exitReason: zod.string().nullish(),
   profit: zod.number().nullish(),
@@ -864,6 +871,7 @@ export const GetFirstHalfSoccerSummaryResponse = zod.object({
   totalTrades: zod.number(),
   openTrades: zod.number(),
   settledWon: zod.number(),
+  settledBreakEven: zod.number(),
   settledLost: zod.number(),
   totalPnl: zod.number(),
   totalStaked: zod.number(),
@@ -872,6 +880,8 @@ export const GetFirstHalfSoccerSummaryResponse = zod.object({
   todayTrades: zod.number(),
   avgEntryOdds: zod.number(),
   winRatePct: zod.number(),
+  breakEvenRatePct: zod.number(),
+  lossRatePct: zod.number(),
   dailyPnl: zod
     .array(
       zod.object({

@@ -1319,7 +1319,7 @@ components:
         stake: { type: number }
         layPrice: { type: ["number", "null"] }
         layMatchedAt: { type: ["string", "null"] }
-        status: { type: string, description: "OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID" }
+        status: { type: string, description: "OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID" }
         exitOdds: { type: ["number", "null"] }
         exitReason: { type: ["string", "null"] }
         profit: { type: ["number", "null"] }
@@ -1330,11 +1330,12 @@ components:
 
     SoccerSummary:
       type: object
-      required: [totalTrades, openTrades, settledWon, settledLost, totalPnl, totalStaked, roiPct, todayPnl, todayTrades, avgEntryOdds, winRatePct]
+      required: [totalTrades, openTrades, settledWon, settledBreakEven, settledLost, totalPnl, totalStaked, roiPct, todayPnl, todayTrades, avgEntryOdds, winRatePct, breakEvenRatePct, lossRatePct]
       properties:
         totalTrades: { type: integer }
         openTrades: { type: integer }
         settledWon: { type: integer }
+        settledBreakEven: { type: integer }
         settledLost: { type: integer }
         totalPnl: { type: number }
         totalStaked: { type: number }
@@ -1343,6 +1344,8 @@ components:
         todayTrades: { type: integer }
         avgEntryOdds: { type: number }
         winRatePct: { type: number }
+        breakEvenRatePct: { type: number }
+        lossRatePct: { type: number }
         dailyPnl:
           type: array
           items:

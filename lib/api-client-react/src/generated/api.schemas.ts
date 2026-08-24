@@ -388,7 +388,7 @@ export interface SoccerTrade {
   layPrice?: number | null;
   /** @nullable */
   layMatchedAt?: string | null;
-  /** OPEN | HEDGED | SETTLED_WON | SETTLED_LOST | VOID */
+  /** OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID */
   status: string;
   /** @nullable */
   exitOdds?: number | null;
@@ -413,6 +413,7 @@ export interface SoccerSummary {
   totalTrades: number;
   openTrades: number;
   settledWon: number;
+  settledBreakEven: number;
   settledLost: number;
   totalPnl: number;
   totalStaked: number;
@@ -421,6 +422,8 @@ export interface SoccerSummary {
   todayTrades: number;
   avgEntryOdds: number;
   winRatePct: number;
+  breakEvenRatePct: number;
+  lossRatePct: number;
   dailyPnl?: SoccerDailyPnl[];
 }
 

@@ -122,6 +122,7 @@ router.get("/first-half-soccer/trades", async (req, res) => {
 router.get("/first-half-soccer/summary", async (_req, res) => {
   const rows = await db.select().from(soccerTradesTable).where(eq(soccerTradesTable.strategy, STRATEGY));
   const closed = rows.filter((trade) => !["OPEN", "HEDGED"].includes(trade.status));
+  const settled = closed.filter((trade) => trade.status.startsWith("SETTLED_"));
   const count = (status: string) => rows.filter((trade) => trade.status === status).length;
   const totalPnl = closed.reduce((total, trade) => total + num(trade.profit), 0);
   const totalStaked = closed.reduce((total, trade) => total + num(trade.stake), 0);
@@ -133,16 +134,22 @@ router.get("/first-half-soccer/summary", async (_req, res) => {
     const current = byDay.get(date) ?? { pnl: 0, trades: 0 };
     current.pnl += num(trade.profit); current.trades += 1; byDay.set(date, current);
   }
-  const winners = closed.filter((trade) => num(trade.profit) > 0).length;
+  const profitCents = (trade: typeof rows[number]) => Math.round(num(trade.profit) * 100);
+  const winners = settled.filter((trade) => profitCents(trade) > 0).length;
+  const breakEvens = settled.filter((trade) => profitCents(trade) === 0).length;
+  const losers = settled.filter((trade) => profitCents(trade) < 0).length;
+  const settledCount = settled.length;
   res.json({
     totalTrades: rows.length, openTrades: count("OPEN") + count("HEDGED"),
-    settledWon: count("SETTLED_WON"), settledLost: count("SETTLED_LOST"),
+    settledWon: winners, settledBreakEven: breakEvens, settledLost: losers,
     totalPnl: Math.round(totalPnl * 100) / 100, totalStaked: Math.round(totalStaked * 100) / 100,
     roiPct: totalStaked ? Math.round(totalPnl / totalStaked * 10000) / 100 : 0,
     todayPnl: Math.round(todayClosed.reduce((total, trade) => total + num(trade.profit), 0) * 100) / 100,
     todayTrades: todayClosed.length,
     avgEntryOdds: rows.length ? Math.round(rows.reduce((total, trade) => total + num(trade.entryOdds), 0) / rows.length * 100) / 100 : 0,
-    winRatePct: closed.length ? Math.round(winners / closed.length * 10000) / 100 : 0,
+    winRatePct: settledCount ? Math.round(winners / settledCount * 10000) / 100 : 0,
+    breakEvenRatePct: settledCount ? Math.round(breakEvens / settledCount * 10000) / 100 : 0,
+    lossRatePct: settledCount ? Math.round(losers / settledCount * 10000) / 100 : 0,
     dailyPnl: [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, pnl: Math.round(value.pnl * 100) / 100, trades: value.trades })),
   });
 });

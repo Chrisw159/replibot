@@ -178,10 +178,15 @@ router.get("/soccer/summary", async (_req, res) => {
     .from(soccerTradesTable)
     .where(eq(soccerTradesTable.strategy, "LAY_LOCK"));
   const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
+  const settled = closed.filter((t) => t.status.startsWith("SETTLED_"));
   const count = (s: string) => rows.filter((t) => t.status === s).length;
   const totalPnl = closed.reduce((s, t) => s + num(t.profit), 0);
   const totalStaked = closed.reduce((s, t) => s + num(t.stake), 0);
-  const winners = closed.filter((t) => num(t.profit) > 0).length;
+  const profitCents = (trade: typeof rows[number]) => Math.round(num(trade.profit) * 100);
+  const winners = settled.filter((t) => profitCents(t) > 0).length;
+  const breakEvens = settled.filter((t) => profitCents(t) === 0).length;
+  const losers = settled.filter((t) => profitCents(t) < 0).length;
+  const settledCount = settled.length;
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayClosed = closed.filter((t) => t.closedAt && t.closedAt >= todayStart);
@@ -199,8 +204,9 @@ router.get("/soccer/summary", async (_req, res) => {
   res.json({
     totalTrades: rows.length,
     openTrades: count("OPEN") + count("HEDGED"),
-    settledWon: count("SETTLED_WON"),
-    settledLost: count("SETTLED_LOST"),
+    settledWon: winners,
+    settledBreakEven: breakEvens,
+    settledLost: losers,
     totalPnl: Math.round(totalPnl * 100) / 100,
     totalStaked: Math.round(totalStaked * 100) / 100,
     roiPct: totalStaked > 0 ? Math.round((totalPnl / totalStaked) * 10000) / 100 : 0,
@@ -210,7 +216,9 @@ router.get("/soccer/summary", async (_req, res) => {
       rows.length > 0
         ? Math.round((rows.reduce((s, t) => s + num(t.entryOdds), 0) / rows.length) * 100) / 100
         : 0,
-    winRatePct: closed.length > 0 ? Math.round((winners / closed.length) * 10000) / 100 : 0,
+    winRatePct: settledCount > 0 ? Math.round((winners / settledCount) * 10000) / 100 : 0,
+    breakEvenRatePct: settledCount > 0 ? Math.round((breakEvens / settledCount) * 10000) / 100 : 0,
+    lossRatePct: settledCount > 0 ? Math.round((losers / settledCount) * 10000) / 100 : 0,
     dailyPnl: [...byDay.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, e]) => ({ date, pnl: Math.round(e.pnl * 100) / 100, trades: e.trades })),

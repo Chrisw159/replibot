@@ -910,7 +910,7 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
         await db
           .update(soccerTradesTable)
           .set({
-            status: "SETTLED_LOST",
+            status: "SETTLED_BREAK_EVEN",
             exitReason: `Line broken — lay hedge @ ${layPrice.toFixed(2)} returned the stake (breakeven)`,
             profit: "0.00",
             closedAt: new Date(),

@@ -365,7 +365,12 @@ async function settle() {
       matchedLayStake,
       averageLayOdds,
     );
-    const status = won ? "SETTLED_WON" : "SETTLED_LOST";
+    const profitCents = Math.round(profit * 100);
+    const status = profitCents > 0
+      ? "SETTLED_WON"
+      : profitCents < 0
+        ? "SETTLED_LOST"
+        : "SETTLED_BREAK_EVEN";
     await db.update(soccerTradesTable).set({
       status, profit: profit.toFixed(2), closedAt: new Date(),
       goalAfterEntry: !won,

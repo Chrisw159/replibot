@@ -188,6 +188,7 @@ export default function FirstHalfSoccerBot() {
   };
 
   const won = summary?.settledWon ?? 0;
+  const breakEven = summary?.settledBreakEven ?? 0;
   const lost = summary?.settledLost ?? 0;
   const totalPnl = summary?.totalPnl ?? 0;
   const todayPnl = summary?.todayPnl ?? 0;
@@ -262,11 +263,13 @@ export default function FirstHalfSoccerBot() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         {[
           { label: "Today's P&L", value: `${todayPnl >= 0 ? "+" : ""}£${todayPnl.toFixed(2)}`, sub: `${summary?.todayTrades ?? 0} trades`, color: todayPnl > 0 ? "text-amber-500" : todayPnl < 0 ? "text-red-400" : "text-foreground" },
           { label: "All-time P&L", value: `${totalPnl >= 0 ? "+" : ""}£${totalPnl.toFixed(2)}`, sub: `${summary?.totalTrades ?? 0} trades`, color: totalPnl > 0 ? "text-amber-500" : totalPnl < 0 ? "text-red-400" : "text-foreground" },
-          { label: "Win Rate", value: `${summary?.winRatePct ?? 0}%`, sub: `${won} won · ${lost} lost`, color: "text-foreground" },
+          { label: "Win", value: `${summary?.winRatePct ?? 0}%`, sub: `${won} trades`, color: "text-amber-500" },
+          { label: "Break Even", value: `${summary?.breakEvenRatePct ?? 0}%`, sub: `${breakEven} trades`, color: "text-blue-400" },
+          { label: "Loss", value: `${summary?.lossRatePct ?? 0}%`, sub: `${lost} trades`, color: "text-red-400" },
           { label: "Open Trades", value: String(summary?.openTrades ?? 0), sub: "Lay lock only", color: "text-blue-400" },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-border/60 bg-card/40 px-5 py-4 flex flex-col justify-center">
@@ -385,10 +388,17 @@ export default function FirstHalfSoccerBot() {
                           <Badge className={`text-[10px] uppercase font-bold tracking-wider ${
                             t.status === "OPEN" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                             t.status === "HEDGED" ? "bg-amber-500/15 text-amber-500 border-amber-500/30" :
-                             t.status === "SETTLED_WON" ? "bg-amber-500/15 text-amber-500 border-amber-500/30" :
-                             t.status === "SETTLED_LOST" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                             t.status.startsWith("SETTLED_") && Math.round((t.profit ?? 0) * 100) > 0 ? "bg-amber-500/15 text-amber-500 border-amber-500/30" :
+                             t.status.startsWith("SETTLED_") && Math.round((t.profit ?? 0) * 100) === 0 ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                             t.status.startsWith("SETTLED_") && Math.round((t.profit ?? 0) * 100) < 0 ? "bg-red-500/15 text-red-400 border-red-500/30" :
                             "bg-muted text-muted-foreground border-border"
-                          }`}>{t.status === "HEDGED" ? "LAY MATCHED" : t.status.replace(/_/g, ' ')}</Badge>
+                          }`}>{
+                            t.status === "HEDGED"
+                              ? "LAY MATCHED"
+                              : t.status.startsWith("SETTLED_") && Math.round((t.profit ?? 0) * 100) === 0
+                                ? "BREAK EVEN"
+                                : t.status.replace(/_/g, ' ')
+                          }</Badge>
                         </div>
                      </div>
                      <div className="flex justify-between items-end">
