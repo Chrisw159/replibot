@@ -451,6 +451,15 @@ export const GetStrategyPerformanceResponse = zod.array(
 /**
  * @summary Get soccer in-play bot configuration
  */
+export const getSoccerConfigResponseLayOffsetDefault = 0.45;
+export const getSoccerConfigResponseLayOffsetMin = 0;
+
+export const getSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
+export const getSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const getSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
+
+export const getSoccerConfigResponseMaxFallbackLossPctMin = 0;
+
 export const GetSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
@@ -471,13 +480,44 @@ export const GetSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  layTargetPct: zod.number().optional(),
+  layOffset: zod
+    .number()
+    .min(getSoccerConfigResponseLayOffsetMin)
+    .default(getSoccerConfigResponseLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(getSoccerConfigResponseFallbackIntervalSecondsMin)
+    .max(getSoccerConfigResponseFallbackIntervalSecondsMax)
+    .default(getSoccerConfigResponseFallbackIntervalSecondsDefault)
+    .describe(
+      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+    ),
+  maxFallbackLossPct: zod
+    .number()
+    .min(getSoccerConfigResponseMaxFallbackLossPctMin)
+    .describe(
+      "Maximum permitted fallback loss as a percentage of the back stake.",
+    ),
   updatedAt: zod.string().nullish(),
 });
 
 /**
  * @summary Update soccer in-play bot configuration
  */
+export const updateSoccerConfigBodyLayOffsetDefault = 0.45;
+export const updateSoccerConfigBodyLayOffsetMin = 0;
+
+export const updateSoccerConfigBodyFallbackIntervalSecondsDefault = 300;
+export const updateSoccerConfigBodyFallbackIntervalSecondsMin = 300;
+export const updateSoccerConfigBodyFallbackIntervalSecondsMax = 3600;
+
+export const updateSoccerConfigBodyMaxFallbackLossPctDefault = 20;
+export const updateSoccerConfigBodyMaxFallbackLossPctMin = 0;
+export const updateSoccerConfigBodyMaxFallbackLossPctMax = 100;
+
 export const UpdateSoccerConfigBody = zod.object({
   stake: zod.number().optional(),
   minOdds: zod
@@ -497,9 +537,33 @@ export const UpdateSoccerConfigBody = zod.object({
   maxConcurrent: zod.number().optional(),
   minLiquidity: zod.number().optional(),
   checkIntervalSeconds: zod.number().optional(),
-  paperMode: zod.boolean().optional(),
-  layTargetPct: zod.number().optional(),
+  layOffset: zod
+    .number()
+    .min(updateSoccerConfigBodyLayOffsetMin)
+    .default(updateSoccerConfigBodyLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(updateSoccerConfigBodyFallbackIntervalSecondsMin)
+    .max(updateSoccerConfigBodyFallbackIntervalSecondsMax)
+    .default(updateSoccerConfigBodyFallbackIntervalSecondsDefault),
+  maxFallbackLossPct: zod
+    .number()
+    .min(updateSoccerConfigBodyMaxFallbackLossPctMin)
+    .max(updateSoccerConfigBodyMaxFallbackLossPctMax)
+    .default(updateSoccerConfigBodyMaxFallbackLossPctDefault),
 });
+
+export const updateSoccerConfigResponseLayOffsetDefault = 0.45;
+export const updateSoccerConfigResponseLayOffsetMin = 0;
+
+export const updateSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
+export const updateSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const updateSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
+
+export const updateSoccerConfigResponseMaxFallbackLossPctMin = 0;
 
 export const UpdateSoccerConfigResponse = zod.object({
   id: zod.number(),
@@ -521,7 +585,27 @@ export const UpdateSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  layTargetPct: zod.number().optional(),
+  layOffset: zod
+    .number()
+    .min(updateSoccerConfigResponseLayOffsetMin)
+    .default(updateSoccerConfigResponseLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(updateSoccerConfigResponseFallbackIntervalSecondsMin)
+    .max(updateSoccerConfigResponseFallbackIntervalSecondsMax)
+    .default(updateSoccerConfigResponseFallbackIntervalSecondsDefault)
+    .describe(
+      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+    ),
+  maxFallbackLossPct: zod
+    .number()
+    .min(updateSoccerConfigResponseMaxFallbackLossPctMin)
+    .describe(
+      "Maximum permitted fallback loss as a percentage of the back stake.",
+    ),
   updatedAt: zod.string().nullish(),
 });
 
@@ -617,7 +701,29 @@ export const ListSoccerTradesResponseItem = zod.object({
   entryOdds: zod.number(),
   stake: zod.number(),
   layPrice: zod.number().nullish(),
+  targetLayPrice: zod
+    .number()
+    .nullish()
+    .describe("Original fixed-offset resting lay target."),
   layMatchedAt: zod.string().nullish(),
+  layMatchedStake: zod
+    .number()
+    .optional()
+    .describe(
+      "Durable aggregate stake matched across the resting and fallback lays.",
+    ),
+  layMatchedPriceStake: zod
+    .number()
+    .optional()
+    .describe(
+      "Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill.",
+    ),
+  fallbackAttemptedAt: zod.string().nullish(),
+  fallbackNextCheckAt: zod.string().nullish(),
+  fallbackAttemptCount: zod.number().optional(),
+  fallbackPrice: zod.number().nullish(),
+  fallbackProjectedPnl: zod.number().nullish(),
+  fallbackDecision: zod.string().nullish(),
   status: zod
     .string()
     .describe(
@@ -685,6 +791,15 @@ export const getFirstHalfSoccerConfigResponseEntryMinuteMax = 45;
 
 export const getFirstHalfSoccerConfigResponseMinGoalGapMin = 2;
 
+export const getFirstHalfSoccerConfigResponseLayOffsetDefault = 0.45;
+export const getFirstHalfSoccerConfigResponseLayOffsetMin = 0;
+
+export const getFirstHalfSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
+export const getFirstHalfSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const getFirstHalfSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
+
+export const getFirstHalfSoccerConfigResponseMaxFallbackLossPctMin = 0;
+
 export const GetFirstHalfSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
@@ -699,7 +814,27 @@ export const GetFirstHalfSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  layTargetPct: zod.number(),
+  layOffset: zod
+    .number()
+    .min(getFirstHalfSoccerConfigResponseLayOffsetMin)
+    .default(getFirstHalfSoccerConfigResponseLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(getFirstHalfSoccerConfigResponseFallbackIntervalSecondsMin)
+    .max(getFirstHalfSoccerConfigResponseFallbackIntervalSecondsMax)
+    .default(getFirstHalfSoccerConfigResponseFallbackIntervalSecondsDefault)
+    .describe(
+      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+    ),
+  maxFallbackLossPct: zod
+    .number()
+    .min(getFirstHalfSoccerConfigResponseMaxFallbackLossPctMin)
+    .describe(
+      "Maximum permitted fallback loss as a percentage of the back stake.",
+    ),
   updatedAt: zod.string().nullish(),
 });
 
@@ -710,6 +845,17 @@ export const updateFirstHalfSoccerConfigBodyEntryMinuteMin = 35;
 export const updateFirstHalfSoccerConfigBodyEntryMinuteMax = 45;
 
 export const updateFirstHalfSoccerConfigBodyMinGoalGapMin = 2;
+
+export const updateFirstHalfSoccerConfigBodyLayOffsetDefault = 0.45;
+export const updateFirstHalfSoccerConfigBodyLayOffsetMin = 0;
+
+export const updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsDefault = 300;
+export const updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsMin = 300;
+export const updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsMax = 3600;
+
+export const updateFirstHalfSoccerConfigBodyMaxFallbackLossPctDefault = 20;
+export const updateFirstHalfSoccerConfigBodyMaxFallbackLossPctMin = 0;
+export const updateFirstHalfSoccerConfigBodyMaxFallbackLossPctMax = 100;
 
 export const UpdateFirstHalfSoccerConfigBody = zod.object({
   stake: zod.number().optional(),
@@ -726,13 +872,38 @@ export const UpdateFirstHalfSoccerConfigBody = zod.object({
   maxConcurrent: zod.number().optional(),
   minLiquidity: zod.number().optional(),
   checkIntervalSeconds: zod.number().optional(),
-  layTargetPct: zod.number().optional(),
+  layOffset: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigBodyLayOffsetMin)
+    .default(updateFirstHalfSoccerConfigBodyLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsMin)
+    .max(updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsMax)
+    .default(updateFirstHalfSoccerConfigBodyFallbackIntervalSecondsDefault),
+  maxFallbackLossPct: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigBodyMaxFallbackLossPctMin)
+    .max(updateFirstHalfSoccerConfigBodyMaxFallbackLossPctMax)
+    .default(updateFirstHalfSoccerConfigBodyMaxFallbackLossPctDefault),
 });
 
 export const updateFirstHalfSoccerConfigResponseEntryMinuteMin = 35;
 export const updateFirstHalfSoccerConfigResponseEntryMinuteMax = 45;
 
 export const updateFirstHalfSoccerConfigResponseMinGoalGapMin = 2;
+
+export const updateFirstHalfSoccerConfigResponseLayOffsetDefault = 0.45;
+export const updateFirstHalfSoccerConfigResponseLayOffsetMin = 0;
+
+export const updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
+export const updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
+
+export const updateFirstHalfSoccerConfigResponseMaxFallbackLossPctMin = 0;
 
 export const UpdateFirstHalfSoccerConfigResponse = zod.object({
   id: zod.number(),
@@ -750,7 +921,27 @@ export const UpdateFirstHalfSoccerConfigResponse = zod.object({
   minLiquidity: zod.number(),
   checkIntervalSeconds: zod.number(),
   paperMode: zod.boolean(),
-  layTargetPct: zod.number(),
+  layOffset: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigResponseLayOffsetMin)
+    .default(updateFirstHalfSoccerConfigResponseLayOffsetDefault)
+    .describe(
+      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
+    ),
+  fallbackIntervalSeconds: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsMin)
+    .max(updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsMax)
+    .default(updateFirstHalfSoccerConfigResponseFallbackIntervalSecondsDefault)
+    .describe(
+      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+    ),
+  maxFallbackLossPct: zod
+    .number()
+    .min(updateFirstHalfSoccerConfigResponseMaxFallbackLossPctMin)
+    .describe(
+      "Maximum permitted fallback loss as a percentage of the back stake.",
+    ),
   updatedAt: zod.string().nullish(),
 });
 
@@ -846,7 +1037,29 @@ export const ListFirstHalfSoccerTradesResponseItem = zod.object({
   entryOdds: zod.number(),
   stake: zod.number(),
   layPrice: zod.number().nullish(),
+  targetLayPrice: zod
+    .number()
+    .nullish()
+    .describe("Original fixed-offset resting lay target."),
   layMatchedAt: zod.string().nullish(),
+  layMatchedStake: zod
+    .number()
+    .optional()
+    .describe(
+      "Durable aggregate stake matched across the resting and fallback lays.",
+    ),
+  layMatchedPriceStake: zod
+    .number()
+    .optional()
+    .describe(
+      "Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill.",
+    ),
+  fallbackAttemptedAt: zod.string().nullish(),
+  fallbackNextCheckAt: zod.string().nullish(),
+  fallbackAttemptCount: zod.number().optional(),
+  fallbackPrice: zod.number().nullish(),
+  fallbackProjectedPnl: zod.number().nullish(),
+  fallbackDecision: zod.string().nullish(),
   status: zod
     .string()
     .describe(

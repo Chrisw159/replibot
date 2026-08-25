@@ -26,7 +26,7 @@ export const soccerConfigTable = pgTable("soccer_config", {
   minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
   maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.60"),
   profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("15.00"),
-  entryMinute: integer("entry_minute").notNull().default(73),
+  entryMinute: integer("entry_minute").notNull().default(70),
   minGoalGap: integer("min_goal_gap").notNull().default(2),
   // Legacy column retained for database compatibility; insured-first is now fixed.
   preferBufferLine: boolean("prefer_buffer_line").notNull().default(true),
@@ -44,6 +44,9 @@ export const soccerConfigTable = pgTable("soccer_config", {
   strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(false),
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
+  layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
+  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(300),
+  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
@@ -68,6 +71,9 @@ export const firstHalfSoccerConfigTable = pgTable("first_half_soccer_config", {
   // This strategy is deliberately never allowed to place real-money orders.
   paperMode: boolean("paper_mode").notNull().default(true),
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
+  layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
+  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(300),
+  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
@@ -108,6 +114,15 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   layImmediatePriceStake: numeric("lay_immediate_price_stake", { precision: 14, scale: 2 })
     .notNull()
     .default("0.00"),
+  targetLayPrice: numeric("target_lay_price", { precision: 6, scale: 2 }),
+  layMatchedStake: numeric("lay_matched_stake", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  layMatchedPriceStake: numeric("lay_matched_price_stake", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  fallbackNextCheckAt: timestamp("fallback_next_check_at", { withTimezone: true }),
+  fallbackAttemptCount: integer("fallback_attempt_count").notNull().default(0),
+  fallbackAttemptedAt: timestamp("fallback_attempted_at", { withTimezone: true }),
+  fallbackPrice: numeric("fallback_price", { precision: 6, scale: 2 }),
+  fallbackProjectedPnl: numeric("fallback_projected_pnl", { precision: 10, scale: 2 }),
+  fallbackDecision: text("fallback_decision"),
   layMatchedAt: timestamp("lay_matched_at", { withTimezone: true }),
   // OPEN | HEDGED (lay matched, awaiting FT) | TRADED_OUT | EXITED_AFTER_GOAL
   // | SETTLED_WON | SETTLED_LOST | VOID

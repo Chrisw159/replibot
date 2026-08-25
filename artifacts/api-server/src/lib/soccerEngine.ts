@@ -2,7 +2,7 @@
  * SOCCER IN-PLAY "NO MORE GOALS" ENGINE
  *
  * Strategy (frozen with the user, 17 Aug 2026 — paper mode until proven):
- *  - From `entryMinute` (default 73') onward, find live soccer games with a
+ *  - From `entryMinute` (default 70') onward, find live soccer games with a
  *    goal gap >= `minGoalGap` (default 2) — dead games where nobody chases.
  *  - Prefer the one-goal-insured Under line (current total + 1.5, e.g. 2-0
  *    → Under 3.5) when it is above its odds threshold. Otherwise take the
@@ -33,14 +33,18 @@ import {
 } from "./betfair";
 import { logger } from "./logger";
 import {
-  COMMISSION,
-  parseScoreName,
+  addEqualLayFill,
+  entryStakeForOdds,
+  equalStakeCombinedProfit,
+  fixedOffsetLayTarget,
+  fallbackDelayElapsed,
+  compatibleLayAggregate,
+  isFallbackPriceWithinCap,
   inferScore,
   estimateMinute,
   chooseEntryLine,
-  layLockPrice,
   layLockWinProfit,
-  restingLayHasEnoughTradedVolume,
+  remainingEqualLayStake,
   tradedVolumeAtPrice,
   immediateLayFill,
   ouLineFromMarketType,
@@ -101,7 +105,10 @@ export function getWatchedGameCount(): number {
 export async function getSoccerConfig(): Promise<SoccerConfig> {
   const rows = await db.select().from(soccerConfigTable).limit(1);
   if (rows.length > 0) return rows[0]!;
-  const inserted = await db.insert(soccerConfigTable).values({}).returning();
+  const inserted = await db
+    .insert(soccerConfigTable)
+    .values({ entryMinute: 70, paperMode: true })
+    .returning();
   return inserted[0]!;
 }
 
@@ -206,7 +213,8 @@ async function getBooksWithTradedVolume(
       {
         marketIds: marketIds.slice(i, i + 40),
         priceProjection: {
-          priceData: ["EX_TRADED"],
+          priceData: ["EX_ALL_OFFERS", "EX_TRADED"],
+          virtualise: true,
         },
       },
     );
@@ -275,6 +283,13 @@ const num = (v: string | number | null | undefined) => Number(v ?? 0);
 // ── Main cycle ──────────────────────────────────────────────────────────────
 async function runCycle(generation: number): Promise<void> {
   const config = await getSoccerConfig();
+  if (!config.paperMode) {
+    await db
+      .update(soccerConfigTable)
+      .set({ paperMode: true })
+      .where(eq(soccerConfigTable.id, config.id));
+    throw new Error("Full-match soccer strategy is paper-only");
+  }
 
   // Session
   if (!getSession()) {
@@ -311,10 +326,12 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
   const openRows = await db
     .select()
     .from(soccerTradesTable)
-    .where(and(
-      inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
-      eq(soccerTradesTable.strategy, "LAY_LOCK"),
-    ));
+    .where(
+      and(
+        inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+        eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      ),
+    );
   const openEventIds = new Set(openRows.map((t) => t.eventId).filter(Boolean));
   // Concurrency is per GAME (an event may carry one trade per strategy)
   if (openEventIds.size >= config.maxConcurrent) {
@@ -365,9 +382,18 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (eventId && enteredEventIds.has(eventId)) {
       snap.push({
-        eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
-        tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
-        liquidity: null, verdict: "SKIPPED",
+        eventName,
+        competition,
+        marketId: null,
+        score: "?",
+        goalGap: 0,
+        minute,
+        tightLine: null,
+        tightOdds: null,
+        bufferLine: null,
+        bufferOdds: null,
+        liquidity: null,
+        verdict: "SKIPPED",
         reason: "Already entered this game — repeat entry blocked",
       });
       continue;
@@ -392,10 +418,18 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
           `[SOCCER] Score disagreement in ${eventName}: feed says ${feed.home}-${feed.away}, Correct Score market says ${score.home}-${score.away} — standing aside this cycle`,
         );
         snap.push({
-          eventName, competition, marketId: null,
-          score: `${feed.home}-${feed.away}?`, goalGap: 0, minute,
-          tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
-          liquidity: null, verdict: "SKIPPED",
+          eventName,
+          competition,
+          marketId: null,
+          score: `${feed.home}-${feed.away}?`,
+          goalGap: 0,
+          minute,
+          tightLine: null,
+          tightOdds: null,
+          bufferLine: null,
+          bufferOdds: null,
+          liquidity: null,
+          verdict: "SKIPPED",
           reason: `Feed (${feed.home}-${feed.away}) and market (${score.home}-${score.away}) disagree — possible goal in flight, waiting for both to agree`,
         });
         continue;
@@ -405,9 +439,18 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     }
     if (!score) {
       snap.push({
-        eventName, competition, marketId: null, score: "?", goalGap: 0, minute,
-        tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
-        liquidity: null, verdict: "SKIPPED",
+        eventName,
+        competition,
+        marketId: null,
+        score: "?",
+        goalGap: 0,
+        minute,
+        tightLine: null,
+        tightOdds: null,
+        bufferLine: null,
+        bufferOdds: null,
+        liquidity: null,
+        verdict: "SKIPPED",
         reason: `No live-score feed match and score not readable from Correct Score market (${inferred.detail})`,
       });
       continue;
@@ -417,12 +460,22 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const gap = Math.abs(score.home - score.away);
     const total = score.home + score.away;
 
-    if (gap < config.minGoalGap) {
+    const requiredGoalGap = Math.max(2, config.minGoalGap);
+    if (gap < requiredGoalGap) {
       snap.push({
-        eventName, competition, marketId: null, score: scoreStr, goalGap: gap, minute,
-        tightLine: null, tightOdds: null, bufferLine: null, bufferOdds: null,
-        liquidity: null, verdict: "SKIPPED",
-        reason: `Goal gap ${gap} < ${config.minGoalGap} — game not dead, a team can still chase`,
+        eventName,
+        competition,
+        marketId: null,
+        score: scoreStr,
+        goalGap: gap,
+        minute,
+        tightLine: null,
+        tightOdds: null,
+        bufferLine: null,
+        bufferOdds: null,
+        liquidity: null,
+        verdict: "SKIPPED",
+        reason: `Goal gap ${gap} < ${requiredGoalGap} — game not dead, a team can still chase`,
       });
       continue;
     }
@@ -440,14 +493,25 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
         await apiBetfairRequest<CatalogueMarket[]>(
           "SportsAPING/v1.0/listMarketCatalogue",
           {
-            filter: { eventIds: eventId ? [eventId] : [], marketTypeCodes: wantedTypes, inPlayOnly: true },
-            marketProjection: ["EVENT", "MARKET_DESCRIPTION", "RUNNER_DESCRIPTION", "MARKET_START_TIME"],
+            filter: {
+              eventIds: eventId ? [eventId] : [],
+              marketTypeCodes: wantedTypes,
+              inPlayOnly: true,
+            },
+            marketProjection: [
+              "EVENT",
+              "MARKET_DESCRIPTION",
+              "RUNNER_DESCRIPTION",
+              "MARKET_START_TIME",
+            ],
             maxResults: 10,
           },
         )
       ).filter((m) => Array.isArray(m.runners));
     } catch (err) {
-      await slog("error", `O/U catalogue fetch failed for ${eventName}`, { err: String(err) });
+      await slog("error", `O/U catalogue fetch failed for ${eventName}`, {
+        err: String(err),
+      });
       continue;
     }
 
@@ -470,7 +534,9 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       if (!b || b.status !== "OPEN" || !b.inplay || !b.runners) continue;
       const underRunner = m.runners!.find((r) => /^under/i.test(r.runnerName));
       if (!underRunner) continue;
-      const br = b.runners.find((r) => r.selectionId === underRunner.selectionId);
+      const br = b.runners.find(
+        (r) => r.selectionId === underRunner.selectionId,
+      );
       const backOffer = br?.ex?.availableToBack?.[0];
       if (!br || br.status !== "ACTIVE" || !backOffer) continue;
       quotes.set(line, {
@@ -490,15 +556,14 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     // minOdds = tight-line minimum; maxOdds = insured-line minimum.
     const tightMinOdds = num(config.minOdds);
     const insuredMinOdds = num(config.maxOdds);
-    const pick = chooseEntryLine(
-      tight,
-      insured,
-      tightMinOdds,
-      insuredMinOdds,
-    );
+    const pick = chooseEntryLine(tight, insured, tightMinOdds, insuredMinOdds);
 
     const base = {
-      eventName, competition, score: scoreStr, goalGap: gap, minute,
+      eventName,
+      competition,
+      score: scoreStr,
+      goalGap: gap,
+      minute,
       tightLine: tight ? tight.line : null,
       tightOdds: tight ? tight.odds : null,
       bufferLine: insured ? insured.line : null,
@@ -507,8 +572,12 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (!pick) {
       snap.push({
-        ...base, marketId: null, liquidity: null, verdict: "WATCHING",
-        reason: `Waiting for insured line > ${insuredMinOdds.toFixed(2)} or tight line > ${tightMinOdds.toFixed(2)}` +
+        ...base,
+        marketId: null,
+        liquidity: null,
+        verdict: "WATCHING",
+        reason:
+          `Waiting for insured line > ${insuredMinOdds.toFixed(2)} or tight line > ${tightMinOdds.toFixed(2)}` +
           (insured ? ` (insured U${insured.line} @ ${insured.odds})` : "") +
           (tight ? ` (U${tight.line} @ ${tight.odds})` : ""),
       });
@@ -517,14 +586,29 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 
     if (pick.liquidity < num(config.minLiquidity)) {
       snap.push({
-        ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "SKIPPED",
+        ...base,
+        marketId: pick.market.marketId,
+        liquidity: pick.liquidity,
+        verdict: "SKIPPED",
         reason: `Liquidity £${Math.round(pick.liquidity)} < £${Math.round(num(config.minLiquidity))} — trade-out would be impossible`,
       });
       continue;
     }
 
     // ENTER (paper): record at the visible back price — one trade per enabled strategy
-    const stake = num(config.stake);
+    const stake = entryStakeForOdds(pick.odds);
+    if (pick.size + 0.01 < stake) {
+      snap.push({
+        ...base,
+        marketId: pick.market.marketId,
+        liquidity: pick.liquidity,
+        verdict: "WATCHING",
+        reason:
+          `Dynamic £${stake.toFixed(2)} back stake cannot be matched at ${pick.odds.toFixed(2)} ` +
+          `(only £${pick.size.toFixed(2)} available)`,
+      });
+      continue;
+    }
     const isInsured = pick.line === insuredLine;
     const baseTrade = {
       eventId,
@@ -542,13 +626,11 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       entryOdds: pick.odds.toFixed(2),
       stake: stake.toFixed(2),
       status: "OPEN",
-      paper: config.paperMode,
+      paper: true,
     };
-    // Immediately rest the same-stake lay. A match locks layTargetPct net if
-    // the Under wins and £0 if it loses.
-    const targetFrac = num(config.layTargetPct) / 100;
-    const ideal = pick.odds - targetFrac / (1 - COMMISSION);
-    const layPrice = layLockPrice(pick.odds, num(config.layTargetPct));
+    // Immediately rest an equal-stake paper lay at the configured fixed offset.
+    // The evidence call can prove a full or partial crossing at entry.
+    const layPrice = fixedOffsetLayTarget(pick.odds, num(config.layOffset));
     let layEvidence: Awaited<ReturnType<typeof getRestingLayEvidence>>;
     try {
       layEvidence = await getRestingLayEvidence(
@@ -565,29 +647,37 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       );
       continue;
     }
-    const immediatelyHedged =
-      layEvidence.immediateMatchedStake + 0.01 >= stake;
-    const immediateAveragePrice = immediatelyHedged
-      ? layEvidence.immediatePriceStake / stake
-      : null;
+    const immediatelyHedged = layEvidence.immediateMatchedStake + 0.01 >= stake;
+    const immediateAveragePrice =
+      layEvidence.immediateMatchedStake > 0
+        ? layEvidence.immediatePriceStake / layEvidence.immediateMatchedStake
+        : null;
     const storedLayPrice = immediateAveragePrice ?? layPrice;
+    const enteredAt = new Date();
+    const fallbackNextCheckAt = new Date(
+      enteredAt.getTime() + config.fallbackIntervalSeconds * 1_000,
+    );
 
     await db.insert(soccerTradesTable).values({
       ...baseTrade,
       strategy: "LAY_LOCK",
       status: immediatelyHedged ? "HEDGED" : "OPEN",
       layPrice: storedLayPrice.toFixed(2),
-      layTradedVolumeBaseline:
-        layEvidence.tradedVolumeBaseline.toFixed(2),
+      targetLayPrice: layPrice.toFixed(2),
+      layMatchedStake: layEvidence.immediateMatchedStake.toFixed(2),
+      layMatchedPriceStake: layEvidence.immediatePriceStake.toFixed(2),
+      layTradedVolumeBaseline: layEvidence.tradedVolumeBaseline.toFixed(2),
       layQueueAhead: layEvidence.queueAhead.toFixed(2),
-      layImmediateMatchedStake:
-        layEvidence.immediateMatchedStake.toFixed(2),
-      layImmediatePriceStake:
-        layEvidence.immediatePriceStake.toFixed(2),
+      layImmediateMatchedStake: layEvidence.immediateMatchedStake.toFixed(2),
+      layImmediatePriceStake: layEvidence.immediatePriceStake.toFixed(2),
       layMatchedAt: immediatelyHedged ? new Date() : null,
-      exitOdds: immediatelyHedged
-        ? storedLayPrice.toFixed(2)
-        : null,
+      fallbackNextCheckAt: immediatelyHedged ? null : fallbackNextCheckAt,
+      fallbackAttemptCount: 0,
+      fallbackDecision: immediatelyHedged
+        ? "NOT_REQUIRED_TARGET_FILLED"
+        : "WAITING_FOR_FALLBACK_INTERVAL",
+      placedAt: enteredAt,
+      exitOdds: immediatelyHedged ? storedLayPrice.toFixed(2) : null,
       exitReason: immediatelyHedged
         ? `Resting lay immediately matched @ average ${storedLayPrice.toFixed(2)} — locked`
         : null,
@@ -598,7 +688,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       "info",
       `ENTERED ${eventName} ${scoreStr} ${minute}' — BACK ${pick.selectionName} @ ${pick.odds} £${stake} ` +
         `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) ` +
-        `[resting same-stake lay @ ${layPrice.toFixed(2)}${layEvidence.immediateMatchedStake > 0 ? `, £${layEvidence.immediateMatchedStake.toFixed(2)} matched immediately` : ""}${ideal < 1.01 ? ", target capped at 1.01" : ""}]`,
+        `[dynamic stake band £${stake}; fixed-offset target lay @ ${layPrice.toFixed(2)}; ` +
+        `immediate evidence £${layEvidence.immediateMatchedStake.toFixed(2)} matched / £${stake.toFixed(2)}, ` +
+        `price-stake £${layEvidence.immediatePriceStake.toFixed(2)}, queue £${layEvidence.queueAhead.toFixed(2)}, ` +
+        `fallback due ${fallbackNextCheckAt.toISOString()}]`,
     );
     if (immediatelyHedged) {
       await slog(
@@ -607,7 +700,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       );
     }
     snap.push({
-      ...base, marketId: pick.market.marketId, liquidity: pick.liquidity, verdict: "ENTERED",
+      ...base,
+      marketId: pick.market.marketId,
+      liquidity: pick.liquidity,
+      verdict: "ENTERED",
       reason: `BACK ${pick.selectionName} @ ${pick.odds} (${isInsured ? "insured" : "tight"} line)`,
     });
   }
@@ -616,10 +712,11 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
 }
 
 function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
+  const matched = num(t.layMatchedStake);
   const reason =
     t.status === "HEDGED"
       ? `Lay matched @ ${num(t.layPrice)} — waiting for full-time settlement`
-      : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — resting lay @ ${num(t.layPrice)} waiting to match`;
+      : `BACK ${t.selectionName} @ ${num(t.entryOdds)} — £${matched.toFixed(2)} lay matched, target @ ${num(t.targetLayPrice).toFixed(2)}`;
 
   return {
     eventName: t.eventName,
@@ -640,11 +737,7 @@ function openSnapshot(t: SoccerTrade): SoccerCandidateSnapshot {
 
 // ── Resting lay monitor ──────────────────────────────────────────────────────
 async function monitorRestingLays(generation: number): Promise<void> {
-  if (
-    !running ||
-    generation !== runGeneration ||
-    !getSession()
-  ) {
+  if (!running || generation !== runGeneration || !getSession()) {
     return;
   }
 
@@ -658,6 +751,7 @@ async function monitorRestingLays(generation: number): Promise<void> {
       ),
     );
   if (open.length === 0) return;
+  const config = await getSoccerConfig();
 
   const books = await getBooksWithTradedVolume(
     open.map((trade) => trade.marketId),
@@ -665,54 +759,209 @@ async function monitorRestingLays(generation: number): Promise<void> {
   if (!running || generation !== runGeneration) return;
 
   for (const trade of open) {
-    if (!trade.layPrice) continue;
     const book = books.get(trade.marketId);
-    if (!book) continue;
+    if (!book || book.status !== "OPEN") continue;
 
-    const runner = book.runners?.find((item) => item.selectionId === trade.selectionId);
+    const runner = book.runners?.find(
+      (item) => item.selectionId === trade.selectionId,
+    );
     if (!runner) continue;
 
-    const layPrice = num(trade.layPrice);
-    const tradedSinceEntry =
-      tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], layPrice) -
-      num(trade.layTradedVolumeBaseline);
-    const immediateMatchedStake = num(
-      trade.layImmediateMatchedStake,
+    const stake = num(trade.stake);
+    const entryOdds = num(trade.entryOdds);
+    const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
+    const initialImmediateStake = num(trade.layImmediateMatchedStake);
+    const compatibleAggregate = compatibleLayAggregate(
+      trade.status, stake, num(trade.layPrice),
+      num(trade.layMatchedStake), num(trade.layMatchedPriceStake),
+      initialImmediateStake, num(trade.layImmediatePriceStake),
     );
-    const remainingStake = Math.max(
-      0,
-      num(trade.stake) - immediateMatchedStake,
-    );
+    let matchedStake = compatibleAggregate.matchedStake;
+    let matchedPriceStake = compatibleAggregate.priceStake;
+    const matchedBeforeTargetEvidence = matchedStake;
+    const fallbackPreviouslyAccepted =
+      trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
 
-    // Exact-price cumulative volume remains available after a transient
-    // crossing or suspension. Lower-price trades are deliberately excluded:
-    // they can be unrelated aggressive lay orders and do not prove our queued
-    // lay at this target was consumed.
+    // Attribute only volume at our exact target after clearing the captured
+    // queue. Comparing cumulative target evidence with the durable aggregate
+    // prevents the one-second monitor from counting the same fill twice.
+    const restingTargetStake = fallbackPreviouslyAccepted
+      ? 0
+      : Math.min(
+          stake - initialImmediateStake,
+          Math.max(
+            0,
+            tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice) -
+              num(trade.layTradedVolumeBaseline) -
+              num(trade.layQueueAhead),
+          ),
+        );
+    const evidencedTargetStake = initialImmediateStake + restingTargetStake;
+    if (evidencedTargetStake > matchedStake + 0.005) {
+      const targetFill = addEqualLayFill(
+        stake,
+        matchedStake,
+        matchedPriceStake,
+        evidencedTargetStake - matchedStake,
+        targetPrice,
+      );
+      matchedStake = targetFill.matchedStake;
+      matchedPriceStake = targetFill.priceStake;
+      await slog(
+        "info",
+        `TARGET LAY EVIDENCE ${trade.eventName} — newly proved £${(matchedStake - matchedBeforeTargetEvidence).toFixed(2)} ` +
+          `@ ${targetPrice.toFixed(2)}; aggregate £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} ` +
+          `(traded £${tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice).toFixed(2)}, ` +
+          `baseline £${num(trade.layTradedVolumeBaseline).toFixed(2)}, queue £${num(trade.layQueueAhead).toFixed(2)})`,
+        {
+          tradeId: trade.id,
+          targetPrice,
+          evidencedTargetStake,
+          durableMatchedBefore: matchedBeforeTargetEvidence,
+          durableMatchedAfter: matchedStake,
+          durablePriceStakeAfter: matchedPriceStake,
+        },
+      );
+    }
+
+    const now = new Date();
+    const dueAt =
+      trade.fallbackNextCheckAt?.getTime() ??
+      trade.placedAt.getTime() + config.fallbackIntervalSeconds * 1_000;
+    let fallbackAttemptCount = trade.fallbackAttemptCount;
+    let fallbackAttemptedAt = trade.fallbackAttemptedAt;
+    let fallbackPrice = trade.fallbackPrice;
+    let fallbackProjectedPnl = trade.fallbackProjectedPnl;
+    let fallbackDecision = trade.fallbackDecision;
+    let fallbackNextCheckAt = trade.fallbackNextCheckAt;
+
     if (
-      !restingLayHasEnoughTradedVolume(
-        tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], layPrice),
-        num(trade.layTradedVolumeBaseline),
-        num(trade.layQueueAhead),
-        remainingStake,
+      remainingEqualLayStake(stake, matchedStake) > 0 &&
+      now.getTime() >= dueAt &&
+      fallbackDelayElapsed(
+        trade.placedAt.getTime(),
+        now.getTime(),
+        config.fallbackIntervalSeconds * 1_000,
       )
     ) {
-      continue;
-    }
-    if (!running || generation !== runGeneration) return;
+      fallbackAttemptCount += 1;
+      fallbackAttemptedAt = now;
+      fallbackNextCheckAt = new Date(
+        now.getTime() + Math.max(0, config.fallbackIntervalSeconds) * 1_000,
+      );
+      const bestLay = [...(runner.ex?.availableToLay ?? [])]
+        .filter((level) => level.size > 0)
+        .sort((a, b) => a.price - b.price)[0];
+      const remaining = remainingEqualLayStake(stake, matchedStake);
+      const maximumLoss = (stake * num(config.maxFallbackLossPct)) / 100;
+      const maximumLayOdds =
+        (stake * entryOdds - matchedPriceStake + maximumLoss) / remaining;
 
-    const stake = num(trade.stake);
-    const matchedPriceStake =
-      num(trade.layImmediatePriceStake) +
-      remainingStake * layPrice;
-    const averageLayPrice = matchedPriceStake / stake;
+      if (!bestLay) {
+        fallbackDecision = fallbackPreviouslyAccepted
+          ? "ACCEPTED_PARTIAL_THEN_DEFERRED_NO_AVAILABLE_LAY"
+          : "DEFERRED_NO_AVAILABLE_LAY";
+        fallbackPrice = null;
+        fallbackProjectedPnl = null;
+      } else {
+        fallbackPrice = bestLay.price.toFixed(2);
+        const projectedFullPriceStake =
+          matchedPriceStake + remaining * bestLay.price;
+        fallbackProjectedPnl = equalStakeCombinedProfit(
+          stake,
+          entryOdds,
+          true,
+          stake,
+          projectedFullPriceStake / stake,
+        ).toFixed(2);
+
+        if (!isFallbackPriceWithinCap(bestLay.price, maximumLayOdds)) {
+          fallbackDecision = fallbackPreviouslyAccepted
+            ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_LOSS_CAP"
+            : "DEFERRED_PRICE_ABOVE_LOSS_CAP";
+        } else {
+          const fallbackFill = addEqualLayFill(
+            stake,
+            matchedStake,
+            matchedPriceStake,
+            Math.min(remaining, bestLay.size),
+            bestLay.price,
+          );
+          const accepted = fallbackFill.matchedStake - matchedStake;
+          matchedStake = fallbackFill.matchedStake;
+          matchedPriceStake = fallbackFill.priceStake;
+          fallbackProjectedPnl = equalStakeCombinedProfit(
+            stake,
+            entryOdds,
+            true,
+            matchedStake,
+            matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice,
+          ).toFixed(2);
+          fallbackDecision =
+            matchedStake + 0.01 >= stake
+              ? "ACCEPTED_FULLY_HEDGED"
+              : "ACCEPTED_PARTIAL_LIQUIDITY";
+          await slog(
+            "info",
+            `FALLBACK ${trade.eventName} — accepted £${accepted.toFixed(2)} of £${remaining.toFixed(2)} ` +
+              `available lay @ ${bestLay.price.toFixed(2)} (visible £${bestLay.size.toFixed(2)}; ` +
+              `cap ${maximumLayOdds.toFixed(2)}; projected P&L £${num(fallbackProjectedPnl).toFixed(2)})`,
+            {
+              tradeId: trade.id,
+              attempt: fallbackAttemptCount,
+              bestAvailableLay: bestLay.price,
+              availableLiquidity: bestLay.size,
+              remainingBeforeFill: remaining,
+              acceptedStake: accepted,
+              maximumLayOdds,
+              maxFallbackLossPct: num(config.maxFallbackLossPct),
+            },
+          );
+        }
+      }
+
+      if (fallbackDecision?.includes("DEFERRED")) {
+        await slog(
+          "info",
+          `FALLBACK DEFERRED ${trade.eventName} — ${fallbackDecision}; ` +
+            `best lay ${bestLay ? `@ ${bestLay.price.toFixed(2)} (£${bestLay.size.toFixed(2)})` : "unavailable"}, ` +
+            `remaining £${remaining.toFixed(2)}, cap ${maximumLayOdds.toFixed(2)}, next check ${fallbackNextCheckAt.toISOString()}`,
+          {
+            tradeId: trade.id,
+            attempt: fallbackAttemptCount,
+            decision: fallbackDecision,
+            bestAvailableLay: bestLay?.price ?? null,
+            availableLiquidity: bestLay?.size ?? 0,
+            remainingStake: remaining,
+            maximumLayOdds,
+            projectedPnl: fallbackProjectedPnl,
+          },
+        );
+      }
+    }
+
+    const fullyHedged = matchedStake + 0.01 >= stake;
+    const averageLayPrice =
+      matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice;
+    if (!running || generation !== runGeneration) return;
     const updated = await db
       .update(soccerTradesTable)
       .set({
-        status: "HEDGED",
-        layMatchedAt: new Date(),
+        status: fullyHedged ? "HEDGED" : "OPEN",
+        layMatchedStake: matchedStake.toFixed(2),
+        layMatchedPriceStake: matchedPriceStake.toFixed(2),
+        layMatchedAt: fullyHedged ? now : null,
         layPrice: averageLayPrice.toFixed(2),
-        exitOdds: averageLayPrice.toFixed(2),
-        exitReason: `Resting lay fully matched @ average ${averageLayPrice.toFixed(2)} — locked: win = target %, lose = breakeven`,
+        exitOdds: fullyHedged ? averageLayPrice.toFixed(2) : null,
+        exitReason: fullyHedged
+          ? `Equal-stake lay fully matched @ weighted average ${averageLayPrice.toFixed(2)}`
+          : `Partial lay evidence: £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} matched`,
+        fallbackNextCheckAt: fullyHedged ? null : fallbackNextCheckAt,
+        fallbackAttemptCount,
+        fallbackAttemptedAt,
+        fallbackPrice,
+        fallbackProjectedPnl,
+        fallbackDecision,
       })
       .where(
         and(
@@ -722,14 +971,14 @@ async function monitorRestingLays(generation: number): Promise<void> {
       )
       .returning({ id: soccerTradesTable.id });
 
-    if (updated.length === 0) continue;
-    const entryOdds = num(trade.entryOdds);
-    await slog(
-      "info",
-      `LAY MATCHED ${trade.eventName} — ${trade.selectionName} layed £${stake} @ average ${averageLayPrice.toFixed(2)} (backed @ ${entryOdds}); ` +
-        `£${tradedSinceEntry.toFixed(2)} traded at target after £${num(trade.layQueueAhead).toFixed(2)} queue; ` +
-        `outcome locked to +£${layLockWinProfit(stake, entryOdds, averageLayPrice).toFixed(2)} or £0`,
-    );
+    if (updated.length > 0 && fullyHedged) {
+      await slog(
+        "info",
+        `LAY MATCHED ${trade.eventName} — aggregate £${matchedStake.toFixed(2)} @ weighted average ${averageLayPrice.toFixed(2)} ` +
+          `(target/fallback price-stake £${matchedPriceStake.toFixed(2)}); ` +
+          `no-more-goals P&L +£${layLockWinProfit(stake, entryOdds, averageLayPrice).toFixed(2)}, line-broken P&L £0.00`,
+      );
+    }
   }
 }
 
@@ -758,10 +1007,12 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
     .from(soccerTradesTable)
-    .where(and(
-      eq(soccerTradesTable.status, "OPEN"),
-      eq(soccerTradesTable.strategy, "LAY_LOCK"),
-    ));
+    .where(
+      and(
+        eq(soccerTradesTable.status, "OPEN"),
+        eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      ),
+    );
   if (open.length === 0) return;
 
   const books = await getBooks(open.map((t) => t.marketId));
@@ -770,7 +1021,9 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
   // event name). Secondary: re-read the CORRECT_SCORE market and compare the
   // inferred total goals with entryTotalGoals. Last resort: price spike.
   const currentTotals = new Map<string, number>(); // eventId -> total goals
-  const openEventIds = [...new Set(open.map((t) => t.eventId).filter((x): x is string => !!x))];
+  const openEventIds = [
+    ...new Set(open.map((t) => t.eventId).filter((x): x is string => !!x)),
+  ];
   try {
     const feedGames = await fetchLiveScores();
     for (const t of open) {
@@ -786,7 +1039,10 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
       const csMarkets = await apiBetfairRequest<CatalogueMarket[]>(
         "SportsAPING/v1.0/listMarketCatalogue",
         {
-          filter: { eventIds: openEventIds, marketTypeCodes: ["CORRECT_SCORE"] },
+          filter: {
+            eventIds: openEventIds,
+            marketTypeCodes: ["CORRECT_SCORE"],
+          },
           marketProjection: ["EVENT", "RUNNER_DESCRIPTION"],
           maxResults: openEventIds.length * 2,
         },
@@ -814,14 +1070,18 @@ async function manageOpenTrades(config: SoccerConfig): Promise<void> {
     if (book.status === "CLOSED") continue; // settlement pass handles it
 
     const entryOdds = num(trade.entryOdds);
-    const runner = book.runners?.find((r) => r.selectionId === trade.selectionId);
+    const runner = book.runners?.find(
+      (r) => r.selectionId === trade.selectionId,
+    );
     const layOffer = runner?.ex?.availableToLay?.[0];
 
     // Goal-after-entry: primary signal is the refreshed correct-score total;
     // fallback is a violent price spike on our Under selection.
     let goalAfterEntry = trade.goalAfterEntry;
     if (!goalAfterEntry) {
-      const currentTotal = trade.eventId ? currentTotals.get(trade.eventId) : undefined;
+      const currentTotal = trade.eventId
+        ? currentTotals.get(trade.eventId)
+        : undefined;
       const scoreSaysGoal =
         currentTotal !== undefined &&
         trade.entryTotalGoals !== null &&
@@ -855,23 +1115,33 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
   const open = await db
     .select()
     .from(soccerTradesTable)
-    .where(and(
-      inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
-      eq(soccerTradesTable.strategy, "LAY_LOCK"),
-    ));
+    .where(
+      and(
+        inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+        eq(soccerTradesTable.strategy, "LAY_LOCK"),
+      ),
+    );
   if (open.length === 0) return;
 
   interface SettleBook {
     marketId: string;
     status: string;
-    runners?: Array<{ selectionId: number; status: string }>;
+    runners?: Array<{
+      selectionId: number;
+      status: string;
+      ex?: { tradedVolume?: Array<{ price: number; size: number }> };
+    }>;
   }
   const ids = open.map((t) => t.marketId);
   let books: SettleBook[] = [];
   try {
-    books = await apiBetfairRequest<SettleBook[]>("SportsAPING/v1.0/listMarketBook", {
-      marketIds: ids,
-    });
+    books = await apiBetfairRequest<SettleBook[]>(
+      "SportsAPING/v1.0/listMarketBook",
+      {
+        marketIds: ids,
+        priceProjection: { priceData: ["EX_TRADED"] },
+      },
+    );
   } catch {
     return;
   }
@@ -880,102 +1150,14 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
   for (const trade of open) {
     const book = byId.get(trade.marketId);
     if (!book || book.status !== "CLOSED" || !book.runners) continue;
-    const runner = book.runners.find((r) => r.selectionId === trade.selectionId);
+    const runner = book.runners.find(
+      (r) => r.selectionId === trade.selectionId,
+    );
     if (!runner) continue;
 
     const stake = num(trade.stake);
     const entryOdds = num(trade.entryOdds);
-
-    if (trade.status === "HEDGED") {
-      // Lay was matched: outcome is locked either way.
-      const layPrice = num(trade.layPrice);
-      if (runner.status === "WINNER") {
-        const net = layLockWinProfit(stake, entryOdds, layPrice);
-        await db
-          .update(soccerTradesTable)
-          .set({
-            status: "SETTLED_WON",
-            exitReason: `Held to full time with lay locked @ ${layPrice.toFixed(2)}`,
-            profit: net.toFixed(2),
-            closedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(soccerTradesTable.id, trade.id),
-              eq(soccerTradesTable.status, "HEDGED"),
-            ),
-          );
-        await slog("info", `SETTLED WON (LAY_LOCK) ${trade.eventName} +£${net.toFixed(2)}`);
-      } else if (runner.status === "LOSER") {
-        await db
-          .update(soccerTradesTable)
-          .set({
-            status: "SETTLED_BREAK_EVEN",
-            exitReason: `Line broken — lay hedge @ ${layPrice.toFixed(2)} returned the stake (breakeven)`,
-            profit: "0.00",
-            closedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(soccerTradesTable.id, trade.id),
-              eq(soccerTradesTable.status, "HEDGED"),
-            ),
-          );
-        await slog("info", `SETTLED BREAKEVEN (LAY_LOCK) ${trade.eventName} £0.00 — hedge did its job`);
-      } else if (runner.status === "REMOVED") {
-        await db
-          .update(soccerTradesTable)
-          .set({ status: "VOID", exitReason: "Market voided/removed", profit: "0.00", closedAt: new Date() })
-          .where(
-            and(
-              eq(soccerTradesTable.id, trade.id),
-              eq(soccerTradesTable.status, "HEDGED"),
-            ),
-          );
-      }
-      continue;
-    }
-
-    if (runner.status === "WINNER") {
-      const net = stake * (entryOdds - 1) * (1 - COMMISSION);
-      const settled = await db
-        .update(soccerTradesTable)
-        .set({
-          status: "SETTLED_WON",
-          exitReason: "Held to full time — no goals broke the line",
-          profit: net.toFixed(2),
-          closedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(soccerTradesTable.id, trade.id),
-            eq(soccerTradesTable.status, "OPEN"),
-          ),
-        )
-        .returning({ id: soccerTradesTable.id });
-      if (settled.length > 0) {
-        await slog("info", `SETTLED WON ${trade.eventName} ${trade.selectionName} +£${net.toFixed(2)}`);
-      }
-    } else if (runner.status === "LOSER") {
-      const settled = await db
-        .update(soccerTradesTable)
-        .set({
-          status: "SETTLED_LOST",
-          exitReason: "Line broken — goals exceeded the backed under line",
-          profit: (-stake).toFixed(2),
-          closedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(soccerTradesTable.id, trade.id),
-            eq(soccerTradesTable.status, "OPEN"),
-          ),
-        )
-        .returning({ id: soccerTradesTable.id });
-      if (settled.length > 0) {
-        await slog("warn", `SETTLED LOST ${trade.eventName} ${trade.selectionName} -£${stake.toFixed(2)}`);
-      }
-    } else if (runner.status === "REMOVED") {
+    if (runner.status === "REMOVED") {
       await db
         .update(soccerTradesTable)
         .set({
@@ -987,9 +1169,96 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
         .where(
           and(
             eq(soccerTradesTable.id, trade.id),
-            eq(soccerTradesTable.status, "OPEN"),
+            inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
           ),
         );
+      continue;
+    }
+    if (runner.status !== "WINNER" && runner.status !== "LOSER") continue;
+
+    // Reconcile final exact-target volume in case closure happened between
+    // monitor ticks, then settle from the durable aggregate (which already
+    // includes every accepted fallback fill).
+    const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
+    const immediateStake = num(trade.layImmediateMatchedStake);
+    const fallbackAccepted =
+      trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
+    const finalRestingStake = fallbackAccepted
+      ? 0
+      : Math.min(
+          stake - immediateStake,
+          Math.max(
+            0,
+            tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice) -
+              num(trade.layTradedVolumeBaseline) -
+              num(trade.layQueueAhead),
+          ),
+        );
+    const compatibleAggregate = compatibleLayAggregate(
+      trade.status, stake, num(trade.layPrice),
+      num(trade.layMatchedStake), num(trade.layMatchedPriceStake),
+      immediateStake, num(trade.layImmediatePriceStake),
+    );
+    let matchedStake = compatibleAggregate.matchedStake;
+    let matchedPriceStake = compatibleAggregate.priceStake;
+    const evidencedTargetStake = immediateStake + finalRestingStake;
+    if (evidencedTargetStake > matchedStake + 0.005) {
+      const reconciled = addEqualLayFill(
+        stake,
+        matchedStake,
+        matchedPriceStake,
+        evidencedTargetStake - matchedStake,
+        targetPrice,
+      );
+      matchedStake = reconciled.matchedStake;
+      matchedPriceStake = reconciled.priceStake;
+    }
+    const averageLayPrice =
+      matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice;
+    const underWon = runner.status === "WINNER";
+    const net = equalStakeCombinedProfit(
+      stake,
+      entryOdds,
+      underWon,
+      matchedStake,
+      averageLayPrice,
+    );
+    const cents = Math.round(net * 100);
+    const settledStatus =
+      cents > 0
+        ? "SETTLED_WON"
+        : cents < 0
+          ? "SETTLED_LOST"
+          : "SETTLED_BREAK_EVEN";
+    const settled = await db
+      .update(soccerTradesTable)
+      .set({
+        status: settledStatus,
+        layMatchedStake: matchedStake.toFixed(2),
+        layMatchedPriceStake: matchedPriceStake.toFixed(2),
+        layPrice:
+          matchedStake > 0 ? averageLayPrice.toFixed(2) : trade.layPrice,
+        profit: net.toFixed(2),
+        closedAt: new Date(),
+        goalAfterEntry: !underWon,
+        exitReason:
+          `${underWon ? "Under won" : "Line broken"} — settled back plus ` +
+          `£${matchedStake.toFixed(2)} of £${stake.toFixed(2)} aggregate target/fallback lay fills ` +
+          `@ ${matchedStake > 0 ? averageLayPrice.toFixed(2) : "n/a"}`,
+      })
+      .where(
+        and(
+          eq(soccerTradesTable.id, trade.id),
+          inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+        ),
+      )
+      .returning({ id: soccerTradesTable.id });
+    if (settled.length > 0) {
+      await slog(
+        net < 0 ? "warn" : "info",
+        `SETTLED ${settledStatus} ${trade.eventName} ${net >= 0 ? "+" : ""}£${net.toFixed(2)} ` +
+          `(lay £${matchedStake.toFixed(2)} @ weighted ${matchedStake > 0 ? averageLayPrice.toFixed(2) : "n/a"})`,
+      );
     }
   }
 }
@@ -1082,11 +1351,18 @@ async function layMonitorLoop(generation: number): Promise<void> {
 
 export async function startSoccerBot(): Promise<void> {
   if (running) return;
+  const config = await getSoccerConfig();
   running = true;
   const generation = ++runGeneration;
   startedAt = new Date();
-  await db.update(soccerConfigTable).set({ isRunning: true });
-  await slog("info", "Soccer in-play bot STARTED (paper mode until proven)");
+  await db
+    .update(soccerConfigTable)
+    .set({ isRunning: true, paperMode: true })
+    .where(eq(soccerConfigTable.id, config.id));
+  await slog(
+    "info",
+    "Soccer in-play bot STARTED (paper only; no exchange orders)",
+  );
   void loop(generation);
   void layMonitorLoop(generation);
 }

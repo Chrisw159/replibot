@@ -19,16 +19,18 @@ import {
 import { getSession, loginWithEnvCredentials, apiBetfairRequest } from "./betfair";
 import { logger } from "./logger";
 import {
-  COMMISSION,
+  addEqualLayFill,
+  compatibleLayAggregate,
+  entryStakeForOdds,
+  equalStakeCombinedProfit,
   estimateMinute,
+  fixedOffsetLayTarget,
   firstHalfGoalLineFromMarketType,
   inferScore,
   immediateLayFill,
-  layLockPrice,
-  layLockSettlementProfit,
-  layLockWinProfit,
+  isFallbackLayEligible,
   isEligibleFirstHalfEntry,
-  restingLayHasEnoughTradedVolume,
+  remainingEqualLayStake,
   tradedVolumeAtPrice,
 } from "./soccerHelpers";
 import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
@@ -36,6 +38,7 @@ import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 const SOCCER_EVENT_TYPE = "1";
 const STRATEGY = "FIRST_HALF_LAY_LOCK";
 const MONITOR_MS = 1_000;
+const PRICE_EPSILON = 0.0001;
 
 interface CatalogueMarket {
   marketId: string;
@@ -160,14 +163,16 @@ async function restingLayEvidence(marketId: string, selectionId: number, layPric
 }
 
 function openSnapshot(trade: SoccerTrade): FirstHalfCandidateSnapshot {
+  const target = num(trade.targetLayPrice ?? trade.layPrice);
+  const matched = num(trade.layMatchedStake);
   return {
     eventName: trade.eventName, competition: trade.competition, marketId: trade.marketId,
     score: trade.entryScore, goalGap: 0, minute: trade.entryMinute,
     tightLine: num(trade.line), tightOdds: num(trade.entryOdds),
     bufferLine: null, bufferOdds: null, liquidity: null, verdict: "OPEN",
     reason: trade.status === "HEDGED"
-      ? `Lay matched @ ${num(trade.layPrice).toFixed(2)} — waiting for first-half settlement`
-      : `BACK ${trade.selectionName} @ ${num(trade.entryOdds).toFixed(2)} — resting lay @ ${num(trade.layPrice).toFixed(2)}`,
+      ? `Lay matched £${matched.toFixed(2)} @ ${num(trade.layPrice).toFixed(2)} — waiting for first-half settlement`
+      : `BACK ${trade.selectionName} @ ${num(trade.entryOdds).toFixed(2)} — £${matched.toFixed(2)} lay matched; target @ ${target.toFixed(2)}`,
   };
 }
 
@@ -258,8 +263,19 @@ async function scan(config: FirstHalfSoccerConfig, currentGeneration: number) {
       snapshots.push({ ...base, marketId: market.marketId, tightOdds: offer.price, liquidity, verdict: "SKIPPED", reason: `Liquidity £${Math.round(liquidity)} below £${Math.round(num(config.minLiquidity))}` });
       continue;
     }
-    const stake = num(config.stake);
-    const layPrice = layLockPrice(offer.price, num(config.layTargetPct));
+    const stake = entryStakeForOdds(offer.price);
+    if (offer.size + 0.01 < stake) {
+      snapshots.push({
+        ...base,
+        marketId: market.marketId,
+        tightOdds: offer.price,
+        liquidity,
+        verdict: "WATCHING",
+        reason: `Only £${offer.size.toFixed(2)} available to back; £${stake.toFixed(2)} required for the odds-based stake`,
+      });
+      continue;
+    }
+    const layPrice = fixedOffsetLayTarget(offer.price, num(config.layOffset));
     let evidence: Awaited<ReturnType<typeof restingLayEvidence>>;
     try { evidence = await restingLayEvidence(market.marketId, under.selectionId, layPrice, stake); }
     catch (error) {
@@ -267,7 +283,13 @@ async function scan(config: FirstHalfSoccerConfig, currentGeneration: number) {
       continue;
     }
     const fullyMatched = evidence.immediate.matchedStake + 0.01 >= stake;
-    const average = fullyMatched ? evidence.immediate.priceStake / stake : layPrice;
+    const average = evidence.immediate.matchedStake > 0
+      ? evidence.immediate.priceStake / evidence.immediate.matchedStake
+      : layPrice;
+    const enteredAt = new Date();
+    const fallbackNextCheckAt = new Date(
+      enteredAt.getTime() + config.fallbackIntervalSeconds * 1_000,
+    );
     // Network requests above can straddle Stop or the half-time suspension.
     // Recheck both lifecycle and the live first-half market immediately before
     // recording an entry.
@@ -283,12 +305,21 @@ async function scan(config: FirstHalfSoccerConfig, currentGeneration: number) {
       selectionId: under.selectionId, selectionName: under.runnerName, line: line.toFixed(1),
       bufferLine: false, entryScore: scoreText, entryTotalGoals: total, entryMinute: minute,
       entryOdds: offer.price.toFixed(2), stake: stake.toFixed(2), strategy: STRATEGY,
-      layPrice: average.toFixed(2), layTradedVolumeBaseline: evidence.baseline.toFixed(2),
+      targetLayPrice: layPrice.toFixed(2), layPrice: average.toFixed(2),
+      layTradedVolumeBaseline: evidence.baseline.toFixed(2),
       layQueueAhead: evidence.queueAhead.toFixed(2), layImmediateMatchedStake: evidence.immediate.matchedStake.toFixed(2),
-      layImmediatePriceStake: evidence.immediate.priceStake.toFixed(2), layMatchedAt: fullyMatched ? new Date() : null,
+      layImmediatePriceStake: evidence.immediate.priceStake.toFixed(2),
+      layMatchedStake: evidence.immediate.matchedStake.toFixed(2),
+      layMatchedPriceStake: evidence.immediate.priceStake.toFixed(2),
+      layMatchedAt: fullyMatched ? enteredAt : null,
+      fallbackNextCheckAt: fullyMatched ? null : fallbackNextCheckAt,
+      fallbackAttemptCount: 0,
+      fallbackDecision: fullyMatched
+        ? "NOT_REQUIRED_TARGET_FILLED"
+        : "WAITING_FOR_FALLBACK_INTERVAL",
       status: fullyMatched ? "HEDGED" : "OPEN", exitOdds: fullyMatched ? average.toFixed(2) : null,
       exitReason: fullyMatched ? `First-half lay immediately matched @ ${average.toFixed(2)} — £0 if next goal, target return if no goal` : null,
-      paper: true,
+      paper: true, placedAt: enteredAt,
     }).returning({ id: soccerTradesTable.id });
     if (!running || currentGeneration !== generation) {
       if (inserted) {
@@ -299,33 +330,248 @@ async function scan(config: FirstHalfSoccerConfig, currentGeneration: number) {
     }
     slots--; openEvents.add(eventId);
     snapshots.push({ ...base, marketId: market.marketId, tightOdds: offer.price, liquidity, verdict: "ENTERED", reason: `BACK ${under.runnerName} @ ${offer.price.toFixed(2)}; same-stake lay @ ${layPrice.toFixed(2)}` });
-    await log("info", `ENTERED ${eventName} ${scoreText} ${minute}' — BACK ${under.runnerName} @ ${offer.price.toFixed(2)} £${stake}, resting lay @ ${layPrice.toFixed(2)}`);
+    await log("info", `ENTERED ${eventName} ${scoreText} ${minute}' — BACK ${under.runnerName} @ ${offer.price.toFixed(2)} £${stake}, resting lay @ ${layPrice.toFixed(2)}`, {
+      paper: true,
+      targetLayPrice: layPrice,
+      immediateMatchedStake: evidence.immediate.matchedStake,
+      immediatePriceStake: evidence.immediate.priceStake,
+      fallbackNextCheckAt: fullyMatched ? null : fallbackNextCheckAt.toISOString(),
+    });
   }
   candidates = snapshots;
 }
 
+function targetMatchedStake(trade: SoccerTrade, runner: BookRunner): number {
+  const stake = num(trade.stake);
+  const immediate = Math.min(stake, num(trade.layImmediateMatchedStake));
+  const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
+  const postEntryVolume = tradedVolumeAtPrice(
+    runner.ex?.tradedVolume ?? [],
+    targetPrice,
+  ) - num(trade.layTradedVolumeBaseline);
+  const resting = Math.max(
+    0,
+    Math.min(stake - immediate, postEntryVolume - num(trade.layQueueAhead)),
+  );
+  return immediate + resting;
+}
+
+function fallbackMaximumPrice(
+  stake: number,
+  entryOdds: number,
+  matchedStake: number,
+  matchedPriceStake: number,
+  maxLossPct: number,
+): number {
+  const remaining = remainingEqualLayStake(stake, matchedStake);
+  if (remaining <= 0) return 1.01;
+  const maximumLoss = stake * Math.max(0, maxLossPct) / 100;
+  const existingLiability = matchedPriceStake - matchedStake;
+  return 1 + (
+    stake * (entryOdds - 1) + maximumLoss - existingLiability
+  ) / remaining;
+}
+
 async function monitorLays(currentGeneration: number) {
   if (currentGeneration !== generation || !getSession()) return;
+  const config = await getFirstHalfSoccerConfig();
   const open = await db.select().from(soccerTradesTable).where(and(
     eq(soccerTradesTable.strategy, STRATEGY), eq(soccerTradesTable.status, "OPEN"),
   ));
   if (!open.length) return;
-  const marketBooks = await books(open.map((trade) => trade.marketId), true);
+  const marketBooks = await books(open.map((trade) => trade.marketId), false, true);
   for (const trade of open) {
-    if (currentGeneration !== generation || !trade.layPrice) return;
-    const runner = marketBooks.get(trade.marketId)?.runners?.find((entry) => entry.selectionId === trade.selectionId);
+    if (currentGeneration !== generation) return;
+    const book = marketBooks.get(trade.marketId);
+    const runner = book?.runners?.find((entry) => entry.selectionId === trade.selectionId);
     if (!runner) continue;
     const stake = num(trade.stake);
-    const immediate = num(trade.layImmediateMatchedStake);
-    const remaining = Math.max(0, stake - immediate);
-    const price = num(trade.layPrice);
-    if (!restingLayHasEnoughTradedVolume(tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], price), num(trade.layTradedVolumeBaseline), num(trade.layQueueAhead), remaining)) continue;
-    const average = (num(trade.layImmediatePriceStake) + remaining * price) / stake;
+    const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
+    const compatibleAggregate = compatibleLayAggregate(
+      trade.status, stake, num(trade.layPrice),
+      num(trade.layMatchedStake), num(trade.layMatchedPriceStake),
+      num(trade.layImmediateMatchedStake), num(trade.layImmediatePriceStake),
+    );
+    let matchedStake = compatibleAggregate.matchedStake;
+    let priceStake = compatibleAggregate.priceStake;
+    const fallbackAccepted = trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
+
+    // Once a fallback is accepted, the simulated target is cancelled. Before
+    // then, persist only the newly evidenced target volume so repeated monitor
+    // passes cannot count the same exchange volume twice.
+    if (!fallbackAccepted) {
+      const evidencedTargetStake = targetMatchedStake(trade, runner);
+      const targetFill = Math.max(
+        0,
+        evidencedTargetStake - matchedStake,
+      );
+      if (targetFill > PRICE_EPSILON) {
+        const aggregate = addEqualLayFill(
+          stake,
+          matchedStake,
+          priceStake,
+          targetFill,
+          targetPrice,
+        );
+        matchedStake = aggregate.matchedStake;
+        priceStake = aggregate.priceStake;
+        await db.update(soccerTradesTable).set({
+          layMatchedStake: matchedStake.toFixed(2),
+          layMatchedPriceStake: priceStake.toFixed(2),
+          layPrice: aggregate.averageOdds.toFixed(2),
+        }).where(and(
+          eq(soccerTradesTable.id, trade.id),
+          eq(soccerTradesTable.status, "OPEN"),
+        ));
+        await log("info", `TARGET PARTIAL ${trade.eventName} — £${targetFill.toFixed(2)} @ ${targetPrice.toFixed(2)}`, {
+          targetLayPrice: targetPrice,
+          aggregateMatchedStake: matchedStake,
+          remainingStake: remainingEqualLayStake(stake, matchedStake),
+        });
+      }
+    }
+
+    let remaining = remainingEqualLayStake(stake, matchedStake);
+    if (remaining <= PRICE_EPSILON) {
+      const average = priceStake / matchedStake;
+      const updated = await db.update(soccerTradesTable).set({
+        status: "HEDGED", layMatchedAt: new Date(), layPrice: average.toFixed(2),
+        exitOdds: average.toFixed(2), fallbackNextCheckAt: null,
+        exitReason: `First-half target lay fully matched @ ${average.toFixed(2)} average`,
+      }).where(and(
+        eq(soccerTradesTable.id, trade.id),
+        eq(soccerTradesTable.status, "OPEN"),
+      )).returning({ id: soccerTradesTable.id });
+      if (updated.length) {
+        const projectedPnl = equalStakeCombinedProfit(
+          stake, num(trade.entryOdds), true, matchedStake, average,
+        );
+        await log("info", `TARGET MATCHED ${trade.eventName} @ ${average.toFixed(2)}`, {
+          matchedStake,
+          matchedPriceStake: priceStake,
+          projectedPnl,
+        });
+      }
+      continue;
+    }
+
+    const now = new Date();
+    const nextCheckAt = trade.fallbackNextCheckAt ??
+      new Date(trade.placedAt.getTime() + config.fallbackIntervalSeconds * 1_000);
+    if (now < nextCheckAt || book?.status !== "OPEN") continue;
+
+    const bestLay = [...(runner.ex?.availableToLay ?? [])]
+      .filter((level) => level.size > 0)
+      .sort((a, b) => a.price - b.price)[0];
+    const attemptCount = (trade.fallbackAttemptCount ?? 0) + 1;
+    const elapsedSeconds = Math.max(
+      0,
+      Math.round((now.getTime() - trade.placedAt.getTime()) / 1_000),
+    );
+    const followingCheck = new Date(
+      now.getTime() + config.fallbackIntervalSeconds * 1_000,
+    );
+    if (!bestLay) {
+      const decision = fallbackAccepted
+        ? "ACCEPTED_PARTIAL_THEN_DEFERRED_NO_LIQUIDITY"
+        : "DEFERRED_NO_LIQUIDITY";
+      await db.update(soccerTradesTable).set({
+        fallbackAttemptedAt: now, fallbackAttemptCount: attemptCount,
+        fallbackNextCheckAt: followingCheck, fallbackPrice: null,
+        fallbackProjectedPnl: null, fallbackDecision: decision,
+      }).where(and(
+        eq(soccerTradesTable.id, trade.id),
+        eq(soccerTradesTable.status, "OPEN"),
+      ));
+      await log("warn", `FALLBACK DEFERRED ${trade.eventName} — no executable lay liquidity`, {
+        attemptCount, elapsedSeconds, remainingStake: remaining,
+        nextCheckAt: followingCheck.toISOString(),
+      });
+      continue;
+    }
+
+    const fillStake = Math.min(remaining, bestLay.size);
+    const proposed = addEqualLayFill(
+      stake, matchedStake, priceStake, fillStake, bestLay.price,
+    );
+    const projectedFullPriceStake = priceStake + remaining * bestLay.price;
+    const projectedPnl = equalStakeCombinedProfit(
+      stake,
+      num(trade.entryOdds),
+      true,
+      stake,
+      projectedFullPriceStake / stake,
+    );
+    const maximumPrice = fallbackMaximumPrice(
+      stake,
+      num(trade.entryOdds),
+      matchedStake,
+      priceStake,
+      num(config.maxFallbackLossPct),
+    );
+    const eligible = isFallbackLayEligible(
+      trade.placedAt.getTime(),
+      now.getTime(),
+      config.fallbackIntervalSeconds * 1_000,
+      stake,
+      matchedStake,
+      bestLay.price,
+      maximumPrice,
+    );
+    if (!eligible) {
+      const decision = fallbackAccepted
+        ? "ACCEPTED_PARTIAL_THEN_DEFERRED_LOSS_CAP"
+        : "DEFERRED_LOSS_CAP";
+      await db.update(soccerTradesTable).set({
+        fallbackAttemptedAt: now, fallbackAttemptCount: attemptCount,
+        fallbackNextCheckAt: followingCheck,
+        fallbackPrice: bestLay.price.toFixed(2),
+        fallbackProjectedPnl: projectedPnl.toFixed(2),
+        fallbackDecision: decision,
+      }).where(and(
+        eq(soccerTradesTable.id, trade.id),
+        eq(soccerTradesTable.status, "OPEN"),
+      ));
+      await log("warn", `FALLBACK DEFERRED ${trade.eventName} @ ${bestLay.price.toFixed(2)} — projected ${projectedPnl >= 0 ? "+" : ""}£${projectedPnl.toFixed(2)}`, {
+        attemptCount, elapsedSeconds, availableStake: bestLay.size,
+        remainingStake: remaining, maximumPrice,
+        maxLoss: stake * num(config.maxFallbackLossPct) / 100,
+        nextCheckAt: followingCheck.toISOString(),
+      });
+      continue;
+    }
+
+    matchedStake = proposed.matchedStake;
+    priceStake = proposed.priceStake;
+    remaining = remainingEqualLayStake(stake, matchedStake);
+    const fullyMatched = remaining <= PRICE_EPSILON;
+    const decision = fullyMatched ? "ACCEPTED_FULL" : "ACCEPTED_PARTIAL";
     const updated = await db.update(soccerTradesTable).set({
-      status: "HEDGED", layMatchedAt: new Date(), layPrice: average.toFixed(2), exitOdds: average.toFixed(2),
-      exitReason: `First-half resting lay matched @ ${average.toFixed(2)} — locked`,
-    }).where(and(eq(soccerTradesTable.id, trade.id), eq(soccerTradesTable.status, "OPEN"))).returning({ id: soccerTradesTable.id });
-    if (updated.length) await log("info", `LAY MATCHED ${trade.eventName} @ ${average.toFixed(2)} — no goal +£${layLockWinProfit(stake, num(trade.entryOdds), average).toFixed(2)}, next goal £0`);
+      layMatchedStake: matchedStake.toFixed(2),
+      layMatchedPriceStake: priceStake.toFixed(2),
+      layPrice: proposed.averageOdds.toFixed(2),
+      fallbackAttemptedAt: now, fallbackAttemptCount: attemptCount,
+      fallbackNextCheckAt: fullyMatched ? null : followingCheck,
+      fallbackPrice: bestLay.price.toFixed(2),
+      fallbackProjectedPnl: projectedPnl.toFixed(2),
+      fallbackDecision: decision,
+      status: fullyMatched ? "HEDGED" : "OPEN",
+      layMatchedAt: fullyMatched ? now : null,
+      exitOdds: fullyMatched ? proposed.averageOdds.toFixed(2) : null,
+      exitReason: fullyMatched
+        ? `Fallback completed lay @ ${bestLay.price.toFixed(2)}; £${matchedStake.toFixed(2)} matched @ ${proposed.averageOdds.toFixed(2)} average`
+        : `Fallback partially filled £${fillStake.toFixed(2)} @ ${bestLay.price.toFixed(2)}; £${remaining.toFixed(2)} remains`,
+    }).where(and(
+      eq(soccerTradesTable.id, trade.id),
+      eq(soccerTradesTable.status, "OPEN"),
+    )).returning({ id: soccerTradesTable.id });
+    if (updated.length) {
+      await log("info", `FALLBACK ${decision} ${trade.eventName} — £${fillStake.toFixed(2)} @ ${bestLay.price.toFixed(2)}`, {
+        attemptCount, elapsedSeconds, availableStake: bestLay.size,
+        matchedStake, remainingStake: remaining,
+        averageLayOdds: proposed.averageOdds, projectedPnl,
+      });
+    }
   }
 }
 
@@ -341,24 +587,31 @@ async function settle() {
     if (book?.status !== "CLOSED" || !runner) continue;
     const stake = num(trade.stake);
     const won = runner.status === "WINNER";
-    const targetPrice = num(trade.layPrice);
-    const immediateStake = num(trade.layImmediateMatchedStake);
-    const remainingStake = Math.max(0, stake - immediateStake);
-    const restingMatched = Math.max(0, Math.min(
-          remainingStake,
-          tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice) -
-            num(trade.layTradedVolumeBaseline) -
-            num(trade.layQueueAhead),
-        ));
-    const matchedLayStake = trade.status === "HEDGED"
-      ? stake
-      : immediateStake + restingMatched;
-    const averageLayOdds = trade.status === "HEDGED"
-      ? targetPrice
-      : matchedLayStake > 0
-        ? (num(trade.layImmediatePriceStake) + restingMatched * targetPrice) / matchedLayStake
-        : targetPrice;
-    const profit = layLockSettlementProfit(
+    const compatibleAggregate = compatibleLayAggregate(
+      trade.status, stake, num(trade.layPrice),
+      num(trade.layMatchedStake), num(trade.layMatchedPriceStake),
+      num(trade.layImmediateMatchedStake), num(trade.layImmediatePriceStake),
+    );
+    let matchedLayStake = compatibleAggregate.matchedStake;
+    let matchedPriceStake = compatibleAggregate.priceStake;
+    const fallbackAccepted = trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
+    if (trade.status !== "HEDGED" && !fallbackAccepted) {
+      const finalTargetStake = targetMatchedStake(trade, runner);
+      const finalTargetFill = Math.max(0, finalTargetStake - matchedLayStake);
+      const aggregate = addEqualLayFill(
+        stake,
+        matchedLayStake,
+        matchedPriceStake,
+        finalTargetFill,
+        num(trade.targetLayPrice ?? trade.layPrice),
+      );
+      matchedLayStake = aggregate.matchedStake;
+      matchedPriceStake = aggregate.priceStake;
+    }
+    const averageLayOdds = matchedLayStake > 0
+      ? matchedPriceStake / matchedLayStake
+      : num(trade.targetLayPrice ?? trade.layPrice);
+    const profit = equalStakeCombinedProfit(
       stake,
       num(trade.entryOdds),
       won,
@@ -373,6 +626,9 @@ async function settle() {
         : "SETTLED_BREAK_EVEN";
     await db.update(soccerTradesTable).set({
       status, profit: profit.toFixed(2), closedAt: new Date(),
+      layMatchedStake: matchedLayStake.toFixed(2),
+      layMatchedPriceStake: matchedPriceStake.toFixed(2),
+      layPrice: averageLayOdds.toFixed(2),
       goalAfterEntry: !won,
       exitReason: won
         ? `First half ended with no further goal — £${matchedLayStake.toFixed(2)} lay stake matched`
@@ -380,7 +636,12 @@ async function settle() {
           ? "Goal broke the Under — matched lay returned the stake (breakeven)"
           : `Goal broke the Under — £${matchedLayStake.toFixed(2)} of £${stake.toFixed(2)} lay stake matched`,
     }).where(and(eq(soccerTradesTable.id, trade.id), inArray(soccerTradesTable.status, ["OPEN", "HEDGED"])));
-    await log(won ? "info" : "warn", `${won ? "SETTLED WON" : "SETTLED"} ${trade.eventName} ${profit >= 0 ? "+" : ""}£${profit.toFixed(2)}`);
+    await log(won ? "info" : "warn", `${won ? "SETTLED WON" : "SETTLED"} ${trade.eventName} ${profit >= 0 ? "+" : ""}£${profit.toFixed(2)}`, {
+      matchedLayStake,
+      matchedLayPriceStake: matchedPriceStake,
+      averageLayOdds,
+      fallbackDecision: trade.fallbackDecision,
+    });
   }
 }
 

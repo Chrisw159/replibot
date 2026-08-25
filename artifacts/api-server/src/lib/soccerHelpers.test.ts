@@ -4,9 +4,7 @@ import {
   inferScore,
   estimateMinute,
   chooseEntryLine,
-  layLockPrice,
   layLockSettlementProfit,
-  layLockWinProfit,
   betfairTickFloor,
   restingLayHasEnoughTradedVolume,
   tradedVolumeAtPrice,
@@ -14,7 +12,15 @@ import {
   ouLineFromMarketType,
   firstHalfGoalLineFromMarketType,
   isEligibleFirstHalfEntry,
-  COMMISSION,
+  entryStakeForOdds,
+  fixedOffsetLayTarget,
+  equalStakeCombinedProfit,
+  remainingEqualLayStake,
+  addEqualLayFill,
+  compatibleLayAggregate,
+  fallbackDelayElapsed,
+  isFallbackPriceWithinCap,
+  isFallbackLayEligible,
 } from "./soccerHelpers";
 
 // ── parseScoreName ───────────────────────────────────────────────────────────
@@ -344,17 +350,114 @@ describe("chooseEntryLine", () => {
 });
 
 describe("same-stake lay lock", () => {
-  it("locks at least £20 net from a £50 back at 1.61", () => {
-    const layPrice = layLockPrice(1.61, 40);
-    expect(layPrice).toBe(1.18);
-    expect(layLockWinProfit(50, 1.61, layPrice)).toBeGreaterThanOrEqual(20);
+  it("uses £50 through 2.0 and £100 above 2.0", () => {
+    expect(entryStakeForOdds(1.01)).toBe(50);
+    expect(entryStakeForOdds(2)).toBe(50);
+    expect(entryStakeForOdds(2.01)).toBe(100);
+  });
+
+  it("rejects invalid odds instead of silently choosing a stake", () => {
+    expect(() => entryStakeForOdds(Number.NaN)).toThrow(RangeError);
+    expect(() => entryStakeForOdds(1)).toThrow(RangeError);
+  });
+
+  it("turns a fixed offset into a valid, no-worse Betfair tick", () => {
+    expect(fixedOffsetLayTarget(2.87, 0.3)).toBe(2.56);
+    expect(fixedOffsetLayTarget(3.38, 0.3)).toBe(3.05);
+  });
+
+  it("caps a fixed-offset target at the exchange minimum", () => {
+    expect(fixedOffsetLayTarget(1.2, 0.4)).toBe(1.01);
   });
 
   it("breaks even if the Under loses because both matched stakes are equal", () => {
-    const stake = 50;
-    const backLoss = -stake;
-    const layWin = stake;
-    expect(backLoss + layWin).toBe(0);
+    expect(equalStakeCombinedProfit(50, 1.8, false, 50, 1.5)).toBe(0);
+    expect(equalStakeCombinedProfit(100, 2.4, false, 100, 2.0)).toBe(0);
+  });
+
+  it("settles wins with commission for either strategy's staking band", () => {
+    expect(equalStakeCombinedProfit(50, 1.8, true, 50, 1.5)).toBeCloseTo(14.25);
+    expect(equalStakeCombinedProfit(100, 2.4, true, 100, 2.0)).toBeCloseTo(38);
+  });
+
+  it("accounts for partial fills on both winning and losing settlement", () => {
+    expect(equalStakeCombinedProfit(100, 2.4, false, 40, 2.0)).toBe(-60);
+    expect(equalStakeCombinedProfit(100, 2.4, true, 40, 2.0)).toBe(95);
+  });
+
+  it("combines immediate and fallback partial fills at weighted odds", () => {
+    const first = addEqualLayFill(100, 0, 0, 30, 1.5);
+    const second = addEqualLayFill(
+      100,
+      first.matchedStake,
+      first.priceStake,
+      50,
+      1.7,
+    );
+    expect(second).toEqual({
+      matchedStake: 80,
+      priceStake: 130,
+      averageOdds: 1.625,
+    });
+    expect(remainingEqualLayStake(100, second.matchedStake)).toBe(20);
+  });
+
+  it("never counts fills beyond the equal-stake target", () => {
+    expect(addEqualLayFill(50, 40, 60, 25, 2)).toEqual({
+      matchedStake: 50,
+      priceStake: 80,
+      averageOdds: 1.6,
+    });
+  });
+});
+
+describe("fallback boundaries shared by both strategies", () => {
+  it("never permits the default fallback before a full five minutes", () => {
+    const enteredAt = 1_000_000;
+    expect(fallbackDelayElapsed(enteredAt, enteredAt + 299_999, 300_000)).toBe(false);
+    expect(fallbackDelayElapsed(enteredAt, enteredAt + 300_000, 300_000)).toBe(true);
+  });
+
+  const enteredAt = 10_000;
+
+  it("becomes due exactly at the configured delay, not before", () => {
+    expect(fallbackDelayElapsed(enteredAt, 69_999, 60_000)).toBe(false);
+    expect(fallbackDelayElapsed(enteredAt, 70_000, 60_000)).toBe(true);
+  });
+
+  it("accepts the odds cap itself and rejects one tick above it", () => {
+    expect(isFallbackPriceWithinCap(2, 2)).toBe(true);
+    expect(isFallbackPriceWithinCap(2.02, 2)).toBe(false);
+  });
+
+  it("requires elapsed time, remaining stake, and an in-cap price", () => {
+    expect(isFallbackLayEligible(enteredAt, 70_000, 60_000, 50, 20, 2, 2)).toBe(true);
+    expect(isFallbackLayEligible(enteredAt, 69_999, 60_000, 50, 20, 2, 2)).toBe(false);
+    expect(isFallbackLayEligible(enteredAt, 70_000, 60_000, 50, 50, 2, 2)).toBe(false);
+    expect(isFallbackLayEligible(enteredAt, 70_000, 60_000, 50, 20, 2.02, 2)).toBe(false);
+  });
+});
+
+describe("legacy in-flight paper trade compatibility", () => {
+  it.each(["LAY_LOCK", "FIRST_HALF_LAY_LOCK"])(
+    "reconstructs a pre-change HEDGED %s trade as a full equal-stake lay",
+    () => {
+      expect(compatibleLayAggregate("HEDGED", 50, 1.55, 0, 0, 0, 0))
+        .toEqual({ matchedStake: 50, priceStake: 77.5 });
+    },
+  );
+
+  it.each(["LAY_LOCK", "FIRST_HALF_LAY_LOCK"])(
+    "preserves the immediate partial fill for a pre-change OPEN %s trade",
+    () => {
+      expect(compatibleLayAggregate("OPEN", 100, 1.8, 0, 0, 25, 44.5))
+        .toEqual({ matchedStake: 25, priceStake: 44.5 });
+    },
+  );
+
+  it("prefers durable aggregate values after the upgrade", () => {
+    expect(compatibleLayAggregate("HEDGED", 50, 1.5, 40, 61.2, 10, 15))
+      .toEqual({ matchedStake: 40, priceStake: 61.2 });
   });
 });
 

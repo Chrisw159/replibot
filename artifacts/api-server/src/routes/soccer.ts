@@ -29,9 +29,11 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     maxConcurrent: c.maxConcurrent,
     minLiquidity: num(c.minLiquidity),
     checkIntervalSeconds: c.checkIntervalSeconds,
-    paperMode: c.paperMode,
+    paperMode: true,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
-    layTargetPct: num(c.layTargetPct),
+    layOffset: num(c.layOffset),
+    fallbackIntervalSeconds: c.fallbackIntervalSeconds,
+    maxFallbackLossPct: num(c.maxFallbackLossPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }
@@ -55,6 +57,15 @@ function serializeTrade(t: typeof soccerTradesTable.$inferSelect) {
     stake: num(t.stake),
     layPrice: t.layPrice === null ? null : num(t.layPrice),
     layMatchedAt: t.layMatchedAt?.toISOString() ?? null,
+    targetLayPrice: t.targetLayPrice === null ? null : num(t.targetLayPrice),
+    layMatchedStake: num(t.layMatchedStake),
+    layMatchedPriceStake: num(t.layMatchedPriceStake),
+    fallbackNextCheckAt: t.fallbackNextCheckAt?.toISOString() ?? null,
+    fallbackAttemptCount: t.fallbackAttemptCount,
+    fallbackAttemptedAt: t.fallbackAttemptedAt?.toISOString() ?? null,
+    fallbackPrice: t.fallbackPrice === null ? null : num(t.fallbackPrice),
+    fallbackProjectedPnl: t.fallbackProjectedPnl === null ? null : num(t.fallbackProjectedPnl),
+    fallbackDecision: t.fallbackDecision,
     status: t.status,
     exitOdds: t.exitOdds === null ? null : num(t.exitOdds),
     exitReason: t.exitReason,
@@ -92,7 +103,7 @@ async function statusPayload() {
     watchedGames: getWatchedGameCount(),
     todayPnl: num(today[0]?.pnl),
     todayTrades: Number(today[0]?.trades ?? 0),
-    paperMode: config.paperMode,
+    paperMode: true,
     lastCycleAt: getSoccerLastCycleAt()?.toISOString() ?? null,
     betfairConnected: !!getSession(),
   };
@@ -109,8 +120,8 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.stake !== undefined) patch.stake = numeric2(b.stake);
   if (b.minOdds !== undefined) patch.minOdds = numeric2(b.minOdds);
   if (b.maxOdds !== undefined) patch.maxOdds = numeric2(b.maxOdds);
-  if (b.entryMinute !== undefined) patch.entryMinute = Math.trunc(Number(b.entryMinute));
-  if (b.minGoalGap !== undefined) patch.minGoalGap = Math.trunc(Number(b.minGoalGap));
+  if (b.entryMinute !== undefined) patch.entryMinute = Math.max(70, Math.min(90, Math.trunc(Number(b.entryMinute))));
+  if (b.minGoalGap !== undefined) patch.minGoalGap = Math.max(2, Math.trunc(Number(b.minGoalGap)));
   if (b.maxConcurrent !== undefined) {
     patch.maxConcurrent = Math.min(
       40,
@@ -120,11 +131,18 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.minLiquidity !== undefined) patch.minLiquidity = numeric2(b.minLiquidity);
   if (b.checkIntervalSeconds !== undefined)
     patch.checkIntervalSeconds = Math.max(10, Math.trunc(Number(b.checkIntervalSeconds)));
-  if (b.paperMode !== undefined) patch.paperMode = Boolean(b.paperMode);
   if (b.blockReEntryAfterProfit !== undefined) patch.blockReEntryAfterProfit = Boolean(b.blockReEntryAfterProfit);
-  if (b.layTargetPct !== undefined) {
-    const v = Number(b.layTargetPct);
-    if (Number.isFinite(v) && v >= 0) patch.layTargetPct = v.toFixed(2);
+  if (b.layOffset !== undefined) {
+    const v = Number(b.layOffset);
+    if (Number.isFinite(v) && v >= 0.01 && v <= 10) patch.layOffset = v.toFixed(2);
+  }
+  if (b.fallbackIntervalSeconds !== undefined) {
+    const v = Math.trunc(Number(b.fallbackIntervalSeconds));
+    if (Number.isFinite(v)) patch.fallbackIntervalSeconds = Math.max(300, Math.min(3600, v));
+  }
+  if (b.maxFallbackLossPct !== undefined) {
+    const v = Number(b.maxFallbackLossPct);
+    if (Number.isFinite(v) && v >= 0 && v <= 100) patch.maxFallbackLossPct = v.toFixed(2);
   }
 
   const current = await getSoccerConfig();

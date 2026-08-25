@@ -110,8 +110,24 @@ export function chooseEntryLine<T extends { odds: number }>(
   return null;
 }
 
+// ── Shared trade calculations ────────────────────────────────────────────────
+
+/**
+ * The two goals strategies use the same fixed staking bands. The 2.0 boundary
+ * belongs to the lower band (and is deliberately not a truthy/falsy check).
+ */
+export function entryStakeForOdds(odds: number): number {
+  if (!Number.isFinite(odds) || odds < 1.01) {
+    throw new RangeError("odds must be finite Betfair odds of at least 1.01");
+  }
+  return odds <= 2 ? 50 : 100;
+}
+
 /** Greatest valid Betfair exchange tick at or below a requested price. */
 export function betfairTickFloor(price: number): number {
+  if (!Number.isFinite(price)) {
+    throw new RangeError("price must be finite");
+  }
   const target = Math.max(1.01, Math.min(1000, price));
   let tick = 1.01;
   let best = tick;
@@ -131,6 +147,24 @@ export function betfairTickFloor(price: number): number {
     tick = Math.round((tick + step) * 100) / 100;
   }
   return best;
+}
+
+/**
+ * A fixed-price-offset target, rounded down to a valid exchange tick. Flooring
+ * is intentional: lower odds are never worse for a lay order and still achieve
+ * at least the requested offset.
+ */
+export function fixedOffsetLayTarget(
+  entryOdds: number,
+  offset: number,
+): number {
+  if (!Number.isFinite(entryOdds) || entryOdds < 1.01) {
+    throw new RangeError("entryOdds must be finite and at least 1.01");
+  }
+  if (!Number.isFinite(offset) || offset < 0) {
+    throw new RangeError("offset must be a finite non-negative number");
+  }
+  return betfairTickFloor(entryOdds - offset);
 }
 
 /** Resting same-stake lay price that locks at least targetPct net if the Under wins. */
@@ -159,6 +193,124 @@ export function layLockSettlementProfit(
     ? backStake * (entryOdds - 1) - matchedLayStake * (averageLayOdds - 1)
     : -backStake + matchedLayStake;
   return gross > 0 ? gross * (1 - COMMISSION) : gross;
+}
+
+/**
+ * Strategy-neutral name for the combined back/lay market result. The intended
+ * lay size equals the back stake, but matchedLayStake may be smaller while an
+ * order is partially filled.
+ */
+export function equalStakeCombinedProfit(
+  backStake: number,
+  backOdds: number,
+  backedSelectionWon: boolean,
+  matchedLayStake: number,
+  averageLayOdds: number,
+): number {
+  return layLockSettlementProfit(
+    backStake,
+    backOdds,
+    backedSelectionWon,
+    matchedLayStake,
+    averageLayOdds,
+  );
+}
+
+/** Unmatched part of an equal-stake lay, protected against over-reported fills. */
+export function remainingEqualLayStake(
+  backStake: number,
+  matchedLayStake: number,
+): number {
+  return Math.max(0, backStake - Math.max(0, matchedLayStake));
+}
+
+/**
+ * Add a fill without allowing aggregate matching above the intended equal
+ * stake. priceStake is retained so immediate and later fallback fills can be
+ * settled at their true weighted-average odds.
+ */
+export function addEqualLayFill(
+  backStake: number,
+  matchedStake: number,
+  priceStake: number,
+  fillStake: number,
+  fillOdds: number,
+): { matchedStake: number; priceStake: number; averageOdds: number } {
+  const acceptedStake = Math.min(
+    remainingEqualLayStake(backStake, matchedStake),
+    Math.max(0, fillStake),
+  );
+  const nextMatchedStake = Math.max(0, matchedStake) + acceptedStake;
+  const nextPriceStake = Math.max(0, priceStake) + acceptedStake * fillOdds;
+  return {
+    matchedStake: nextMatchedStake,
+    priceStake: nextPriceStake,
+    averageOdds: nextMatchedStake > 0 ? nextPriceStake / nextMatchedStake : 0,
+  };
+}
+
+/**
+ * Upgrade compatibility for paper trades opened before durable aggregate fill
+ * columns existed. New aggregate values win; otherwise an old HEDGED row means
+ * the full same-stake lay matched, while an OPEN row retains its immediate fill.
+ */
+export function compatibleLayAggregate(
+  status: string,
+  backStake: number,
+  layPrice: number,
+  matchedStake: number,
+  matchedPriceStake: number,
+  immediateMatchedStake: number,
+  immediatePriceStake: number,
+): { matchedStake: number; priceStake: number } {
+  if (matchedStake > 0) {
+    return { matchedStake, priceStake: matchedPriceStake };
+  }
+  if (status === "HEDGED") {
+    return { matchedStake: backStake, priceStake: backStake * layPrice };
+  }
+  return {
+    matchedStake: Math.max(0, immediateMatchedStake),
+    priceStake: Math.max(0, immediatePriceStake),
+  };
+}
+
+/** The fallback wait is inclusive: it becomes due exactly on the boundary. */
+export function fallbackDelayElapsed(
+  enteredAtMs: number,
+  nowMs: number,
+  delayMs: number,
+): boolean {
+  return delayMs >= 0 && nowMs - enteredAtMs >= delayMs;
+}
+
+/** A fallback lay at the configured maximum odds is still permitted. */
+export function isFallbackPriceWithinCap(
+  layOdds: number,
+  maximumLayOdds: number,
+): boolean {
+  return Number.isFinite(layOdds) &&
+    Number.isFinite(maximumLayOdds) &&
+    layOdds >= 1.01 &&
+    layOdds <= maximumLayOdds;
+}
+
+/**
+ * Shared fallback gate for both goals strategies. It is useful only after the
+ * wait, while some equal-stake lay remains, and at or below the odds cap.
+ */
+export function isFallbackLayEligible(
+  enteredAtMs: number,
+  nowMs: number,
+  delayMs: number,
+  backStake: number,
+  matchedLayStake: number,
+  layOdds: number,
+  maximumLayOdds: number,
+): boolean {
+  return fallbackDelayElapsed(enteredAtMs, nowMs, delayMs) &&
+    remainingEqualLayStake(backStake, matchedLayStake) > 0 &&
+    isFallbackPriceWithinCap(layOdds, maximumLayOdds);
 }
 
 /**

@@ -26,7 +26,7 @@ import {
 
 const inputClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const BOT_TITLE = "First-Half Sniper";
-const BOT_DESCRIPTION = "Paper bot for entries from 35 minutes with a two-goal lead, targeting 40% with no further first-half goal.";
+const BOT_DESCRIPTION = "Paper bot that rests a same-stake lay at a fixed odds offset, with a loss-capped fallback for unmatched stake.";
 
 function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
   const [formData, setFormData] = useState<any>(null);
@@ -61,11 +61,12 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
         </div>
         
         <div className="p-4 overflow-y-auto space-y-4 text-sm">
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+            <div className="text-xs font-medium">Automatic stake bands</div>
+            <div className="text-[11px] text-muted-foreground mt-1">£50 at entry odds up to 2.00; £100 above 2.00.</div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Stake (£)</label>
-              <input type="number" name="stake" value={formData.stake} onChange={handleChange} className={inputClass} />
-            </div>
             <div className="space-y-1.5">
               <label className="text-muted-foreground text-xs">Entry Minute (e.g. 35)</label>
               <input type="number" name="entryMinute" value={formData.entryMinute} onChange={handleChange} className={inputClass} />
@@ -100,12 +101,22 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
           </div>
 
           <div className="space-y-3 pt-2 border-t border-border/60 mt-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay Lock</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay and fallback</div>
             <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">No-more-goals return (%)</label>
-              <input type="number" name="layTargetPct" value={formData.layTargetPct ?? 40} onChange={handleChange} className={inputClass} />
+              <label className="text-muted-foreground text-xs">Lay odds offset</label>
+              <input type="number" min="0.01" max="10" step="0.01" name="layOffset" value={formData.layOffset ?? 0.45} onChange={handleChange} className={inputClass} />
               <div className="text-[11px] text-muted-foreground">
-                £{((Number(formData.stake) || 0) * (Number(formData.layTargetPct) || 0) / 100).toFixed(2)} target; £0 if the backed Under loses.
+                The resting lay target is the entry odds minus {Number(formData.layOffset ?? 0.45).toFixed(2)} (rounded to a valid Betfair tick).
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-muted-foreground text-xs">Fallback after (s)</label>
+                <input type="number" min="300" max="3600" name="fallbackIntervalSeconds" value={formData.fallbackIntervalSeconds ?? 300} onChange={handleChange} className={inputClass} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-muted-foreground text-xs">Max fallback loss (%)</label>
+                <input type="number" min="0" max="100" step="0.1" name="maxFallbackLossPct" value={formData.maxFallbackLossPct ?? 20} onChange={handleChange} className={inputClass} />
               </div>
             </div>
           </div>
@@ -216,9 +227,9 @@ export default function FirstHalfSoccerBot() {
           </p>
           {config && (
             <p className="text-xs text-muted-foreground mt-1">
-              Stake <span className="font-semibold text-foreground">£{config.stake}</span> ·
-              Target <span className="font-semibold text-amber-500">
-                +{config.layTargetPct}%
+               Stakes <span className="font-semibold text-foreground">£50 / £100</span> ·
+               Lay offset <span className="font-semibold text-amber-500">
+                 {config.layOffset.toFixed(2)}
               </span>
             </p>
           )}
@@ -404,9 +415,26 @@ export default function FirstHalfSoccerBot() {
                      <div className="flex justify-between items-end">
                        <div className="text-xs text-muted-foreground space-y-0.5">
                           <div>Stake: £{t.stake} <span className="font-medium text-foreground">@ {t.entryOdds.toFixed(2)}</span></div>
-                           {t.layPrice != null && t.status === "OPEN" && (
-                            <div>Resting lay <span className="font-medium text-foreground">@ {t.layPrice.toFixed(2)}</span> (waiting to match)</div>
+                            {t.targetLayPrice != null && (
+                             <div>
+                                Original target <span className="font-medium text-foreground">@ {t.targetLayPrice.toFixed(2)}</span>
+                               {" · "}£{(t.layMatchedStake ?? 0).toFixed(2)} matched
+                               {(t.layMatchedStake ?? 0) > 0 && (t.layMatchedPriceStake ?? 0) > 0
+                                 ? ` @ ${((t.layMatchedPriceStake ?? 0) / (t.layMatchedStake ?? 1)).toFixed(2)} average`
+                                 : ""}
+                             </div>
                           )}
+                           {t.fallbackAttemptedAt && (
+                             <div className="text-amber-500">
+                                Fallback #{t.fallbackAttemptCount ?? 0} {t.fallbackDecision?.replace(/_/g, " ").toLowerCase()} at {new Date(t.fallbackAttemptedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                               {t.fallbackPrice != null ? ` @ ${t.fallbackPrice.toFixed(2)}` : ""}
+                                {t.fallbackProjectedPnl != null ? ` · projected ${t.fallbackProjectedPnl >= 0 ? "+" : ""}£${t.fallbackProjectedPnl.toFixed(2)}` : ""}
+                               {" · "}£{(t.layMatchedStake ?? 0).toFixed(2)} total matched
+                             </div>
+                           )}
+                            {!t.fallbackAttemptedAt && t.fallbackNextCheckAt && t.status === "OPEN" && (
+                              <div>Fallback eligible after {new Date(t.fallbackNextCheckAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+                            )}
                           {(t.exitOdds || t.exitReason) && (
                             <div>Exit: {t.exitOdds ? <span className="font-medium text-foreground">@ {t.exitOdds.toFixed(2)}</span> : ''} {t.exitReason ? `(${t.exitReason})` : ''}</div>
                           )}

@@ -30,7 +30,9 @@ function serializeConfig(config: Awaited<ReturnType<typeof getFirstHalfSoccerCon
     minLiquidity: num(config.minLiquidity),
     checkIntervalSeconds: config.checkIntervalSeconds,
     paperMode: true,
-    layTargetPct: num(config.layTargetPct),
+    layOffset: num(config.layOffset),
+    fallbackIntervalSeconds: config.fallbackIntervalSeconds,
+    maxFallbackLossPct: num(config.maxFallbackLossPct),
     updatedAt: config.updatedAt?.toISOString() ?? null,
   };
 }
@@ -42,7 +44,15 @@ function serializeTrade(trade: typeof soccerTradesTable.$inferSelect) {
     selectionName: trade.selectionName, line: num(trade.line), bufferLine: false,
     entryScore: trade.entryScore, entryTotalGoals: trade.entryTotalGoals, entryMinute: trade.entryMinute,
     entryOdds: num(trade.entryOdds), stake: num(trade.stake), layPrice: trade.layPrice === null ? null : num(trade.layPrice),
-    layMatchedAt: trade.layMatchedAt?.toISOString() ?? null, status: trade.status,
+    layMatchedAt: trade.layMatchedAt?.toISOString() ?? null,
+    targetLayPrice: trade.targetLayPrice === null ? null : num(trade.targetLayPrice),
+    layMatchedStake: num(trade.layMatchedStake), layMatchedPriceStake: num(trade.layMatchedPriceStake),
+    fallbackNextCheckAt: trade.fallbackNextCheckAt?.toISOString() ?? null,
+    fallbackAttemptCount: trade.fallbackAttemptCount,
+    fallbackAttemptedAt: trade.fallbackAttemptedAt?.toISOString() ?? null,
+    fallbackPrice: trade.fallbackPrice === null ? null : num(trade.fallbackPrice),
+    fallbackProjectedPnl: trade.fallbackProjectedPnl === null ? null : num(trade.fallbackProjectedPnl),
+    fallbackDecision: trade.fallbackDecision, status: trade.status,
     exitOdds: trade.exitOdds === null ? null : num(trade.exitOdds), exitReason: trade.exitReason,
     profit: trade.profit === null ? null : num(trade.profit), goalAfterEntry: trade.goalAfterEntry,
     paper: true, placedAt: trade.placedAt.toISOString(), closedAt: trade.closedAt?.toISOString() ?? null,
@@ -85,9 +95,17 @@ router.patch("/first-half-soccer/config", async (req, res) => {
   if (body.maxConcurrent !== undefined) patch.maxConcurrent = Math.max(1, Math.min(40, Math.trunc(Number(body.maxConcurrent))));
   if (body.minLiquidity !== undefined) patch.minLiquidity = numeric(body.minLiquidity);
   if (body.checkIntervalSeconds !== undefined) patch.checkIntervalSeconds = Math.max(5, Math.trunc(Number(body.checkIntervalSeconds)));
-  if (body.layTargetPct !== undefined) {
-    const target = Number(body.layTargetPct);
-    if (Number.isFinite(target) && target >= 0) patch.layTargetPct = target.toFixed(2);
+  if (body.layOffset !== undefined) {
+    const value = Number(body.layOffset);
+    if (Number.isFinite(value) && value >= 0.01 && value <= 10) patch.layOffset = value.toFixed(2);
+  }
+  if (body.fallbackIntervalSeconds !== undefined) {
+    const value = Math.trunc(Number(body.fallbackIntervalSeconds));
+    if (Number.isFinite(value)) patch.fallbackIntervalSeconds = Math.max(300, Math.min(3600, value));
+  }
+  if (body.maxFallbackLossPct !== undefined) {
+    const value = Number(body.maxFallbackLossPct);
+    if (Number.isFinite(value) && value >= 0 && value <= 100) patch.maxFallbackLossPct = value.toFixed(2);
   }
   const config = await getFirstHalfSoccerConfig();
   await db.update(firstHalfSoccerConfigTable).set(patch).where(eq(firstHalfSoccerConfigTable.id, config.id));

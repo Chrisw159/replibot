@@ -267,8 +267,23 @@ export interface SoccerConfig {
   maxConcurrent: number;
   minLiquidity: number;
   checkIntervalSeconds: number;
-  paperMode: boolean;
-  layTargetPct?: number;
+  paperMode: true;
+  /**
+   * Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.
+   * @minimum 0
+   */
+  layOffset: number;
+  /**
+   * Seconds after entry before attempting to lay any unmatched stake at the available price.
+   * @minimum 300
+   * @maximum 3600
+   */
+  fallbackIntervalSeconds: number;
+  /**
+   * Maximum permitted fallback loss as a percentage of the back stake.
+   * @minimum 0
+   */
+  maxFallbackLossPct: number;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -284,8 +299,21 @@ export interface SoccerConfigUpdate {
   maxConcurrent?: number;
   minLiquidity?: number;
   checkIntervalSeconds?: number;
-  paperMode?: boolean;
-  layTargetPct?: number;
+  /**
+   * Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.
+   * @minimum 0
+   */
+  layOffset?: number;
+  /**
+   * @minimum 300
+   * @maximum 3600
+   */
+  fallbackIntervalSeconds?: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  maxFallbackLossPct?: number;
 }
 
 export interface FirstHalfSoccerConfig {
@@ -305,7 +333,22 @@ export interface FirstHalfSoccerConfig {
   minLiquidity: number;
   checkIntervalSeconds: number;
   paperMode: true;
-  layTargetPct: number;
+  /**
+   * Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.
+   * @minimum 0
+   */
+  layOffset: number;
+  /**
+   * Seconds after entry before attempting to lay any unmatched stake at the available price.
+   * @minimum 300
+   * @maximum 3600
+   */
+  fallbackIntervalSeconds: number;
+  /**
+   * Maximum permitted fallback loss as a percentage of the back stake.
+   * @minimum 0
+   */
+  maxFallbackLossPct: number;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -323,7 +366,21 @@ export interface FirstHalfSoccerConfigUpdate {
   maxConcurrent?: number;
   minLiquidity?: number;
   checkIntervalSeconds?: number;
-  layTargetPct?: number;
+  /**
+   * Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.
+   * @minimum 0
+   */
+  layOffset?: number;
+  /**
+   * @minimum 300
+   * @maximum 3600
+   */
+  fallbackIntervalSeconds?: number;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  maxFallbackLossPct?: number;
 }
 
 export interface SoccerStatus {
@@ -386,8 +443,28 @@ export interface SoccerTrade {
   stake: number;
   /** @nullable */
   layPrice?: number | null;
+  /**
+   * Original fixed-offset resting lay target.
+   * @nullable
+   */
+  targetLayPrice?: number | null;
   /** @nullable */
   layMatchedAt?: string | null;
+  /** Durable aggregate stake matched across the resting and fallback lays. */
+  layMatchedStake?: number;
+  /** Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill. */
+  layMatchedPriceStake?: number;
+  /** @nullable */
+  fallbackAttemptedAt?: string | null;
+  /** @nullable */
+  fallbackNextCheckAt?: string | null;
+  fallbackAttemptCount?: number;
+  /** @nullable */
+  fallbackPrice?: number | null;
+  /** @nullable */
+  fallbackProjectedPnl?: number | null;
+  /** @nullable */
+  fallbackDecision?: string | null;
   /** OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID */
   status: string;
   /** @nullable */

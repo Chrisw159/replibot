@@ -1207,7 +1207,7 @@ components:
 
     SoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode]
+      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layOffset, fallbackIntervalSeconds, maxFallbackLossPct]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
@@ -1219,8 +1219,22 @@ components:
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
-        paperMode: { type: boolean }
-        layTargetPct: { type: number }
+        paperMode: { type: boolean, const: true }
+        layOffset:
+          type: number
+          minimum: 0
+          default: 0.45
+          description: "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45."
+        fallbackIntervalSeconds:
+          type: integer
+          minimum: 300
+          maximum: 3600
+          default: 300
+          description: "Seconds after entry before attempting to lay any unmatched stake at the available price."
+        maxFallbackLossPct:
+          type: number
+          minimum: 0
+          description: "Maximum permitted fallback loss as a percentage of the back stake."
         updatedAt: { type: ["string", "null"] }
 
     SoccerConfigUpdate:
@@ -1234,12 +1248,17 @@ components:
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
-        paperMode: { type: boolean }
-        layTargetPct: { type: number }
+        layOffset:
+          type: number
+          minimum: 0
+          default: 0.45
+          description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
+        fallbackIntervalSeconds: { type: integer, minimum: 300, maximum: 3600, default: 300 }
+        maxFallbackLossPct: { type: number, minimum: 0, maximum: 100, default: 20 }
 
     FirstHalfSoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layTargetPct]
+      required: [id, isRunning, stake, minOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layOffset, fallbackIntervalSeconds, maxFallbackLossPct]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
@@ -1251,7 +1270,21 @@ components:
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean, const: true }
-        layTargetPct: { type: number }
+        layOffset:
+          type: number
+          minimum: 0
+          default: 0.45
+          description: "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45."
+        fallbackIntervalSeconds:
+          type: integer
+          minimum: 300
+          maximum: 3600
+          default: 300
+          description: "Seconds after entry before attempting to lay any unmatched stake at the available price."
+        maxFallbackLossPct:
+          type: number
+          minimum: 0
+          description: "Maximum permitted fallback loss as a percentage of the back stake."
         updatedAt: { type: ["string", "null"] }
 
     FirstHalfSoccerConfigUpdate:
@@ -1264,7 +1297,13 @@ components:
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
-        layTargetPct: { type: number }
+        layOffset:
+          type: number
+          minimum: 0
+          default: 0.45
+          description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
+        fallbackIntervalSeconds: { type: integer, minimum: 300, maximum: 3600, default: 300 }
+        maxFallbackLossPct: { type: number, minimum: 0, maximum: 100, default: 20 }
 
     SoccerStatus:
       type: object
@@ -1318,7 +1357,22 @@ components:
         entryOdds: { type: number }
         stake: { type: number }
         layPrice: { type: ["number", "null"] }
+        targetLayPrice:
+          type: ["number", "null"]
+          description: "Original fixed-offset resting lay target."
         layMatchedAt: { type: ["string", "null"] }
+        layMatchedStake:
+          type: number
+          description: "Durable aggregate stake matched across the resting and fallback lays."
+        layMatchedPriceStake:
+          type: number
+          description: "Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill."
+        fallbackAttemptedAt: { type: ["string", "null"] }
+        fallbackNextCheckAt: { type: ["string", "null"] }
+        fallbackAttemptCount: { type: integer }
+        fallbackPrice: { type: ["number", "null"] }
+        fallbackProjectedPnl: { type: ["number", "null"] }
+        fallbackDecision: { type: ["string", "null"] }
         status: { type: string, description: "OPEN | HEDGED | SETTLED_WON | SETTLED_BREAK_EVEN | SETTLED_LOST | VOID" }
         exitOdds: { type: ["number", "null"] }
         exitReason: { type: ["string", "null"] }
