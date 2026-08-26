@@ -32,7 +32,7 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     paperMode: true,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
     layOffset: num(c.layOffset),
-    fallbackIntervalSeconds: c.fallbackIntervalSeconds,
+    fallbackIntervalSeconds: 60,
     maxFallbackLossGbp: num(c.maxFallbackLossPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
@@ -135,10 +135,6 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.layOffset !== undefined) {
     const v = Number(b.layOffset);
     if (Number.isFinite(v) && v >= 0.01 && v <= 10) patch.layOffset = v.toFixed(2);
-  }
-  if (b.fallbackIntervalSeconds !== undefined) {
-    const v = Math.trunc(Number(b.fallbackIntervalSeconds));
-    if (Number.isFinite(v)) patch.fallbackIntervalSeconds = Math.max(60, Math.min(3600, v));
   }
   const current = await getSoccerConfig();
   if (Object.keys(patch).length > 0) {

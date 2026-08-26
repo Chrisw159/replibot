@@ -19,6 +19,8 @@ import {
   addEqualLayFill,
   compatibleLayAggregate,
   fallbackDelayElapsed,
+  fallbackRetryWindowElapsed,
+  fallbackRetryWindowClosed,
   isFallbackPriceWithinCap,
   isFallbackLayEligible,
   maximumLayOddsForFlatLoss,
@@ -424,6 +426,22 @@ describe("fallback boundaries shared by both strategies", () => {
   it("becomes due exactly at the configured delay, not before", () => {
     expect(fallbackDelayElapsed(enteredAt, 69_999, 60_000)).toBe(false);
     expect(fallbackDelayElapsed(enteredAt, 70_000, 60_000)).toBe(true);
+  });
+
+  it("closes the retry window exactly five minutes after entry", () => {
+    expect(fallbackRetryWindowElapsed(enteredAt, enteredAt + 299_999, 300_000))
+      .toBe(false);
+    expect(fallbackRetryWindowElapsed(enteredAt, enteredAt + 300_000, 300_000))
+      .toBe(true);
+  });
+
+  it("allows timer jitter for the fifth attempt but closes stale retries", () => {
+    expect(fallbackRetryWindowClosed(enteredAt, enteredAt + 300_000, 300_000, 10_000))
+      .toBe(false);
+    expect(fallbackRetryWindowClosed(enteredAt, enteredAt + 310_000, 300_000, 10_000))
+      .toBe(false);
+    expect(fallbackRetryWindowClosed(enteredAt, enteredAt + 310_001, 300_000, 10_000))
+      .toBe(true);
   });
 
   it("accepts the odds cap itself and rejects one tick above it", () => {

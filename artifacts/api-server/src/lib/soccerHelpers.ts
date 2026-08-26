@@ -284,6 +284,30 @@ export function fallbackDelayElapsed(
   return delayMs >= 0 && nowMs - enteredAtMs >= delayMs;
 }
 
+/** The bounded retry window is inclusive at its closing boundary. */
+export function fallbackRetryWindowElapsed(
+  enteredAtMs: number,
+  nowMs: number,
+  retryWindowMs: number,
+): boolean {
+  return retryWindowMs >= 0 && nowMs - enteredAtMs >= retryWindowMs;
+}
+
+/**
+ * Close the window only after a short grace period so the one-second monitor
+ * can perform the fifth scheduled attempt despite normal timer jitter.
+ */
+export function fallbackRetryWindowClosed(
+  enteredAtMs: number,
+  nowMs: number,
+  retryWindowMs: number,
+  finalAttemptGraceMs: number,
+): boolean {
+  return retryWindowMs >= 0 &&
+    finalAttemptGraceMs >= 0 &&
+    nowMs - enteredAtMs > retryWindowMs + finalAttemptGraceMs;
+}
+
 /** A fallback lay at the configured maximum odds is still permitted. */
 export function isFallbackPriceWithinCap(
   layOdds: number,

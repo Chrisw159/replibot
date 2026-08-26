@@ -277,12 +277,8 @@ export interface SoccerConfig {
    * @minimum 0
    */
   layOffset: number;
-  /**
-   * Seconds after entry before attempting to lay any unmatched stake at the available price.
-   * @minimum 60
-   * @maximum 3600
-   */
-  fallbackIntervalSeconds: number;
+  /** Fixed 60-second fallback retry cadence during the first five minutes after entry. */
+  fallbackIntervalSeconds: 60;
   /** Fixed maximum projected fallback loss in GBP for both stake bands. */
   maxFallbackLossGbp: 5;
   /** @nullable */
@@ -309,11 +305,6 @@ export interface SoccerConfigUpdate {
    * @minimum 0
    */
   layOffset?: number;
-  /**
-   * @minimum 60
-   * @maximum 3600
-   */
-  fallbackIntervalSeconds?: number;
 }
 
 export interface FirstHalfSoccerConfig {

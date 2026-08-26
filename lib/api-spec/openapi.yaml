@@ -1227,10 +1227,8 @@ components:
           description: "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45."
         fallbackIntervalSeconds:
           type: integer
-          minimum: 60
-          maximum: 3600
-          default: 60
-          description: "Seconds after entry before attempting to lay any unmatched stake at the available price."
+          const: 60
+          description: "Fixed 60-second fallback retry cadence during the first five minutes after entry."
         maxFallbackLossGbp:
           type: number
           const: 5
@@ -1253,7 +1251,6 @@ components:
           minimum: 0
           default: 0.45
           description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
-        fallbackIntervalSeconds: { type: integer, minimum: 60, maximum: 3600, default: 60 }
 
     FirstHalfSoccerConfig:
       type: object

@@ -458,10 +458,6 @@ export const getSoccerConfigResponseEntryMinuteMax = 90;
 export const getSoccerConfigResponseLayOffsetDefault = 0.45;
 export const getSoccerConfigResponseLayOffsetMin = 0;
 
-export const getSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
-export const getSoccerConfigResponseFallbackIntervalSecondsMin = 60;
-export const getSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
-
 export const GetSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
@@ -495,11 +491,8 @@ export const GetSoccerConfigResponse = zod.object({
     ),
   fallbackIntervalSeconds: zod
     .number()
-    .min(getSoccerConfigResponseFallbackIntervalSecondsMin)
-    .max(getSoccerConfigResponseFallbackIntervalSecondsMax)
-    .default(getSoccerConfigResponseFallbackIntervalSecondsDefault)
     .describe(
-      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+      "Fixed 60-second fallback retry cadence during the first five minutes after entry.",
     ),
   maxFallbackLossGbp: zod
     .number()
@@ -518,10 +511,6 @@ export const updateSoccerConfigBodyEntryMinuteMax = 90;
 
 export const updateSoccerConfigBodyLayOffsetDefault = 0.45;
 export const updateSoccerConfigBodyLayOffsetMin = 0;
-
-export const updateSoccerConfigBodyFallbackIntervalSecondsDefault = 60;
-export const updateSoccerConfigBodyFallbackIntervalSecondsMin = 60;
-export const updateSoccerConfigBodyFallbackIntervalSecondsMax = 3600;
 
 export const UpdateSoccerConfigBody = zod.object({
   stake: zod.number().optional(),
@@ -553,11 +542,6 @@ export const UpdateSoccerConfigBody = zod.object({
     .describe(
       "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.",
     ),
-  fallbackIntervalSeconds: zod
-    .number()
-    .min(updateSoccerConfigBodyFallbackIntervalSecondsMin)
-    .max(updateSoccerConfigBodyFallbackIntervalSecondsMax)
-    .default(updateSoccerConfigBodyFallbackIntervalSecondsDefault),
 });
 
 export const updateSoccerConfigResponseEntryMinuteDefault = 80;
@@ -566,10 +550,6 @@ export const updateSoccerConfigResponseEntryMinuteMax = 90;
 
 export const updateSoccerConfigResponseLayOffsetDefault = 0.45;
 export const updateSoccerConfigResponseLayOffsetMin = 0;
-
-export const updateSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
-export const updateSoccerConfigResponseFallbackIntervalSecondsMin = 60;
-export const updateSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
 
 export const UpdateSoccerConfigResponse = zod.object({
   id: zod.number(),
@@ -604,11 +584,8 @@ export const UpdateSoccerConfigResponse = zod.object({
     ),
   fallbackIntervalSeconds: zod
     .number()
-    .min(updateSoccerConfigResponseFallbackIntervalSecondsMin)
-    .max(updateSoccerConfigResponseFallbackIntervalSecondsMax)
-    .default(updateSoccerConfigResponseFallbackIntervalSecondsDefault)
     .describe(
-      "Seconds after entry before attempting to lay any unmatched stake at the available price.",
+      "Fixed 60-second fallback retry cadence during the first five minutes after entry.",
     ),
   maxFallbackLossGbp: zod
     .number()
