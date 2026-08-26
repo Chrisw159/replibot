@@ -314,6 +314,60 @@ export function isFallbackLayEligible(
 }
 
 /**
+ * Estimate the current match minute from the recorded entry minute and elapsed
+ * wall-clock time. This deliberately ignores stoppage time: the emergency
+ * fallback is intended to become permissive before normal time expires.
+ */
+export function estimatedMinuteSinceEntry(
+  entryMinute: number,
+  enteredAtMs: number,
+  nowMs: number,
+): number {
+  const elapsedMinutes = Math.max(0, nowMs - enteredAtMs) / 60_000;
+  return entryMinute + elapsedMinutes;
+}
+
+/** Enable the emergency fallback with about two minutes of normal time left. */
+export function shouldForceFallbackNearClose(
+  entryMinute: number,
+  enteredAtMs: number,
+  nowMs: number,
+  normalCloseMinute = 90,
+  backstopMinutes = 2,
+): boolean {
+  return estimatedMinuteSinceEntry(entryMinute, enteredAtMs, nowMs) >=
+    normalCloseMinute - backstopMinutes;
+}
+
+export type FallbackCapDecision =
+  | "ACCEPT_NORMAL_CAP"
+  | "ACCEPT_HARD_BACKSTOP"
+  | "DEFER";
+
+/**
+ * Apply the normal cap until the near-close backstop activates. The emergency
+ * path remains bounded by the price that would equal the original full-stake
+ * loss, so it cannot deliberately lock a worse result than staying unhedged.
+ */
+export function fallbackCapDecision(
+  layOdds: number,
+  normalMaximumLayOdds: number,
+  hardBackstopMaximumLayOdds: number,
+  forceNearClose: boolean,
+): FallbackCapDecision {
+  if (isFallbackPriceWithinCap(layOdds, normalMaximumLayOdds)) {
+    return "ACCEPT_NORMAL_CAP";
+  }
+  if (
+    forceNearClose &&
+    isFallbackPriceWithinCap(layOdds, hardBackstopMaximumLayOdds)
+  ) {
+    return "ACCEPT_HARD_BACKSTOP";
+  }
+  return "DEFER";
+}
+
+/**
  * A simulated resting lay is fully matched only after post-entry traded volume
  * clears both the queue already at that price and the complete stake.
  */

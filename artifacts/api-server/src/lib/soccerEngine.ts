@@ -39,7 +39,8 @@ import {
   fixedOffsetLayTarget,
   fallbackDelayElapsed,
   compatibleLayAggregate,
-  isFallbackPriceWithinCap,
+  fallbackCapDecision,
+  shouldForceFallbackNearClose,
   inferScore,
   estimateMinute,
   chooseEntryLine,
@@ -869,6 +870,13 @@ async function monitorRestingLays(generation: number): Promise<void> {
       const maximumLoss = (stake * num(config.maxFallbackLossPct)) / 100;
       const maximumLayOdds =
         (stake * entryOdds - matchedPriceStake + maximumLoss) / remaining;
+      const hardBackstopMaximumLayOdds =
+        (stake * entryOdds - matchedPriceStake + stake) / remaining;
+      const forceNearClose = shouldForceFallbackNearClose(
+        trade.entryMinute,
+        trade.placedAt.getTime(),
+        now.getTime(),
+      );
 
       if (!bestLay) {
         fallbackDecision = fallbackPreviouslyAccepted
@@ -888,10 +896,20 @@ async function monitorRestingLays(generation: number): Promise<void> {
           projectedFullPriceStake / stake,
         ).toFixed(2);
 
-        if (!isFallbackPriceWithinCap(bestLay.price, maximumLayOdds)) {
+        const capDecision = fallbackCapDecision(
+          bestLay.price,
+          maximumLayOdds,
+          hardBackstopMaximumLayOdds,
+          forceNearClose,
+        );
+        if (capDecision === "DEFER") {
           fallbackDecision = fallbackPreviouslyAccepted
-            ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_LOSS_CAP"
-            : "DEFERRED_PRICE_ABOVE_LOSS_CAP";
+            ? forceNearClose
+              ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_HARD_BACKSTOP"
+              : "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_LOSS_CAP"
+            : forceNearClose
+              ? "DEFERRED_PRICE_ABOVE_HARD_BACKSTOP"
+              : "DEFERRED_PRICE_ABOVE_LOSS_CAP";
         } else {
           const fallbackFill = addEqualLayFill(
             stake,
@@ -912,8 +930,12 @@ async function monitorRestingLays(generation: number): Promise<void> {
           ).toFixed(2);
           fallbackDecision =
             matchedStake + 0.01 >= stake
-              ? "ACCEPTED_FULLY_HEDGED"
-              : "ACCEPTED_PARTIAL_LIQUIDITY";
+              ? capDecision === "ACCEPT_HARD_BACKSTOP"
+                ? "ACCEPTED_BACKSTOP_FULLY_HEDGED"
+                : "ACCEPTED_FULLY_HEDGED"
+              : capDecision === "ACCEPT_HARD_BACKSTOP"
+                ? "ACCEPTED_BACKSTOP_PARTIAL_LIQUIDITY"
+                : "ACCEPTED_PARTIAL_LIQUIDITY";
           await slog(
             "info",
             `FALLBACK ${trade.eventName} — accepted £${accepted.toFixed(2)} of £${remaining.toFixed(2)} ` +
@@ -928,6 +950,10 @@ async function monitorRestingLays(generation: number): Promise<void> {
               acceptedStake: accepted,
               maximumLayOdds,
               maxFallbackLossPct: num(config.maxFallbackLossPct),
+              forcedNearClose: capDecision === "ACCEPT_HARD_BACKSTOP",
+              estimatedMinute: trade.entryMinute +
+                Math.max(0, now.getTime() - trade.placedAt.getTime()) / 60_000,
+              hardBackstopMaximumLayOdds,
             },
           );
         }
@@ -947,6 +973,8 @@ async function monitorRestingLays(generation: number): Promise<void> {
             availableLiquidity: bestLay?.size ?? 0,
             remainingStake: remaining,
             maximumLayOdds,
+            hardBackstopMaximumLayOdds,
+            forceNearClose,
             projectedPnl: fallbackProjectedPnl,
           },
         );

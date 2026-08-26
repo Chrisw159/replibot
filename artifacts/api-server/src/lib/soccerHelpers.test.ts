@@ -21,6 +21,9 @@ import {
   fallbackDelayElapsed,
   isFallbackPriceWithinCap,
   isFallbackLayEligible,
+  estimatedMinuteSinceEntry,
+  shouldForceFallbackNearClose,
+  fallbackCapDecision,
 } from "./soccerHelpers";
 
 // ── parseScoreName ───────────────────────────────────────────────────────────
@@ -435,6 +438,43 @@ describe("fallback boundaries shared by both strategies", () => {
     expect(isFallbackLayEligible(enteredAt, 69_999, 60_000, 50, 20, 2, 2)).toBe(false);
     expect(isFallbackLayEligible(enteredAt, 70_000, 60_000, 50, 50, 2, 2)).toBe(false);
     expect(isFallbackLayEligible(enteredAt, 70_000, 60_000, 50, 20, 2.02, 2)).toBe(false);
+  });
+});
+
+describe("full-match near-close fallback backstop", () => {
+  const enteredAt = 1_000_000;
+
+  it("estimates the current minute from entry minute and elapsed wall time", () => {
+    expect(estimatedMinuteSinceEntry(73, enteredAt, enteredAt + 15 * 60_000))
+      .toBe(88);
+  });
+
+  it("stays capped before 88 minutes and activates exactly at 88", () => {
+    expect(shouldForceFallbackNearClose(73, enteredAt, enteredAt + 14 * 60_000 + 59_999))
+      .toBe(false);
+    expect(shouldForceFallbackNearClose(73, enteredAt, enteredAt + 15 * 60_000))
+      .toBe(true);
+  });
+
+  it("activates immediately for an entry already at or beyond 88 minutes", () => {
+    expect(shouldForceFallbackNearClose(88, enteredAt, enteredAt)).toBe(true);
+  });
+
+  it("keeps rejecting an above-cap price before the backstop", () => {
+    expect(fallbackCapDecision(2.5, 2, 3, false)).toBe("DEFER");
+  });
+
+  it("accepts that same price through the hard backstop near close", () => {
+    expect(fallbackCapDecision(2.5, 2, 3, true))
+      .toBe("ACCEPT_HARD_BACKSTOP");
+  });
+
+  it("still rejects a near-close price above the full-loss hard bound", () => {
+    expect(fallbackCapDecision(3.05, 2, 3, true)).toBe("DEFER");
+  });
+
+  it("continues using the normal cap when the price remains acceptable", () => {
+    expect(fallbackCapDecision(2, 2, 3, true)).toBe("ACCEPT_NORMAL_CAP");
   });
 });
 
