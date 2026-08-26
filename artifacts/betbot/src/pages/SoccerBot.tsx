@@ -119,8 +119,8 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
                 <input type="number" min="60" max="3600" name="fallbackIntervalSeconds" value={formData.fallbackIntervalSeconds ?? 60} onChange={handleChange} className={inputClass} />
               </div>
               <div className="space-y-1.5">
-                <label className="text-muted-foreground text-xs">Max fallback loss (%)</label>
-                <input type="number" min="0" max="100" step="0.1" name="maxFallbackLossPct" value={formData.maxFallbackLossPct ?? 20} onChange={handleChange} className={inputClass} />
+                <label className="text-muted-foreground text-xs">Max fallback loss</label>
+                <div className={`${inputClass} flex items-center opacity-70`}>£5 fixed</div>
               </div>
             </div>
           </div>

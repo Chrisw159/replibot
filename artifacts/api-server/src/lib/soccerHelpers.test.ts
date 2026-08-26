@@ -21,9 +21,7 @@ import {
   fallbackDelayElapsed,
   isFallbackPriceWithinCap,
   isFallbackLayEligible,
-  estimatedMinuteSinceEntry,
-  shouldForceFallbackNearClose,
-  fallbackCapDecision,
+  maximumLayOddsForFlatLoss,
 } from "./soccerHelpers";
 
 // ── parseScoreName ───────────────────────────────────────────────────────────
@@ -441,40 +439,32 @@ describe("fallback boundaries shared by both strategies", () => {
   });
 });
 
-describe("full-match near-close fallback backstop", () => {
-  const enteredAt = 1_000_000;
+describe("full-match flat £5 fallback cap", () => {
+  it.each([50, 100])(
+    "uses the same £5 maximum loss for the £%i stake band",
+    (stake) => {
+      const entryOdds = 2;
+      const maximumLayOdds = maximumLayOddsForFlatLoss(
+        stake,
+        entryOdds,
+        0,
+        0,
+        5,
+      );
+      expect(
+        equalStakeCombinedProfit(stake, entryOdds, true, stake, maximumLayOdds),
+      ).toBeCloseTo(-5);
+      expect(isFallbackPriceWithinCap(maximumLayOdds, maximumLayOdds)).toBe(true);
+      expect(isFallbackPriceWithinCap(maximumLayOdds + 0.01, maximumLayOdds))
+        .toBe(false);
+    },
+  );
 
-  it("estimates the current minute from entry minute and elapsed wall time", () => {
-    expect(estimatedMinuteSinceEntry(73, enteredAt, enteredAt + 15 * 60_000))
-      .toBe(88);
-  });
-
-  it("stays capped before 88 minutes and activates exactly at 88", () => {
-    expect(shouldForceFallbackNearClose(73, enteredAt, enteredAt + 14 * 60_000 + 59_999))
-      .toBe(false);
-    expect(shouldForceFallbackNearClose(73, enteredAt, enteredAt + 15 * 60_000))
-      .toBe(true);
-  });
-
-  it("activates immediately for an entry already at or beyond 88 minutes", () => {
-    expect(shouldForceFallbackNearClose(88, enteredAt, enteredAt)).toBe(true);
-  });
-
-  it("keeps rejecting an above-cap price before the backstop", () => {
-    expect(fallbackCapDecision(2.5, 2, 3, false)).toBe("DEFER");
-  });
-
-  it("accepts that same price through the hard backstop near close", () => {
-    expect(fallbackCapDecision(2.5, 2, 3, true))
-      .toBe("ACCEPT_HARD_BACKSTOP");
-  });
-
-  it("still rejects a near-close price above the full-loss hard bound", () => {
-    expect(fallbackCapDecision(3.05, 2, 3, true)).toBe("DEFER");
-  });
-
-  it("continues using the normal cap when the price remains acceptable", () => {
-    expect(fallbackCapDecision(2, 2, 3, true)).toBe("ACCEPT_NORMAL_CAP");
+  it("accounts for earlier partial fills when calculating the £5 cap", () => {
+    const maximumLayOdds = maximumLayOddsForFlatLoss(100, 2, 25, 40, 5);
+    const completedPriceStake = 40 + 75 * maximumLayOdds;
+    expect(equalStakeCombinedProfit(100, 2, true, 100, completedPriceStake / 100))
+      .toBeCloseTo(-5);
   });
 });
 

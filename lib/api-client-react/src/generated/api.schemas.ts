@@ -283,11 +283,8 @@ export interface SoccerConfig {
    * @maximum 3600
    */
   fallbackIntervalSeconds: number;
-  /**
-   * Maximum permitted fallback loss as a percentage of the back stake.
-   * @minimum 0
-   */
-  maxFallbackLossPct: number;
+  /** Fixed maximum projected fallback loss in GBP for both stake bands. */
+  maxFallbackLossGbp: 5;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -317,11 +314,6 @@ export interface SoccerConfigUpdate {
    * @maximum 3600
    */
   fallbackIntervalSeconds?: number;
-  /**
-   * @minimum 0
-   * @maximum 100
-   */
-  maxFallbackLossPct?: number;
 }
 
 export interface FirstHalfSoccerConfig {

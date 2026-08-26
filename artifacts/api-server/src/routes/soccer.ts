@@ -33,7 +33,7 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
     layOffset: num(c.layOffset),
     fallbackIntervalSeconds: c.fallbackIntervalSeconds,
-    maxFallbackLossPct: num(c.maxFallbackLossPct),
+    maxFallbackLossGbp: num(c.maxFallbackLossPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }
@@ -140,11 +140,6 @@ router.patch("/soccer/config", async (req, res) => {
     const v = Math.trunc(Number(b.fallbackIntervalSeconds));
     if (Number.isFinite(v)) patch.fallbackIntervalSeconds = Math.max(60, Math.min(3600, v));
   }
-  if (b.maxFallbackLossPct !== undefined) {
-    const v = Number(b.maxFallbackLossPct);
-    if (Number.isFinite(v) && v >= 0 && v <= 100) patch.maxFallbackLossPct = v.toFixed(2);
-  }
-
   const current = await getSoccerConfig();
   if (Object.keys(patch).length > 0) {
     await db.update(soccerConfigTable).set(patch).where(eq(soccerConfigTable.id, current.id));

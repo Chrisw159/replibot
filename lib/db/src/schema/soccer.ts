@@ -46,7 +46,8 @@ export const soccerConfigTable = pgTable("soccer_config", {
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
   layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
   fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(60),
-  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
+  // Legacy database column name retained; full-match now stores a flat GBP cap.
+  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("5.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()

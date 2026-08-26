@@ -39,8 +39,8 @@ import {
   fixedOffsetLayTarget,
   fallbackDelayElapsed,
   compatibleLayAggregate,
-  fallbackCapDecision,
-  shouldForceFallbackNearClose,
+  isFallbackPriceWithinCap,
+  maximumLayOddsForFlatLoss,
   inferScore,
   estimateMinute,
   chooseEntryLine,
@@ -54,6 +54,7 @@ import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 
 const SOCCER_EVENT_TYPE = "1";
 const RESTING_LAY_MONITOR_MS = 1_000;
+const MAX_FALLBACK_LOSS_GBP = 5;
 
 // ── In-memory state ─────────────────────────────────────────────────────────
 let running = false;
@@ -116,6 +117,9 @@ export async function getSoccerConfig(): Promise<SoccerConfig> {
     // The full-match strategy no longer enters before the 80th minute.
     if (config.entryMinute < 80) {
       patch.entryMinute = 80;
+    }
+    if (num(config.maxFallbackLossPct) !== MAX_FALLBACK_LOSS_GBP) {
+      patch.maxFallbackLossPct = MAX_FALLBACK_LOSS_GBP.toFixed(2);
     }
     if (Object.keys(patch).length > 0) {
       const [updated] = await db
@@ -875,15 +879,12 @@ async function monitorRestingLays(generation: number): Promise<void> {
         .filter((level) => level.size > 0)
         .sort((a, b) => a.price - b.price)[0];
       const remaining = remainingEqualLayStake(stake, matchedStake);
-      const maximumLoss = (stake * num(config.maxFallbackLossPct)) / 100;
-      const maximumLayOdds =
-        (stake * entryOdds - matchedPriceStake + maximumLoss) / remaining;
-      const hardBackstopMaximumLayOdds =
-        (stake * entryOdds - matchedPriceStake + stake) / remaining;
-      const forceNearClose = shouldForceFallbackNearClose(
-        trade.entryMinute,
-        trade.placedAt.getTime(),
-        now.getTime(),
+      const maximumLayOdds = maximumLayOddsForFlatLoss(
+        stake,
+        entryOdds,
+        matchedStake,
+        matchedPriceStake,
+        MAX_FALLBACK_LOSS_GBP,
       );
 
       if (!bestLay) {
@@ -904,20 +905,10 @@ async function monitorRestingLays(generation: number): Promise<void> {
           projectedFullPriceStake / stake,
         ).toFixed(2);
 
-        const capDecision = fallbackCapDecision(
-          bestLay.price,
-          maximumLayOdds,
-          hardBackstopMaximumLayOdds,
-          forceNearClose,
-        );
-        if (capDecision === "DEFER") {
+        if (!isFallbackPriceWithinCap(bestLay.price, maximumLayOdds)) {
           fallbackDecision = fallbackPreviouslyAccepted
-            ? forceNearClose
-              ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_HARD_BACKSTOP"
-              : "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_LOSS_CAP"
-            : forceNearClose
-              ? "DEFERRED_PRICE_ABOVE_HARD_BACKSTOP"
-              : "DEFERRED_PRICE_ABOVE_LOSS_CAP";
+            ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_FLAT_LOSS_CAP"
+            : "DEFERRED_PRICE_ABOVE_FLAT_LOSS_CAP";
         } else {
           const fallbackFill = addEqualLayFill(
             stake,
@@ -938,12 +929,8 @@ async function monitorRestingLays(generation: number): Promise<void> {
           ).toFixed(2);
           fallbackDecision =
             matchedStake + 0.01 >= stake
-              ? capDecision === "ACCEPT_HARD_BACKSTOP"
-                ? "ACCEPTED_BACKSTOP_FULLY_HEDGED"
-                : "ACCEPTED_FULLY_HEDGED"
-              : capDecision === "ACCEPT_HARD_BACKSTOP"
-                ? "ACCEPTED_BACKSTOP_PARTIAL_LIQUIDITY"
-                : "ACCEPTED_PARTIAL_LIQUIDITY";
+              ? "ACCEPTED_FULLY_HEDGED"
+              : "ACCEPTED_PARTIAL_LIQUIDITY";
           await slog(
             "info",
             `FALLBACK ${trade.eventName} — accepted £${accepted.toFixed(2)} of £${remaining.toFixed(2)} ` +
@@ -957,11 +944,7 @@ async function monitorRestingLays(generation: number): Promise<void> {
               remainingBeforeFill: remaining,
               acceptedStake: accepted,
               maximumLayOdds,
-              maxFallbackLossPct: num(config.maxFallbackLossPct),
-              forcedNearClose: capDecision === "ACCEPT_HARD_BACKSTOP",
-              estimatedMinute: trade.entryMinute +
-                Math.max(0, now.getTime() - trade.placedAt.getTime()) / 60_000,
-              hardBackstopMaximumLayOdds,
+              maxFallbackLossGbp: MAX_FALLBACK_LOSS_GBP,
             },
           );
         }
@@ -981,8 +964,7 @@ async function monitorRestingLays(generation: number): Promise<void> {
             availableLiquidity: bestLay?.size ?? 0,
             remainingStake: remaining,
             maximumLayOdds,
-            hardBackstopMaximumLayOdds,
-            forceNearClose,
+            maxFallbackLossGbp: MAX_FALLBACK_LOSS_GBP,
             projectedPnl: fallbackProjectedPnl,
           },
         );

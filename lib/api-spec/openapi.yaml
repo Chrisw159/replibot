@@ -1207,7 +1207,7 @@ components:
 
     SoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layOffset, fallbackIntervalSeconds, maxFallbackLossPct]
+      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layOffset, fallbackIntervalSeconds, maxFallbackLossGbp]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
@@ -1231,10 +1231,10 @@ components:
           maximum: 3600
           default: 60
           description: "Seconds after entry before attempting to lay any unmatched stake at the available price."
-        maxFallbackLossPct:
+        maxFallbackLossGbp:
           type: number
-          minimum: 0
-          description: "Maximum permitted fallback loss as a percentage of the back stake."
+          const: 5
+          description: "Fixed maximum projected fallback loss in GBP for both stake bands."
         updatedAt: { type: ["string", "null"] }
 
     SoccerConfigUpdate:
@@ -1254,7 +1254,6 @@ components:
           default: 0.45
           description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
         fallbackIntervalSeconds: { type: integer, minimum: 60, maximum: 3600, default: 60 }
-        maxFallbackLossPct: { type: number, minimum: 0, maximum: 100, default: 20 }
 
     FirstHalfSoccerConfig:
       type: object

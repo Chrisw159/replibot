@@ -462,8 +462,6 @@ export const getSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
 export const getSoccerConfigResponseFallbackIntervalSecondsMin = 60;
 export const getSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
 
-export const getSoccerConfigResponseMaxFallbackLossPctMin = 0;
-
 export const GetSoccerConfigResponse = zod.object({
   id: zod.number(),
   isRunning: zod.boolean(),
@@ -503,11 +501,10 @@ export const GetSoccerConfigResponse = zod.object({
     .describe(
       "Seconds after entry before attempting to lay any unmatched stake at the available price.",
     ),
-  maxFallbackLossPct: zod
+  maxFallbackLossGbp: zod
     .number()
-    .min(getSoccerConfigResponseMaxFallbackLossPctMin)
     .describe(
-      "Maximum permitted fallback loss as a percentage of the back stake.",
+      "Fixed maximum projected fallback loss in GBP for both stake bands.",
     ),
   updatedAt: zod.string().nullish(),
 });
@@ -525,10 +522,6 @@ export const updateSoccerConfigBodyLayOffsetMin = 0;
 export const updateSoccerConfigBodyFallbackIntervalSecondsDefault = 60;
 export const updateSoccerConfigBodyFallbackIntervalSecondsMin = 60;
 export const updateSoccerConfigBodyFallbackIntervalSecondsMax = 3600;
-
-export const updateSoccerConfigBodyMaxFallbackLossPctDefault = 20;
-export const updateSoccerConfigBodyMaxFallbackLossPctMin = 0;
-export const updateSoccerConfigBodyMaxFallbackLossPctMax = 100;
 
 export const UpdateSoccerConfigBody = zod.object({
   stake: zod.number().optional(),
@@ -565,11 +558,6 @@ export const UpdateSoccerConfigBody = zod.object({
     .min(updateSoccerConfigBodyFallbackIntervalSecondsMin)
     .max(updateSoccerConfigBodyFallbackIntervalSecondsMax)
     .default(updateSoccerConfigBodyFallbackIntervalSecondsDefault),
-  maxFallbackLossPct: zod
-    .number()
-    .min(updateSoccerConfigBodyMaxFallbackLossPctMin)
-    .max(updateSoccerConfigBodyMaxFallbackLossPctMax)
-    .default(updateSoccerConfigBodyMaxFallbackLossPctDefault),
 });
 
 export const updateSoccerConfigResponseEntryMinuteDefault = 80;
@@ -582,8 +570,6 @@ export const updateSoccerConfigResponseLayOffsetMin = 0;
 export const updateSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
 export const updateSoccerConfigResponseFallbackIntervalSecondsMin = 60;
 export const updateSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
-
-export const updateSoccerConfigResponseMaxFallbackLossPctMin = 0;
 
 export const UpdateSoccerConfigResponse = zod.object({
   id: zod.number(),
@@ -624,11 +610,10 @@ export const UpdateSoccerConfigResponse = zod.object({
     .describe(
       "Seconds after entry before attempting to lay any unmatched stake at the available price.",
     ),
-  maxFallbackLossPct: zod
+  maxFallbackLossGbp: zod
     .number()
-    .min(updateSoccerConfigResponseMaxFallbackLossPctMin)
     .describe(
-      "Maximum permitted fallback loss as a percentage of the back stake.",
+      "Fixed maximum projected fallback loss in GBP for both stake bands.",
     ),
   updatedAt: zod.string().nullish(),
 });
