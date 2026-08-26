@@ -224,6 +224,71 @@ export function remainingEqualLayStake(
   return Math.max(0, backStake - Math.max(0, matchedLayStake));
 }
 
+export interface ProfitOnlyTradeOutAssessment {
+  eligible: boolean;
+  remainingStake: number;
+  fillStake: number;
+  fillPriceStake: number;
+  projectedProfit: number | null;
+  minimumProfit: number;
+}
+
+/**
+ * Assess whether visible lay liquidity can complete an equal-stake exit while
+ * locking the requested net profit across the whole trade. Partial alternate
+ * fills are never eligible because they leave outcome-dependent exposure.
+ */
+export function assessProfitOnlyTradeOut(
+  backStake: number,
+  backOdds: number,
+  matchedLayStake: number,
+  matchedLayPriceStake: number,
+  availableToLay: PriceVolume[],
+  minimumProfitPct: number,
+): ProfitOnlyTradeOutAssessment {
+  const remainingStake = remainingEqualLayStake(backStake, matchedLayStake);
+  const minimumProfit = backStake * Math.max(0, minimumProfitPct) / 100;
+  if (remainingStake <= 0) {
+    return {
+      eligible: false,
+      remainingStake,
+      fillStake: 0,
+      fillPriceStake: 0,
+      projectedProfit: null,
+      minimumProfit,
+    };
+  }
+
+  const fill = immediateLayFill(availableToLay, 1000, remainingStake);
+  if (fill.matchedStake < remainingStake) {
+    return {
+      eligible: false,
+      remainingStake,
+      fillStake: fill.matchedStake,
+      fillPriceStake: fill.priceStake,
+      projectedProfit: null,
+      minimumProfit,
+    };
+  }
+
+  const totalPriceStake = matchedLayPriceStake + fill.priceStake;
+  const projectedProfit = equalStakeCombinedProfit(
+    backStake,
+    backOdds,
+    true,
+    backStake,
+    totalPriceStake / backStake,
+  );
+  return {
+    eligible: projectedProfit >= minimumProfit,
+    remainingStake,
+    fillStake: fill.matchedStake,
+    fillPriceStake: fill.priceStake,
+    projectedProfit,
+    minimumProfit,
+  };
+}
+
 /**
  * Add a fill without allowing aggregate matching above the intended equal
  * stake. priceStake is retained so immediate and later fallback fills can be

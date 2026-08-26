@@ -277,10 +277,8 @@ export interface SoccerConfig {
    * @minimum 0
    */
   layOffset: number;
-  /** Fixed 60-second fallback retry cadence during the first five minutes after entry. */
-  fallbackIntervalSeconds: 60;
-  /** Fixed maximum projected fallback loss in GBP for both stake bands. */
-  maxFallbackLossGbp: 5;
+  /** Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay. */
+  minTradeOutProfitPct: 20;
   /** @nullable */
   updatedAt?: string | null;
 }
@@ -441,7 +439,7 @@ export interface SoccerTrade {
   targetLayPrice?: number | null;
   /** @nullable */
   layMatchedAt?: string | null;
-  /** Durable aggregate stake matched across the resting and fallback lays. */
+  /** Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills. */
   layMatchedStake?: number;
   /** Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill. */
   layMatchedPriceStake?: number;

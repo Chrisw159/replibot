@@ -17,13 +17,13 @@ import {
   equalStakeCombinedProfit,
   remainingEqualLayStake,
   addEqualLayFill,
+  assessProfitOnlyTradeOut,
   compatibleLayAggregate,
   fallbackDelayElapsed,
   fallbackRetryWindowElapsed,
   fallbackRetryWindowClosed,
   isFallbackPriceWithinCap,
   isFallbackLayEligible,
-  maximumLayOddsForFlatLoss,
 } from "./soccerHelpers";
 
 // ── parseScoreName ───────────────────────────────────────────────────────────
@@ -457,32 +457,67 @@ describe("fallback boundaries shared by both strategies", () => {
   });
 });
 
-describe("full-match flat £5 fallback cap", () => {
-  it.each([50, 100])(
-    "uses the same £5 maximum loss for the £%i stake band",
-    (stake) => {
-      const entryOdds = 2;
-      const maximumLayOdds = maximumLayOddsForFlatLoss(
-        stake,
-        entryOdds,
-        0,
-        0,
-        5,
-      );
-      expect(
-        equalStakeCombinedProfit(stake, entryOdds, true, stake, maximumLayOdds),
-      ).toBeCloseTo(-5);
-      expect(isFallbackPriceWithinCap(maximumLayOdds, maximumLayOdds)).toBe(true);
-      expect(isFallbackPriceWithinCap(maximumLayOdds + 0.01, maximumLayOdds))
-        .toBe(false);
-    },
-  );
+describe("full-match 20% profit-only trade-out", () => {
+  it.each([
+    [50, 10],
+    [100, 20],
+  ])("requires £%i stake to lock the correct minimum", (stake, minimum) => {
+    const result = assessProfitOnlyTradeOut(
+      stake, 2, 0, 0, [{ price: 1.789, size: stake }], 20,
+    );
+    expect(result.minimumProfit).toBe(minimum);
+    expect(result.projectedProfit).toBeGreaterThanOrEqual(minimum);
+    expect(result.eligible).toBe(true);
+  });
 
-  it("accounts for earlier partial fills when calculating the £5 cap", () => {
-    const maximumLayOdds = maximumLayOddsForFlatLoss(100, 2, 25, 40, 5);
-    const completedPriceStake = 40 + 75 * maximumLayOdds;
-    expect(equalStakeCombinedProfit(100, 2, true, 100, completedPriceStake / 100))
-      .toBeCloseTo(-5);
+  it("rejects a whole-trade profit below 20%", () => {
+    const result = assessProfitOnlyTradeOut(
+      50, 2, 0, 0, [{ price: 1.8, size: 50 }], 20,
+    );
+    expect(result.projectedProfit).toBeCloseTo(9.5);
+    expect(result.eligible).toBe(false);
+  });
+
+  it("accounts for original partial fills in the whole-trade calculation", () => {
+    const result = assessProfitOnlyTradeOut(
+      100, 2.4, 25, 40, [{ price: 1.8, size: 75 }], 20,
+    );
+    expect(result.projectedProfit).toBeCloseTo(61.75);
+    expect(result.eligible).toBe(true);
+  });
+
+  it("rejects partial alternate liquidity even when its price is profitable", () => {
+    const result = assessProfitOnlyTradeOut(
+      100, 2.4, 25, 40, [{ price: 1.01, size: 74.99 }], 20,
+    );
+    expect(result.projectedProfit).toBeNull();
+    expect(result.eligible).toBe(false);
+  });
+
+  it("rejects liquidity even a fraction below the complete remaining stake", () => {
+    const result = assessProfitOnlyTradeOut(
+      100, 2.4, 25, 40, [{ price: 1.01, size: 74.999 }], 20,
+    );
+    expect(result.projectedProfit).toBeNull();
+    expect(result.eligible).toBe(false);
+  });
+
+  it("rejects projected profit even a fraction below the exact threshold", () => {
+    const belowThresholdLayPrice = 2 - (19.995 / 0.95 / 100);
+    const result = assessProfitOnlyTradeOut(
+      100, 2, 0, 0, [{ price: belowThresholdLayPrice, size: 100 }], 20,
+    );
+    expect(result.projectedProfit).toBeCloseTo(19.995);
+    expect(result.projectedProfit).toBeLessThan(20);
+    expect(result.eligible).toBe(false);
+  });
+
+  it("does nothing after the original lay is fully matched", () => {
+    const result = assessProfitOnlyTradeOut(
+      50, 2, 50, 75, [{ price: 1.01, size: 50 }], 20,
+    );
+    expect(result.remainingStake).toBe(0);
+    expect(result.eligible).toBe(false);
   });
 });
 

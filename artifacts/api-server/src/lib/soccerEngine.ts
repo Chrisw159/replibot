@@ -34,15 +34,11 @@ import {
 import { logger } from "./logger";
 import {
   addEqualLayFill,
+  assessProfitOnlyTradeOut,
   entryStakeForOdds,
   equalStakeCombinedProfit,
   fixedOffsetLayTarget,
-  fallbackDelayElapsed,
-  fallbackRetryWindowElapsed,
-  fallbackRetryWindowClosed,
   compatibleLayAggregate,
-  isFallbackPriceWithinCap,
-  maximumLayOddsForFlatLoss,
   inferScore,
   estimateMinute,
   chooseEntryLine,
@@ -56,10 +52,7 @@ import { fetchLiveScores, matchFeedScore } from "./scoreFeed";
 
 const SOCCER_EVENT_TYPE = "1";
 const RESTING_LAY_MONITOR_MS = 1_000;
-const FALLBACK_RETRY_INTERVAL_MS = 60_000;
-const MAX_FALLBACK_LOSS_GBP = 5;
-const FALLBACK_RETRY_WINDOW_MS = 5 * 60_000;
-const FALLBACK_FINAL_ATTEMPT_GRACE_MS = 10_000;
+const MINIMUM_TRADE_OUT_PROFIT_PCT = 20;
 
 // ── In-memory state ─────────────────────────────────────────────────────────
 let running = false;
@@ -114,17 +107,12 @@ export async function getSoccerConfig(): Promise<SoccerConfig> {
   if (rows.length > 0) {
     const config = rows[0]!;
     const patch: Partial<SoccerConfig> = {};
-    // Upgrade the legacy five-minute default so existing paper deployments
-    // receive the safer one-minute fallback cadence without manual DB edits.
-    if (config.fallbackIntervalSeconds !== FALLBACK_RETRY_INTERVAL_MS / 1_000) {
-      patch.fallbackIntervalSeconds = 60;
-    }
     // The full-match strategy no longer enters before the 80th minute.
     if (config.entryMinute < 80) {
       patch.entryMinute = 80;
     }
-    if (num(config.maxFallbackLossPct) !== MAX_FALLBACK_LOSS_GBP) {
-      patch.maxFallbackLossPct = MAX_FALLBACK_LOSS_GBP.toFixed(2);
+    if (num(config.profitTargetPct) !== MINIMUM_TRADE_OUT_PROFIT_PCT) {
+      patch.profitTargetPct = MINIMUM_TRADE_OUT_PROFIT_PCT.toFixed(2);
     }
     if (Object.keys(patch).length > 0) {
       const [updated] = await db
@@ -138,7 +126,11 @@ export async function getSoccerConfig(): Promise<SoccerConfig> {
   }
   const inserted = await db
     .insert(soccerConfigTable)
-    .values({ entryMinute: 80, paperMode: true, fallbackIntervalSeconds: 60 })
+    .values({
+      entryMinute: 80,
+      paperMode: true,
+      profitTargetPct: MINIMUM_TRADE_OUT_PROFIT_PCT.toFixed(2),
+    })
     .returning();
   return inserted[0]!;
 }
@@ -685,9 +677,6 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
         : null;
     const storedLayPrice = immediateAveragePrice ?? layPrice;
     const enteredAt = new Date();
-    const fallbackNextCheckAt = new Date(
-      enteredAt.getTime() + FALLBACK_RETRY_INTERVAL_MS,
-    );
 
     await db.insert(soccerTradesTable).values({
       ...baseTrade,
@@ -702,11 +691,11 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       layImmediateMatchedStake: layEvidence.immediateMatchedStake.toFixed(2),
       layImmediatePriceStake: layEvidence.immediatePriceStake.toFixed(2),
       layMatchedAt: immediatelyHedged ? new Date() : null,
-      fallbackNextCheckAt: immediatelyHedged ? null : fallbackNextCheckAt,
+      fallbackNextCheckAt: null,
       fallbackAttemptCount: 0,
       fallbackDecision: immediatelyHedged
         ? "NOT_REQUIRED_TARGET_FILLED"
-        : "WAITING_FOR_FALLBACK_INTERVAL",
+        : "WAITING_FOR_20_PERCENT_PROFIT",
       placedAt: enteredAt,
       exitOdds: immediatelyHedged ? storedLayPrice.toFixed(2) : null,
       exitReason: immediatelyHedged
@@ -721,8 +710,8 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
         `(${isInsured ? "INSURED line, one-goal cover" : "tight line"}, liq £${Math.round(pick.liquidity)}, score via ${scoreSource === "feed" ? "live-score feed" : "odds inference"}) ` +
         `[dynamic stake band £${stake}; fixed-offset target lay @ ${layPrice.toFixed(2)}; ` +
         `immediate evidence £${layEvidence.immediateMatchedStake.toFixed(2)} matched / £${stake.toFixed(2)}, ` +
-        `price-stake £${layEvidence.immediatePriceStake.toFixed(2)}, queue £${layEvidence.queueAhead.toFixed(2)}, ` +
-        `fallback due ${fallbackNextCheckAt.toISOString()}]`,
+        `price-stake £${layEvidence.immediatePriceStake.toFixed(2)}, queue £${layEvidence.queueAhead.toFixed(2)}; ` +
+        `alternate exit requires ${MINIMUM_TRADE_OUT_PROFIT_PCT}% whole-trade profit]`,
     );
     if (immediatelyHedged) {
       await slog(
@@ -810,15 +799,13 @@ async function monitorRestingLays(generation: number): Promise<void> {
     let matchedStake = compatibleAggregate.matchedStake;
     let matchedPriceStake = compatibleAggregate.priceStake;
     const matchedBeforeTargetEvidence = matchedStake;
-    const fallbackPreviouslyAccepted =
-      trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
-    const fallbackRetryStopped =
-      trade.fallbackDecision?.includes("STOPPED_RETRY_WINDOW") ?? false;
+    const profitTradeOutAccepted =
+      trade.fallbackDecision === "ACCEPTED_20_PERCENT_PROFIT";
 
     // Attribute only volume at our exact target after clearing the captured
     // queue. Comparing cumulative target evidence with the durable aggregate
     // prevents the one-second monitor from counting the same fill twice.
-    const restingTargetStake = fallbackPreviouslyAccepted || fallbackRetryStopped
+    const restingTargetStake = profitTradeOutAccepted
       ? 0
       : Math.min(
           stake - initialImmediateStake,
@@ -858,166 +845,67 @@ async function monitorRestingLays(generation: number): Promise<void> {
     }
 
     const now = new Date();
-    const dueAt =
-      trade.fallbackNextCheckAt?.getTime() ??
-      trade.placedAt.getTime() + FALLBACK_RETRY_INTERVAL_MS;
     let fallbackAttemptCount = trade.fallbackAttemptCount;
     let fallbackAttemptedAt = trade.fallbackAttemptedAt;
     let fallbackPrice = trade.fallbackPrice;
     let fallbackProjectedPnl = trade.fallbackProjectedPnl;
     let fallbackDecision = trade.fallbackDecision;
-    let fallbackNextCheckAt = trade.fallbackNextCheckAt;
+    const fallbackNextCheckAt = null;
 
     if (
       remainingEqualLayStake(stake, matchedStake) > 0 &&
-      !fallbackRetryStopped &&
-      now.getTime() >= dueAt &&
-      fallbackDelayElapsed(
-        trade.placedAt.getTime(),
-        now.getTime(),
-        FALLBACK_RETRY_INTERVAL_MS,
-      )
+      !profitTradeOutAccepted
     ) {
       fallbackAttemptCount += 1;
       fallbackAttemptedAt = now;
-      fallbackNextCheckAt = new Date(
-        now.getTime() + FALLBACK_RETRY_INTERVAL_MS,
-      );
-      const bestLay = [...(runner.ex?.availableToLay ?? [])]
-        .filter((level) => level.size > 0)
-        .sort((a, b) => a.price - b.price)[0];
-      const remaining = remainingEqualLayStake(stake, matchedStake);
-      const retryWindowElapsed = fallbackRetryWindowElapsed(
-        trade.placedAt.getTime(),
-        now.getTime(),
-        FALLBACK_RETRY_WINDOW_MS,
-      );
-      const retryWindowClosed = fallbackRetryWindowClosed(
-        trade.placedAt.getTime(),
-        now.getTime(),
-        FALLBACK_RETRY_WINDOW_MS,
-        FALLBACK_FINAL_ATTEMPT_GRACE_MS,
-      );
-      const maximumLayOdds = maximumLayOddsForFlatLoss(
+      const availableLays = (runner.ex?.availableToLay ?? [])
+        .filter((level) => level.size > 0);
+      const assessment = assessProfitOnlyTradeOut(
         stake,
         entryOdds,
         matchedStake,
         matchedPriceStake,
-        MAX_FALLBACK_LOSS_GBP,
+        availableLays,
+        MINIMUM_TRADE_OUT_PROFIT_PCT,
       );
+      const bestLay = [...availableLays].sort((a, b) => a.price - b.price)[0];
 
-      if (retryWindowClosed) {
-        fallbackDecision = fallbackPreviouslyAccepted
-          ? "ACCEPTED_PARTIAL_THEN_STOPPED_RETRY_WINDOW"
-          : "STOPPED_RETRY_WINDOW";
-        fallbackNextCheckAt = null;
-      } else if (!bestLay) {
-        fallbackDecision = retryWindowElapsed
-          ? fallbackPreviouslyAccepted
-            ? "ACCEPTED_PARTIAL_THEN_STOPPED_RETRY_WINDOW_NO_AVAILABLE_LAY"
-            : "STOPPED_RETRY_WINDOW_NO_AVAILABLE_LAY"
-          : fallbackPreviouslyAccepted
-            ? "ACCEPTED_PARTIAL_THEN_DEFERRED_NO_AVAILABLE_LAY"
-            : "DEFERRED_NO_AVAILABLE_LAY";
+      if (!bestLay) {
+        fallbackDecision = "WAITING_NO_AVAILABLE_LAY";
         fallbackPrice = null;
         fallbackProjectedPnl = null;
-      } else {
+      } else if (!assessment.eligible) {
         fallbackPrice = bestLay.price.toFixed(2);
-        const projectedFullPriceStake =
-          matchedPriceStake + remaining * bestLay.price;
-        fallbackProjectedPnl = equalStakeCombinedProfit(
+        fallbackProjectedPnl = assessment.projectedProfit === null
+          ? null
+          : assessment.projectedProfit.toFixed(2);
+        fallbackDecision = assessment.projectedProfit === null
+          ? "WAITING_INSUFFICIENT_LIQUIDITY_FOR_FULL_EXIT"
+          : "WAITING_BELOW_20_PERCENT_PROFIT";
+      } else {
+        const completed = addEqualLayFill(
           stake,
-          entryOdds,
-          true,
-          stake,
-          projectedFullPriceStake / stake,
-        ).toFixed(2);
-
-        if (!isFallbackPriceWithinCap(bestLay.price, maximumLayOdds)) {
-          fallbackDecision = retryWindowElapsed
-            ? fallbackPreviouslyAccepted
-              ? "ACCEPTED_PARTIAL_THEN_STOPPED_RETRY_WINDOW_PRICE_ABOVE_FLAT_LOSS_CAP"
-              : "STOPPED_RETRY_WINDOW_PRICE_ABOVE_FLAT_LOSS_CAP"
-            : fallbackPreviouslyAccepted
-              ? "ACCEPTED_PARTIAL_THEN_DEFERRED_PRICE_ABOVE_FLAT_LOSS_CAP"
-              : "DEFERRED_PRICE_ABOVE_FLAT_LOSS_CAP";
-        } else {
-          const fallbackFill = addEqualLayFill(
-            stake,
-            matchedStake,
-            matchedPriceStake,
-            Math.min(remaining, bestLay.size),
-            bestLay.price,
-          );
-          const accepted = fallbackFill.matchedStake - matchedStake;
-          matchedStake = fallbackFill.matchedStake;
-          matchedPriceStake = fallbackFill.priceStake;
-          fallbackProjectedPnl = equalStakeCombinedProfit(
-            stake,
-            entryOdds,
-            true,
-            matchedStake,
-            matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice,
-          ).toFixed(2);
-          fallbackDecision =
-            matchedStake + 0.01 >= stake
-              ? "ACCEPTED_FULLY_HEDGED"
-              : retryWindowElapsed
-                ? "ACCEPTED_PARTIAL_LIQUIDITY_THEN_STOPPED_RETRY_WINDOW"
-                : "ACCEPTED_PARTIAL_LIQUIDITY";
-          await slog(
-            "info",
-            `FALLBACK ${trade.eventName} — accepted £${accepted.toFixed(2)} of £${remaining.toFixed(2)} ` +
-              `available lay @ ${bestLay.price.toFixed(2)} (visible £${bestLay.size.toFixed(2)}; ` +
-              `cap ${maximumLayOdds.toFixed(2)}; projected P&L £${num(fallbackProjectedPnl).toFixed(2)})`,
-            {
-              tradeId: trade.id,
-              attempt: fallbackAttemptCount,
-              bestAvailableLay: bestLay.price,
-              availableLiquidity: bestLay.size,
-              remainingBeforeFill: remaining,
-              acceptedStake: accepted,
-              maximumLayOdds,
-              maxFallbackLossGbp: MAX_FALLBACK_LOSS_GBP,
-            },
-          );
-        }
-      }
-
-      if (fallbackDecision?.includes("STOPPED_RETRY_WINDOW")) {
-        fallbackNextCheckAt = null;
-        await slog(
-          "info",
-          `FALLBACK STOPPED ${trade.eventName} — five-minute retry window elapsed; ` +
-            `remaining £${remainingEqualLayStake(stake, matchedStake).toFixed(2)} will not be chased`,
-          {
-            tradeId: trade.id,
-            attempt: fallbackAttemptCount,
-            decision: fallbackDecision,
-            matchedStake,
-            remainingStake: remainingEqualLayStake(stake, matchedStake),
-            maxFallbackLossGbp: MAX_FALLBACK_LOSS_GBP,
-          },
+          matchedStake,
+          matchedPriceStake,
+          assessment.fillStake,
+          assessment.fillPriceStake / assessment.fillStake,
         );
-      }
-
-      if (fallbackDecision?.includes("DEFERRED")) {
+        matchedStake = completed.matchedStake;
+        matchedPriceStake = matchedPriceStake + assessment.fillPriceStake;
+        fallbackPrice =
+          (assessment.fillPriceStake / assessment.fillStake).toFixed(2);
+        fallbackProjectedPnl = assessment.projectedProfit!.toFixed(2);
+        fallbackDecision = "ACCEPTED_20_PERCENT_PROFIT";
         await slog(
           "info",
-          `FALLBACK DEFERRED ${trade.eventName} — ${fallbackDecision}; ` +
-            `best lay ${bestLay ? `@ ${bestLay.price.toFixed(2)} (£${bestLay.size.toFixed(2)})` : "unavailable"}, ` +
-            `remaining £${remaining.toFixed(2)}, cap ${maximumLayOdds.toFixed(2)}, ` +
-            `next check ${fallbackNextCheckAt?.toISOString() ?? "not scheduled"}`,
+          `PROFIT TRADE-OUT ${trade.eventName} — completed remaining £${assessment.remainingStake.toFixed(2)} ` +
+            `@ weighted ${num(fallbackPrice).toFixed(2)}; locked whole-trade profit ` +
+            `£${assessment.projectedProfit!.toFixed(2)} (${MINIMUM_TRADE_OUT_PROFIT_PCT}% minimum)`,
           {
             tradeId: trade.id,
-            attempt: fallbackAttemptCount,
-            decision: fallbackDecision,
-            bestAvailableLay: bestLay?.price ?? null,
-            availableLiquidity: bestLay?.size ?? 0,
-            remainingStake: remaining,
-            maximumLayOdds,
-            maxFallbackLossGbp: MAX_FALLBACK_LOSS_GBP,
-            projectedPnl: fallbackProjectedPnl,
+            minimumProfit: assessment.minimumProfit,
+            projectedProfit: assessment.projectedProfit,
+            completedStake: assessment.fillStake,
           },
         );
       }
@@ -1039,10 +927,7 @@ async function monitorRestingLays(generation: number): Promise<void> {
         exitReason: fullyHedged
           ? `Equal-stake lay fully matched @ weighted average ${averageLayPrice.toFixed(2)}`
           : `Partial lay evidence: £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} matched`,
-        fallbackNextCheckAt:
-          fullyHedged || fallbackDecision?.includes("STOPPED_RETRY_WINDOW")
-            ? null
-            : fallbackNextCheckAt,
+        fallbackNextCheckAt,
         fallbackAttemptCount,
         fallbackAttemptedAt,
         fallbackPrice,
@@ -1061,7 +946,7 @@ async function monitorRestingLays(generation: number): Promise<void> {
       await slog(
         "info",
         `LAY MATCHED ${trade.eventName} — aggregate £${matchedStake.toFixed(2)} @ weighted average ${averageLayPrice.toFixed(2)} ` +
-          `(target/fallback price-stake £${matchedPriceStake.toFixed(2)}); ` +
+          `(target/profit-exit price-stake £${matchedPriceStake.toFixed(2)}); ` +
           `no-more-goals P&L +£${layLockWinProfit(stake, entryOdds, averageLayPrice).toFixed(2)}, line-broken P&L £0.00`,
       );
     }
@@ -1267,11 +1152,9 @@ async function settleTrades(_config: SoccerConfig): Promise<void> {
     // includes every accepted fallback fill).
     const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
     const immediateStake = num(trade.layImmediateMatchedStake);
-    const fallbackAccepted =
-      trade.fallbackDecision?.startsWith("ACCEPTED") ?? false;
-    const fallbackStopped =
-      trade.fallbackDecision?.includes("STOPPED_RETRY_WINDOW") ?? false;
-    const finalRestingStake = fallbackAccepted || fallbackStopped
+    const profitTradeOutAccepted =
+      trade.fallbackDecision === "ACCEPTED_20_PERCENT_PROFIT";
+    const finalRestingStake = profitTradeOutAccepted
       ? 0
       : Math.min(
           stake - immediateStake,

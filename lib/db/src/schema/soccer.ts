@@ -25,7 +25,7 @@ export const soccerConfigTable = pgTable("soccer_config", {
   stake: numeric("stake", { precision: 10, scale: 2 }).notNull().default("50.00"),
   minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
   maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.60"),
-  profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("15.00"),
+  profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
   entryMinute: integer("entry_minute").notNull().default(80),
   minGoalGap: integer("min_goal_gap").notNull().default(2),
   // Legacy column retained for database compatibility; insured-first is now fixed.
@@ -45,8 +45,9 @@ export const soccerConfigTable = pgTable("soccer_config", {
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
   layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
+  // Legacy fallback settings retained for database compatibility; the
+  // full-match strategy no longer uses timed or loss-capped fallback exits.
   fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(60),
-  // Legacy database column name retained; full-match now stores a flat GBP cap.
   maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("5.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

@@ -32,8 +32,7 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     paperMode: true,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
     layOffset: num(c.layOffset),
-    fallbackIntervalSeconds: 60,
-    maxFallbackLossGbp: num(c.maxFallbackLossPct),
+    minTradeOutProfitPct: num(c.profitTargetPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }

@@ -19,6 +19,6 @@ Key design decisions:
 - First-half bot rule (confirmed 23 Aug 2026): paper-only, enter from 35' while the first-half market is live when the score gap is ≥2; back only the tight first-half Under (current total + 0.5) and rest the same-stake lay for a 40% target.
 - **Why:** the tight line makes the next first-half goal lose the Under so a fully matched same-stake lay produces the requested £0 result; no further goal produces the target return.
 - First-half and full-match running state, configuration, trade monitoring, settlement, and reporting must remain isolated.
-- Full-match fallback hedging must remain tightly bounded by a small flat-currency loss, not a percentage of stake, and must stop after a short retry window rather than chase worsening prices.
-- **Why:** the successful hedge upside is only a partial win (roughly 40%), so paying a large insurance premium to avoid an already near-full-stake loss has poor value; leave the residual back position unhedged instead of locking a large guaranteed loss.
-- **How to apply:** future fallback or near-close logic must never bypass the small-loss cap. Preserve accepted partial fills, stop chasing after the bounded retry window, and settle the remaining exposure normally.
+- The full-match bot must never use a loss-limiting fallback. If the original resting lay remains incomplete, an alternate exit is allowed only when enough visible liquidity completes the entire unmatched lay and locks net whole-trade profit of at least 20% of the original stake.
+- **Why:** the operator prefers leaving residual back exposure open over locking a loss, break-even, a smaller profit, or a partial alternate fill that does not remove outcome-dependent exposure.
+- **How to apply:** calculate the threshold across original partial fills plus the complete alternate fill after commission (£10 on £50; £20 on £100). Otherwise leave the position open through settlement. Keep the first-half fallback unchanged.

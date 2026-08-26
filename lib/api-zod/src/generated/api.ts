@@ -489,15 +489,10 @@ export const GetSoccerConfigResponse = zod.object({
     .describe(
       "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
     ),
-  fallbackIntervalSeconds: zod
+  minTradeOutProfitPct: zod
     .number()
     .describe(
-      "Fixed 60-second fallback retry cadence during the first five minutes after entry.",
-    ),
-  maxFallbackLossGbp: zod
-    .number()
-    .describe(
-      "Fixed maximum projected fallback loss in GBP for both stake bands.",
+      "Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay.",
     ),
   updatedAt: zod.string().nullish(),
 });
@@ -582,15 +577,10 @@ export const UpdateSoccerConfigResponse = zod.object({
     .describe(
       "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
     ),
-  fallbackIntervalSeconds: zod
+  minTradeOutProfitPct: zod
     .number()
     .describe(
-      "Fixed 60-second fallback retry cadence during the first five minutes after entry.",
-    ),
-  maxFallbackLossGbp: zod
-    .number()
-    .describe(
-      "Fixed maximum projected fallback loss in GBP for both stake bands.",
+      "Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay.",
     ),
   updatedAt: zod.string().nullish(),
 });
@@ -696,7 +686,7 @@ export const ListSoccerTradesResponseItem = zod.object({
     .number()
     .optional()
     .describe(
-      "Durable aggregate stake matched across the resting and fallback lays.",
+      "Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills.",
     ),
   layMatchedPriceStake: zod
     .number()
@@ -1032,7 +1022,7 @@ export const ListFirstHalfSoccerTradesResponseItem = zod.object({
     .number()
     .optional()
     .describe(
-      "Durable aggregate stake matched across the resting and fallback lays.",
+      "Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills.",
     ),
   layMatchedPriceStake: zod
     .number()

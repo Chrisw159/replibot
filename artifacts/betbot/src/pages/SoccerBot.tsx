@@ -26,7 +26,7 @@ import {
 
 const inputClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const BOT_TITLE = "No More Goals Lay Lock";
-const BOT_DESCRIPTION = "Rests a same-stake lay at a fixed odds offset, then uses a loss-capped fallback if it has not matched.";
+const BOT_DESCRIPTION = "Rests a same-stake lay at a fixed odds offset. If it remains unmatched, an alternate exit is allowed only when it locks at least 20% whole-trade profit.";
 
 function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
   const [formData, setFormData] = useState<any>(null);
@@ -105,7 +105,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
           </div>
           
           <div className="space-y-3 pt-2 border-t border-border/60 mt-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay and fallback</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay and profit-only exit</div>
             <div className="space-y-1.5">
               <label className="text-muted-foreground text-xs">Lay odds offset</label>
               <input type="number" min="0.01" max="10" step="0.01" name="layOffset" value={formData.layOffset ?? 0.45} onChange={handleChange} className={inputClass} />
@@ -113,14 +113,11 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
                 The resting lay target is the entry odds minus {Number(formData.layOffset ?? 0.45).toFixed(2)} (rounded to a valid Betfair tick).
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-muted-foreground text-xs">Fallback retry</label>
-                <div className={`${inputClass} flex items-center opacity-70`}>Every 60s for 5 min</div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-muted-foreground text-xs">Max fallback loss</label>
-                <div className={`${inputClass} flex items-center opacity-70`}>£5 fixed</div>
+            <div className="space-y-1.5">
+              <label className="text-muted-foreground text-xs">Minimum alternate-exit profit</label>
+              <div className={`${inputClass} flex items-center opacity-70`}>20% of original stake (£10 / £20)</div>
+              <div className="text-[11px] text-muted-foreground">
+                Requires enough visible liquidity to finish the entire unmatched lay. Otherwise the exposure remains open.
               </div>
             </div>
           </div>
@@ -434,15 +431,12 @@ export default function SoccerBot() {
                           )}
                            {t.fallbackAttemptedAt && (
                              <div className="text-amber-400">
-                                Fallback #{t.fallbackAttemptCount ?? 0} {t.fallbackDecision?.replace(/_/g, " ").toLowerCase()} at {new Date(t.fallbackAttemptedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                                 Profit-exit check: {t.fallbackDecision?.replace(/_/g, " ").toLowerCase()} at {new Date(t.fallbackAttemptedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                                {t.fallbackPrice != null ? ` @ ${t.fallbackPrice.toFixed(2)}` : ""}
                                 {t.fallbackProjectedPnl != null ? ` · projected ${t.fallbackProjectedPnl >= 0 ? "+" : ""}£${t.fallbackProjectedPnl.toFixed(2)}` : ""}
                                {" · "}£{(t.layMatchedStake ?? 0).toFixed(2)} total matched
                              </div>
                            )}
-                            {!t.fallbackAttemptedAt && t.fallbackNextCheckAt && t.status === "OPEN" && (
-                              <div>Fallback eligible after {new Date(t.fallbackNextCheckAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
-                            )}
                           {(t.exitOdds || t.exitReason) && (
                             <div>Exit: {t.exitOdds ? <span className="font-medium text-foreground">@ {t.exitOdds.toFixed(2)}</span> : ''} {t.exitReason ? `(${t.exitReason})` : ''}</div>
                           )}
