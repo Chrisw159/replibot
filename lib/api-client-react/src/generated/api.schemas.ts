@@ -275,7 +275,7 @@ export interface SoccerConfig {
   layOffset: number;
   /**
    * Seconds after entry before attempting to lay any unmatched stake at the available price.
-   * @minimum 300
+   * @minimum 60
    * @maximum 3600
    */
   fallbackIntervalSeconds: number;
@@ -305,7 +305,7 @@ export interface SoccerConfigUpdate {
    */
   layOffset?: number;
   /**
-   * @minimum 300
+   * @minimum 60
    * @maximum 3600
    */
   fallbackIntervalSeconds?: number;

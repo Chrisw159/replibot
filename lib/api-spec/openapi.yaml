@@ -1227,9 +1227,9 @@ components:
           description: "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45."
         fallbackIntervalSeconds:
           type: integer
-          minimum: 300
+          minimum: 60
           maximum: 3600
-          default: 300
+          default: 60
           description: "Seconds after entry before attempting to lay any unmatched stake at the available price."
         maxFallbackLossPct:
           type: number
@@ -1253,7 +1253,7 @@ components:
           minimum: 0
           default: 0.45
           description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
-        fallbackIntervalSeconds: { type: integer, minimum: 300, maximum: 3600, default: 300 }
+        fallbackIntervalSeconds: { type: integer, minimum: 60, maximum: 3600, default: 60 }
         maxFallbackLossPct: { type: number, minimum: 0, maximum: 100, default: 20 }
 
     FirstHalfSoccerConfig:

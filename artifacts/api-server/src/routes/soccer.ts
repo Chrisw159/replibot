@@ -138,7 +138,7 @@ router.patch("/soccer/config", async (req, res) => {
   }
   if (b.fallbackIntervalSeconds !== undefined) {
     const v = Math.trunc(Number(b.fallbackIntervalSeconds));
-    if (Number.isFinite(v)) patch.fallbackIntervalSeconds = Math.max(300, Math.min(3600, v));
+    if (Number.isFinite(v)) patch.fallbackIntervalSeconds = Math.max(60, Math.min(3600, v));
   }
   if (b.maxFallbackLossPct !== undefined) {
     const v = Number(b.maxFallbackLossPct);

@@ -116,7 +116,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-muted-foreground text-xs">Fallback after (s)</label>
-                <input type="number" min="300" max="3600" name="fallbackIntervalSeconds" value={formData.fallbackIntervalSeconds ?? 300} onChange={handleChange} className={inputClass} />
+                <input type="number" min="60" max="3600" name="fallbackIntervalSeconds" value={formData.fallbackIntervalSeconds ?? 60} onChange={handleChange} className={inputClass} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-muted-foreground text-xs">Max fallback loss (%)</label>

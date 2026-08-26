@@ -45,7 +45,7 @@ export const soccerConfigTable = pgTable("soccer_config", {
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
   layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
   layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
-  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(300),
+  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(60),
   maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

@@ -104,10 +104,23 @@ export function getWatchedGameCount(): number {
 // ── Config ──────────────────────────────────────────────────────────────────
 export async function getSoccerConfig(): Promise<SoccerConfig> {
   const rows = await db.select().from(soccerConfigTable).limit(1);
-  if (rows.length > 0) return rows[0]!;
+  if (rows.length > 0) {
+    const config = rows[0]!;
+    // Upgrade the legacy five-minute default so existing paper deployments
+    // receive the safer one-minute fallback cadence without manual DB edits.
+    if (config.fallbackIntervalSeconds === 300) {
+      const [updated] = await db
+        .update(soccerConfigTable)
+        .set({ fallbackIntervalSeconds: 60 })
+        .where(eq(soccerConfigTable.id, config.id))
+        .returning();
+      return updated ?? { ...config, fallbackIntervalSeconds: 60 };
+    }
+    return config;
+  }
   const inserted = await db
     .insert(soccerConfigTable)
-    .values({ entryMinute: 70, paperMode: true })
+    .values({ entryMinute: 70, paperMode: true, fallbackIntervalSeconds: 60 })
     .returning();
   return inserted[0]!;
 }

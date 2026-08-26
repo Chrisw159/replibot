@@ -454,8 +454,8 @@ export const GetStrategyPerformanceResponse = zod.array(
 export const getSoccerConfigResponseLayOffsetDefault = 0.45;
 export const getSoccerConfigResponseLayOffsetMin = 0;
 
-export const getSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
-export const getSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const getSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
+export const getSoccerConfigResponseFallbackIntervalSecondsMin = 60;
 export const getSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
 
 export const getSoccerConfigResponseMaxFallbackLossPctMin = 0;
@@ -510,8 +510,8 @@ export const GetSoccerConfigResponse = zod.object({
 export const updateSoccerConfigBodyLayOffsetDefault = 0.45;
 export const updateSoccerConfigBodyLayOffsetMin = 0;
 
-export const updateSoccerConfigBodyFallbackIntervalSecondsDefault = 300;
-export const updateSoccerConfigBodyFallbackIntervalSecondsMin = 300;
+export const updateSoccerConfigBodyFallbackIntervalSecondsDefault = 60;
+export const updateSoccerConfigBodyFallbackIntervalSecondsMin = 60;
 export const updateSoccerConfigBodyFallbackIntervalSecondsMax = 3600;
 
 export const updateSoccerConfigBodyMaxFallbackLossPctDefault = 20;
@@ -559,8 +559,8 @@ export const UpdateSoccerConfigBody = zod.object({
 export const updateSoccerConfigResponseLayOffsetDefault = 0.45;
 export const updateSoccerConfigResponseLayOffsetMin = 0;
 
-export const updateSoccerConfigResponseFallbackIntervalSecondsDefault = 300;
-export const updateSoccerConfigResponseFallbackIntervalSecondsMin = 300;
+export const updateSoccerConfigResponseFallbackIntervalSecondsDefault = 60;
+export const updateSoccerConfigResponseFallbackIntervalSecondsMin = 60;
 export const updateSoccerConfigResponseFallbackIntervalSecondsMax = 3600;
 
 export const updateSoccerConfigResponseMaxFallbackLossPctMin = 0;
