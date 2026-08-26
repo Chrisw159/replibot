@@ -26,7 +26,7 @@ export const soccerConfigTable = pgTable("soccer_config", {
   minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
   maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.60"),
   profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("15.00"),
-  entryMinute: integer("entry_minute").notNull().default(70),
+  entryMinute: integer("entry_minute").notNull().default(80),
   minGoalGap: integer("min_goal_gap").notNull().default(2),
   // Legacy column retained for database compatibility; insured-first is now fixed.
   preferBufferLine: boolean("prefer_buffer_line").notNull().default(true),

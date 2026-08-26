@@ -262,6 +262,10 @@ export interface SoccerConfig {
   minOdds: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds: number;
+  /**
+   * @minimum 80
+   * @maximum 90
+   */
   entryMinute: number;
   minGoalGap: number;
   maxConcurrent: number;
@@ -294,6 +298,10 @@ export interface SoccerConfigUpdate {
   minOdds?: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
   maxOdds?: number;
+  /**
+   * @minimum 80
+   * @maximum 90
+   */
   entryMinute?: number;
   minGoalGap?: number;
   maxConcurrent?: number;

@@ -69,7 +69,7 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-muted-foreground text-xs">Entry Minute (e.g. 80)</label>
-              <input type="number" name="entryMinute" value={formData.entryMinute} onChange={handleChange} className={inputClass} />
+              <input type="number" min="80" max="90" name="entryMinute" value={formData.entryMinute} onChange={handleChange} className={inputClass} />
             </div>
             <div className="space-y-1.5">
               <label className="text-muted-foreground text-xs">Min Goal Gap</label>

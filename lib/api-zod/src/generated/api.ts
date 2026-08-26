@@ -451,6 +451,10 @@ export const GetStrategyPerformanceResponse = zod.array(
 /**
  * @summary Get soccer in-play bot configuration
  */
+export const getSoccerConfigResponseEntryMinuteDefault = 80;
+export const getSoccerConfigResponseEntryMinuteMin = 80;
+export const getSoccerConfigResponseEntryMinuteMax = 90;
+
 export const getSoccerConfigResponseLayOffsetDefault = 0.45;
 export const getSoccerConfigResponseLayOffsetMin = 0;
 
@@ -474,7 +478,11 @@ export const GetSoccerConfigResponse = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  entryMinute: zod.number(),
+  entryMinute: zod
+    .number()
+    .min(getSoccerConfigResponseEntryMinuteMin)
+    .max(getSoccerConfigResponseEntryMinuteMax)
+    .default(getSoccerConfigResponseEntryMinuteDefault),
   minGoalGap: zod.number(),
   maxConcurrent: zod.number(),
   minLiquidity: zod.number(),
@@ -507,6 +515,10 @@ export const GetSoccerConfigResponse = zod.object({
 /**
  * @summary Update soccer in-play bot configuration
  */
+export const updateSoccerConfigBodyEntryMinuteDefault = 80;
+export const updateSoccerConfigBodyEntryMinuteMin = 80;
+export const updateSoccerConfigBodyEntryMinuteMax = 90;
+
 export const updateSoccerConfigBodyLayOffsetDefault = 0.45;
 export const updateSoccerConfigBodyLayOffsetMin = 0;
 
@@ -532,7 +544,11 @@ export const UpdateSoccerConfigBody = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  entryMinute: zod.number().optional(),
+  entryMinute: zod
+    .number()
+    .min(updateSoccerConfigBodyEntryMinuteMin)
+    .max(updateSoccerConfigBodyEntryMinuteMax)
+    .default(updateSoccerConfigBodyEntryMinuteDefault),
   minGoalGap: zod.number().optional(),
   maxConcurrent: zod.number().optional(),
   minLiquidity: zod.number().optional(),
@@ -555,6 +571,10 @@ export const UpdateSoccerConfigBody = zod.object({
     .max(updateSoccerConfigBodyMaxFallbackLossPctMax)
     .default(updateSoccerConfigBodyMaxFallbackLossPctDefault),
 });
+
+export const updateSoccerConfigResponseEntryMinuteDefault = 80;
+export const updateSoccerConfigResponseEntryMinuteMin = 80;
+export const updateSoccerConfigResponseEntryMinuteMax = 90;
 
 export const updateSoccerConfigResponseLayOffsetDefault = 0.45;
 export const updateSoccerConfigResponseLayOffsetMin = 0;
@@ -579,7 +599,11 @@ export const UpdateSoccerConfigResponse = zod.object({
     .describe(
       "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
     ),
-  entryMinute: zod.number(),
+  entryMinute: zod
+    .number()
+    .min(updateSoccerConfigResponseEntryMinuteMin)
+    .max(updateSoccerConfigResponseEntryMinuteMax)
+    .default(updateSoccerConfigResponseEntryMinuteDefault),
   minGoalGap: zod.number(),
   maxConcurrent: zod.number(),
   minLiquidity: zod.number(),

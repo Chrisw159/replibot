@@ -1214,7 +1214,7 @@ components:
         stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
-        entryMinute: { type: integer }
+        entryMinute: { type: integer, minimum: 80, maximum: 90, default: 80 }
         minGoalGap: { type: integer }
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }
@@ -1243,7 +1243,7 @@ components:
         stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
-        entryMinute: { type: integer }
+        entryMinute: { type: integer, minimum: 80, maximum: 90, default: 80 }
         minGoalGap: { type: integer }
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }

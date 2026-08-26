@@ -107,21 +107,29 @@ export async function getSoccerConfig(): Promise<SoccerConfig> {
   const rows = await db.select().from(soccerConfigTable).limit(1);
   if (rows.length > 0) {
     const config = rows[0]!;
+    const patch: Partial<SoccerConfig> = {};
     // Upgrade the legacy five-minute default so existing paper deployments
     // receive the safer one-minute fallback cadence without manual DB edits.
     if (config.fallbackIntervalSeconds === 300) {
+      patch.fallbackIntervalSeconds = 60;
+    }
+    // The full-match strategy no longer enters before the 80th minute.
+    if (config.entryMinute < 80) {
+      patch.entryMinute = 80;
+    }
+    if (Object.keys(patch).length > 0) {
       const [updated] = await db
         .update(soccerConfigTable)
-        .set({ fallbackIntervalSeconds: 60 })
+        .set(patch)
         .where(eq(soccerConfigTable.id, config.id))
         .returning();
-      return updated ?? { ...config, fallbackIntervalSeconds: 60 };
+      return updated ?? { ...config, ...patch };
     }
     return config;
   }
   const inserted = await db
     .insert(soccerConfigTable)
-    .values({ entryMinute: 70, paperMode: true, fallbackIntervalSeconds: 60 })
+    .values({ entryMinute: 80, paperMode: true, fallbackIntervalSeconds: 60 })
     .returning();
   return inserted[0]!;
 }

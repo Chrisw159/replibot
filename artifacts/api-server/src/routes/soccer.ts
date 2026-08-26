@@ -120,7 +120,7 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.stake !== undefined) patch.stake = numeric2(b.stake);
   if (b.minOdds !== undefined) patch.minOdds = numeric2(b.minOdds);
   if (b.maxOdds !== undefined) patch.maxOdds = numeric2(b.maxOdds);
-  if (b.entryMinute !== undefined) patch.entryMinute = Math.max(70, Math.min(90, Math.trunc(Number(b.entryMinute))));
+  if (b.entryMinute !== undefined) patch.entryMinute = Math.max(80, Math.min(90, Math.trunc(Number(b.entryMinute))));
   if (b.minGoalGap !== undefined) patch.minGoalGap = Math.max(2, Math.trunc(Number(b.minGoalGap)));
   if (b.maxConcurrent !== undefined) {
     patch.maxConcurrent = Math.min(
