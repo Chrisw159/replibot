@@ -4,6 +4,18 @@
  */
 
 export const COMMISSION = 0.05; // Betfair commission on net winnings
+export const FULL_MATCH_ENTRY_STAKE_GBP = 50;
+
+/** Compare exchange stakes at the currency boundary, never with a penny tolerance. */
+export function isStakeFullyMatched(
+  requiredStake: number,
+  availableOrMatchedStake: number,
+): boolean {
+  if (!Number.isFinite(requiredStake) || !Number.isFinite(availableOrMatchedStake)) {
+    return false;
+  }
+  return Math.round(availableOrMatchedStake * 100) >= Math.round(requiredStake * 100);
+}
 
 // ── Score inference ──────────────────────────────────────────────────────────
 
@@ -169,7 +181,16 @@ export function fixedOffsetLayTarget(
 
 /** Resting same-stake lay price that locks at least targetPct net if the Under wins. */
 export function layLockPrice(entryOdds: number, targetPct: number): number {
+  if (!Number.isFinite(entryOdds) || entryOdds < 1.01) {
+    throw new RangeError("entryOdds must be finite and at least 1.01");
+  }
+  if (!Number.isFinite(targetPct) || targetPct < 0) {
+    throw new RangeError("targetPct must be a finite non-negative number");
+  }
   const ideal = entryOdds - (targetPct / 100) / (1 - COMMISSION);
+  if (ideal < 1.01) {
+    throw new RangeError("target profit cannot be locked at a valid Betfair price");
+  }
   return betfairTickFloor(ideal);
 }
 
@@ -224,75 +245,10 @@ export function remainingEqualLayStake(
   return Math.max(0, backStake - Math.max(0, matchedLayStake));
 }
 
-export interface ProfitOnlyTradeOutAssessment {
-  eligible: boolean;
-  remainingStake: number;
-  fillStake: number;
-  fillPriceStake: number;
-  projectedProfit: number | null;
-  minimumProfit: number;
-}
-
-/**
- * Assess whether visible lay liquidity can complete an equal-stake exit while
- * locking the requested net profit across the whole trade. Partial alternate
- * fills are never eligible because they leave outcome-dependent exposure.
- */
-export function assessProfitOnlyTradeOut(
-  backStake: number,
-  backOdds: number,
-  matchedLayStake: number,
-  matchedLayPriceStake: number,
-  availableToLay: PriceVolume[],
-  minimumProfitPct: number,
-): ProfitOnlyTradeOutAssessment {
-  const remainingStake = remainingEqualLayStake(backStake, matchedLayStake);
-  const minimumProfit = backStake * Math.max(0, minimumProfitPct) / 100;
-  if (remainingStake <= 0) {
-    return {
-      eligible: false,
-      remainingStake,
-      fillStake: 0,
-      fillPriceStake: 0,
-      projectedProfit: null,
-      minimumProfit,
-    };
-  }
-
-  const fill = immediateLayFill(availableToLay, 1000, remainingStake);
-  if (fill.matchedStake < remainingStake) {
-    return {
-      eligible: false,
-      remainingStake,
-      fillStake: fill.matchedStake,
-      fillPriceStake: fill.priceStake,
-      projectedProfit: null,
-      minimumProfit,
-    };
-  }
-
-  const totalPriceStake = matchedLayPriceStake + fill.priceStake;
-  const projectedProfit = equalStakeCombinedProfit(
-    backStake,
-    backOdds,
-    true,
-    backStake,
-    totalPriceStake / backStake,
-  );
-  return {
-    eligible: projectedProfit >= minimumProfit,
-    remainingStake,
-    fillStake: fill.matchedStake,
-    fillPriceStake: fill.priceStake,
-    projectedProfit,
-    minimumProfit,
-  };
-}
-
 /**
  * Add a fill without allowing aggregate matching above the intended equal
- * stake. priceStake is retained so immediate and later fallback fills can be
- * settled at their true weighted-average odds.
+ * stake. priceStake is retained so partial fills can be settled at their true
+ * weighted-average odds.
  */
 export function addEqualLayFill(
   backStake: number,

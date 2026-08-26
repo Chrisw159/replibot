@@ -22,10 +22,12 @@ import { z } from "zod/v4";
 export const soccerConfigTable = pgTable("soccer_config", {
   id: serial("id").primaryKey(),
   isRunning: boolean("is_running").notNull().default(false),
+  // Legacy config column; full-match entries are unconditionally £50.
   stake: numeric("stake", { precision: 10, scale: 2 }).notNull().default("50.00"),
   minOdds: numeric("min_odds", { precision: 6, scale: 2 }).notNull().default("1.50"),
   maxOdds: numeric("max_odds", { precision: 6, scale: 2 }).notNull().default("1.60"),
-  profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("20.00"),
+  // Legacy full-match trade-out setting, retained but unused.
+  profitTargetPct: numeric("profit_target_pct", { precision: 6, scale: 2 }).notNull().default("0.00"),
   entryMinute: integer("entry_minute").notNull().default(80),
   minGoalGap: integer("min_goal_gap").notNull().default(2),
   // Legacy column retained for database compatibility; insured-first is now fixed.
@@ -43,12 +45,12 @@ export const soccerConfigTable = pgTable("soccer_config", {
   // now runs only the same-stake LAY_LOCK strategy.
   strategyTradeOutEnabled: boolean("strategy_trade_out_enabled").notNull().default(false),
   strategyLayLockEnabled: boolean("strategy_lay_lock_enabled").notNull().default(true),
-  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("40.00"),
-  layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.45"),
-  // Legacy fallback settings retained for database compatibility; the
-  // full-match strategy no longer uses timed or loss-capped fallback exits.
-  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(60),
-  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("5.00"),
+  // Legacy full-match target/exit columns retained for database compatibility.
+  // Runtime uses a fixed 40% lock target and never reads these values.
+  layTargetPct: numeric("lay_target_pct", { precision: 6, scale: 2 }).notNull().default("0.00"),
+  layOffset: numeric("lay_offset", { precision: 6, scale: 2 }).notNull().default("0.00"),
+  fallbackIntervalSeconds: integer("fallback_interval_seconds").notNull().default(0),
+  maxFallbackLossPct: numeric("max_fallback_loss_pct", { precision: 6, scale: 2 }).notNull().default("0.00"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()

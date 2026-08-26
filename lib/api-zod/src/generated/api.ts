@@ -455,47 +455,36 @@ export const getSoccerConfigResponseEntryMinuteDefault = 80;
 export const getSoccerConfigResponseEntryMinuteMin = 80;
 export const getSoccerConfigResponseEntryMinuteMax = 90;
 
-export const getSoccerConfigResponseLayOffsetDefault = 0.45;
-export const getSoccerConfigResponseLayOffsetMin = 0;
-
-export const GetSoccerConfigResponse = zod.object({
-  id: zod.number(),
-  isRunning: zod.boolean(),
-  stake: zod.number(),
-  minOdds: zod
-    .number()
-    .describe(
-      "Tight-line minimum odds; entry requires a strictly higher price",
-    ),
-  maxOdds: zod
-    .number()
-    .describe(
-      "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
-    ),
-  entryMinute: zod
-    .number()
-    .min(getSoccerConfigResponseEntryMinuteMin)
-    .max(getSoccerConfigResponseEntryMinuteMax)
-    .default(getSoccerConfigResponseEntryMinuteDefault),
-  minGoalGap: zod.number(),
-  maxConcurrent: zod.number(),
-  minLiquidity: zod.number(),
-  checkIntervalSeconds: zod.number(),
-  paperMode: zod.boolean(),
-  layOffset: zod
-    .number()
-    .min(getSoccerConfigResponseLayOffsetMin)
-    .default(getSoccerConfigResponseLayOffsetDefault)
-    .describe(
-      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
-    ),
-  minTradeOutProfitPct: zod
-    .number()
-    .describe(
-      "Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay.",
-    ),
-  updatedAt: zod.string().nullish(),
-});
+export const GetSoccerConfigResponse = zod
+  .object({
+    id: zod.number(),
+    isRunning: zod.boolean(),
+    minOdds: zod
+      .number()
+      .describe(
+        "Tight-line minimum odds; entry requires a strictly higher price",
+      ),
+    maxOdds: zod
+      .number()
+      .describe(
+        "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
+      ),
+    entryMinute: zod
+      .number()
+      .min(getSoccerConfigResponseEntryMinuteMin)
+      .max(getSoccerConfigResponseEntryMinuteMax)
+      .default(getSoccerConfigResponseEntryMinuteDefault),
+    minGoalGap: zod.number(),
+    maxConcurrent: zod.number(),
+    minLiquidity: zod.number(),
+    checkIntervalSeconds: zod.number(),
+    paperMode: zod.boolean(),
+    blockReEntryAfterProfit: zod.boolean(),
+    updatedAt: zod.string().nullish(),
+  })
+  .describe(
+    "Paper-only full-match strategy. Every entry and its single resting lay use a fixed £50 stake; the lay price locks at least 40% net after 5% commission when the Under wins.",
+  );
 
 /**
  * @summary Update soccer in-play bot configuration
@@ -504,11 +493,7 @@ export const updateSoccerConfigBodyEntryMinuteDefault = 80;
 export const updateSoccerConfigBodyEntryMinuteMin = 80;
 export const updateSoccerConfigBodyEntryMinuteMax = 90;
 
-export const updateSoccerConfigBodyLayOffsetDefault = 0.45;
-export const updateSoccerConfigBodyLayOffsetMin = 0;
-
 export const UpdateSoccerConfigBody = zod.object({
-  stake: zod.number().optional(),
   minOdds: zod
     .number()
     .optional()
@@ -530,60 +515,43 @@ export const UpdateSoccerConfigBody = zod.object({
   maxConcurrent: zod.number().optional(),
   minLiquidity: zod.number().optional(),
   checkIntervalSeconds: zod.number().optional(),
-  layOffset: zod
-    .number()
-    .min(updateSoccerConfigBodyLayOffsetMin)
-    .default(updateSoccerConfigBodyLayOffsetDefault)
-    .describe(
-      "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.",
-    ),
+  blockReEntryAfterProfit: zod.boolean().optional(),
 });
 
 export const updateSoccerConfigResponseEntryMinuteDefault = 80;
 export const updateSoccerConfigResponseEntryMinuteMin = 80;
 export const updateSoccerConfigResponseEntryMinuteMax = 90;
 
-export const updateSoccerConfigResponseLayOffsetDefault = 0.45;
-export const updateSoccerConfigResponseLayOffsetMin = 0;
-
-export const UpdateSoccerConfigResponse = zod.object({
-  id: zod.number(),
-  isRunning: zod.boolean(),
-  stake: zod.number(),
-  minOdds: zod
-    .number()
-    .describe(
-      "Tight-line minimum odds; entry requires a strictly higher price",
-    ),
-  maxOdds: zod
-    .number()
-    .describe(
-      "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
-    ),
-  entryMinute: zod
-    .number()
-    .min(updateSoccerConfigResponseEntryMinuteMin)
-    .max(updateSoccerConfigResponseEntryMinuteMax)
-    .default(updateSoccerConfigResponseEntryMinuteDefault),
-  minGoalGap: zod.number(),
-  maxConcurrent: zod.number(),
-  minLiquidity: zod.number(),
-  checkIntervalSeconds: zod.number(),
-  paperMode: zod.boolean(),
-  layOffset: zod
-    .number()
-    .min(updateSoccerConfigResponseLayOffsetMin)
-    .default(updateSoccerConfigResponseLayOffsetDefault)
-    .describe(
-      "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.",
-    ),
-  minTradeOutProfitPct: zod
-    .number()
-    .describe(
-      "Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay.",
-    ),
-  updatedAt: zod.string().nullish(),
-});
+export const UpdateSoccerConfigResponse = zod
+  .object({
+    id: zod.number(),
+    isRunning: zod.boolean(),
+    minOdds: zod
+      .number()
+      .describe(
+        "Tight-line minimum odds; entry requires a strictly higher price",
+      ),
+    maxOdds: zod
+      .number()
+      .describe(
+        "Insured-line minimum odds; legacy field name, entry requires a strictly higher price",
+      ),
+    entryMinute: zod
+      .number()
+      .min(updateSoccerConfigResponseEntryMinuteMin)
+      .max(updateSoccerConfigResponseEntryMinuteMax)
+      .default(updateSoccerConfigResponseEntryMinuteDefault),
+    minGoalGap: zod.number(),
+    maxConcurrent: zod.number(),
+    minLiquidity: zod.number(),
+    checkIntervalSeconds: zod.number(),
+    paperMode: zod.boolean(),
+    blockReEntryAfterProfit: zod.boolean(),
+    updatedAt: zod.string().nullish(),
+  })
+  .describe(
+    "Paper-only full-match strategy. Every entry and its single resting lay use a fixed £50 stake; the lay price locks at least 40% net after 5% commission when the Under wins.",
+  );
 
 /**
  * @summary Start the soccer in-play bot
@@ -680,14 +648,12 @@ export const ListSoccerTradesResponseItem = zod.object({
   targetLayPrice: zod
     .number()
     .nullish()
-    .describe("Original fixed-offset resting lay target."),
+    .describe("Original resting lay target."),
   layMatchedAt: zod.string().nullish(),
   layMatchedStake: zod
     .number()
     .optional()
-    .describe(
-      "Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills.",
-    ),
+    .describe("Durable aggregate matched lay stake."),
   layMatchedPriceStake: zod
     .number()
     .optional()
@@ -1016,14 +982,12 @@ export const ListFirstHalfSoccerTradesResponseItem = zod.object({
   targetLayPrice: zod
     .number()
     .nullish()
-    .describe("Original fixed-offset resting lay target."),
+    .describe("Original resting lay target."),
   layMatchedAt: zod.string().nullish(),
   layMatchedStake: zod
     .number()
     .optional()
-    .describe(
-      "Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills.",
-    ),
+    .describe("Durable aggregate matched lay stake."),
   layMatchedPriceStake: zod
     .number()
     .optional()

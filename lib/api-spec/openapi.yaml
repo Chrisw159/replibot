@@ -1207,11 +1207,11 @@ components:
 
     SoccerConfig:
       type: object
-      required: [id, isRunning, stake, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, layOffset, minTradeOutProfitPct]
+      description: "Paper-only full-match strategy. Every entry and its single resting lay use a fixed £50 stake; the lay price locks at least 40% net after 5% commission when the Under wins."
+      required: [id, isRunning, minOdds, maxOdds, entryMinute, minGoalGap, maxConcurrent, minLiquidity, checkIntervalSeconds, paperMode, blockReEntryAfterProfit]
       properties:
         id: { type: integer }
         isRunning: { type: boolean }
-        stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
         entryMinute: { type: integer, minimum: 80, maximum: 90, default: 80 }
@@ -1220,21 +1220,12 @@ components:
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
         paperMode: { type: boolean, const: true }
-        layOffset:
-          type: number
-          minimum: 0
-          default: 0.45
-          description: "Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45."
-        minTradeOutProfitPct:
-          type: number
-          const: 20
-          description: "Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay."
+        blockReEntryAfterProfit: { type: boolean }
         updatedAt: { type: ["string", "null"] }
 
     SoccerConfigUpdate:
       type: object
       properties:
-        stake: { type: number }
         minOdds: { type: number, description: "Tight-line minimum odds; entry requires a strictly higher price" }
         maxOdds: { type: number, description: "Insured-line minimum odds; legacy field name, entry requires a strictly higher price" }
         entryMinute: { type: integer, minimum: 80, maximum: 90, default: 80 }
@@ -1242,11 +1233,7 @@ components:
         maxConcurrent: { type: integer }
         minLiquidity: { type: number }
         checkIntervalSeconds: { type: integer }
-        layOffset:
-          type: number
-          minimum: 0
-          default: 0.45
-          description: "Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45."
+        blockReEntryAfterProfit: { type: boolean }
 
     FirstHalfSoccerConfig:
       type: object
@@ -1351,11 +1338,11 @@ components:
         layPrice: { type: ["number", "null"] }
         targetLayPrice:
           type: ["number", "null"]
-          description: "Original fixed-offset resting lay target."
+          description: "Original resting lay target."
         layMatchedAt: { type: ["string", "null"] }
         layMatchedStake:
           type: number
-          description: "Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills."
+          description: "Durable aggregate matched lay stake."
         layMatchedPriceStake:
           type: number
           description: "Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill."

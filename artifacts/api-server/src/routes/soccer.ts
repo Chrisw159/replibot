@@ -21,7 +21,6 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
   return {
     id: c.id,
     isRunning: isSoccerBotRunning(),
-    stake: num(c.stake),
     minOdds: num(c.minOdds),
     maxOdds: num(c.maxOdds),
     entryMinute: c.entryMinute,
@@ -31,8 +30,6 @@ function serializeConfig(c: Awaited<ReturnType<typeof getSoccerConfig>>) {
     checkIntervalSeconds: c.checkIntervalSeconds,
     paperMode: true,
     blockReEntryAfterProfit: c.blockReEntryAfterProfit,
-    layOffset: num(c.layOffset),
-    minTradeOutProfitPct: num(c.profitTargetPct),
     updatedAt: c.updatedAt?.toISOString() ?? null,
   };
 }
@@ -59,12 +56,6 @@ function serializeTrade(t: typeof soccerTradesTable.$inferSelect) {
     targetLayPrice: t.targetLayPrice === null ? null : num(t.targetLayPrice),
     layMatchedStake: num(t.layMatchedStake),
     layMatchedPriceStake: num(t.layMatchedPriceStake),
-    fallbackNextCheckAt: t.fallbackNextCheckAt?.toISOString() ?? null,
-    fallbackAttemptCount: t.fallbackAttemptCount,
-    fallbackAttemptedAt: t.fallbackAttemptedAt?.toISOString() ?? null,
-    fallbackPrice: t.fallbackPrice === null ? null : num(t.fallbackPrice),
-    fallbackProjectedPnl: t.fallbackProjectedPnl === null ? null : num(t.fallbackProjectedPnl),
-    fallbackDecision: t.fallbackDecision,
     status: t.status,
     exitOdds: t.exitOdds === null ? null : num(t.exitOdds),
     exitReason: t.exitReason,
@@ -116,7 +107,6 @@ router.patch("/soccer/config", async (req, res) => {
   const b = req.body ?? {};
   const patch: Record<string, unknown> = {};
   const numeric2 = (v: unknown) => Number(v).toFixed(2);
-  if (b.stake !== undefined) patch.stake = numeric2(b.stake);
   if (b.minOdds !== undefined) patch.minOdds = numeric2(b.minOdds);
   if (b.maxOdds !== undefined) patch.maxOdds = numeric2(b.maxOdds);
   if (b.entryMinute !== undefined) patch.entryMinute = Math.max(80, Math.min(90, Math.trunc(Number(b.entryMinute))));
@@ -131,10 +121,6 @@ router.patch("/soccer/config", async (req, res) => {
   if (b.checkIntervalSeconds !== undefined)
     patch.checkIntervalSeconds = Math.max(10, Math.trunc(Number(b.checkIntervalSeconds)));
   if (b.blockReEntryAfterProfit !== undefined) patch.blockReEntryAfterProfit = Boolean(b.blockReEntryAfterProfit);
-  if (b.layOffset !== undefined) {
-    const v = Number(b.layOffset);
-    if (Number.isFinite(v) && v >= 0.01 && v <= 10) patch.layOffset = v.toFixed(2);
-  }
   const current = await getSoccerConfig();
   if (Object.keys(patch).length > 0) {
     await db.update(soccerConfigTable).set(patch).where(eq(soccerConfigTable.id, current.id));

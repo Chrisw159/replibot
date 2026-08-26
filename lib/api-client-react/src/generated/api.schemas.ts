@@ -254,10 +254,12 @@ export interface StrategyPerformance {
   isActive: boolean;
 }
 
+/**
+ * Paper-only full-match strategy. Every entry and its single resting lay use a fixed £50 stake; the lay price locks at least 40% net after 5% commission when the Under wins.
+ */
 export interface SoccerConfig {
   id: number;
   isRunning: boolean;
-  stake: number;
   /** Tight-line minimum odds; entry requires a strictly higher price */
   minOdds: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
@@ -272,19 +274,12 @@ export interface SoccerConfig {
   minLiquidity: number;
   checkIntervalSeconds: number;
   paperMode: true;
-  /**
-   * Fixed decimal-odds amount subtracted from the entry odds for the resting lay target. The server default is 0.45.
-   * @minimum 0
-   */
-  layOffset: number;
-  /** Minimum locked whole-trade profit as a percentage of original stake before an alternate lay may complete an unmatched original lay. */
-  minTradeOutProfitPct: 20;
+  blockReEntryAfterProfit: boolean;
   /** @nullable */
   updatedAt?: string | null;
 }
 
 export interface SoccerConfigUpdate {
-  stake?: number;
   /** Tight-line minimum odds; entry requires a strictly higher price */
   minOdds?: number;
   /** Insured-line minimum odds; legacy field name, entry requires a strictly higher price */
@@ -298,11 +293,7 @@ export interface SoccerConfigUpdate {
   maxConcurrent?: number;
   minLiquidity?: number;
   checkIntervalSeconds?: number;
-  /**
-   * Fixed decimal-odds amount subtracted from entry odds; omitted values retain the server default of 0.45.
-   * @minimum 0
-   */
-  layOffset?: number;
+  blockReEntryAfterProfit?: boolean;
 }
 
 export interface FirstHalfSoccerConfig {
@@ -433,13 +424,13 @@ export interface SoccerTrade {
   /** @nullable */
   layPrice?: number | null;
   /**
-   * Original fixed-offset resting lay target.
+   * Original resting lay target.
    * @nullable
    */
   targetLayPrice?: number | null;
   /** @nullable */
   layMatchedAt?: string | null;
-  /** Durable aggregate stake matched across the original resting lay and any strategy-specific alternate or fallback fills. */
+  /** Durable aggregate matched lay stake. */
   layMatchedStake?: number;
   /** Durable sum of matched lay stake multiplied by fill odds, used to recover the true average fill. */
   layMatchedPriceStake?: number;

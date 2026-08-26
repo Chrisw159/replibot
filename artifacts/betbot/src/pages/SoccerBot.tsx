@@ -26,7 +26,7 @@ import {
 
 const inputClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 const BOT_TITLE = "No More Goals Lay Lock";
-const BOT_DESCRIPTION = "Rests a same-stake lay at a fixed odds offset. If it remains unmatched, an alternate exit is allowed only when it locks at least 20% whole-trade profit.";
+const BOT_DESCRIPTION = "Backs £50 from 80' with a two-goal cushion, then rests one £50 lay to lock at least £20 net when the Under wins. The order is never chased or replaced.";
 
 function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
   const [formData, setFormData] = useState<any>(null);
@@ -62,8 +62,8 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
         
         <div className="p-4 overflow-y-auto space-y-4 text-sm">
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-            <div className="text-xs font-medium">Automatic stake bands</div>
-            <div className="text-[11px] text-muted-foreground mt-1">£50 at entry odds up to 2.00; £100 above 2.00.</div>
+            <div className="text-xs font-medium">Fixed entry and lay stakes</div>
+            <div className="text-[11px] text-muted-foreground mt-1">Every entry is £50 and immediately creates one resting £50 lay.</div>
           </div>
           
           <div className="grid grid-cols-2 gap-4">
@@ -104,21 +104,10 @@ function ConfigModal({ config, isOpen, onClose, onSave, isSaving }: any) {
             </div>
           </div>
           
-          <div className="space-y-3 pt-2 border-t border-border/60 mt-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Lay and profit-only exit</div>
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Lay odds offset</label>
-              <input type="number" min="0.01" max="10" step="0.01" name="layOffset" value={formData.layOffset ?? 0.45} onChange={handleChange} className={inputClass} />
-              <div className="text-[11px] text-muted-foreground">
-                The resting lay target is the entry odds minus {Number(formData.layOffset ?? 0.45).toFixed(2)} (rounded to a valid Betfair tick).
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-muted-foreground text-xs">Minimum alternate-exit profit</label>
-              <div className={`${inputClass} flex items-center opacity-70`}>20% of original stake (£10 / £20)</div>
-              <div className="text-[11px] text-muted-foreground">
-                Requires enough visible liquidity to finish the entire unmatched lay. Otherwise the exposure remains open.
-              </div>
+          <div className="space-y-2 pt-2 border-t border-border/60 mt-2">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pt-2">Resting lay lock</div>
+            <div className="text-[11px] text-muted-foreground">
+              The valid Betfair target tick locks at least 40% of the original £50 stake net after 5% commission when the Under wins. If fully matched, a later goal settles break-even; unmatched and partial orders retain normal exposure.
             </div>
           </div>
 
@@ -230,14 +219,10 @@ export default function SoccerBot() {
           <p className="text-muted-foreground text-sm mt-1">
             {BOT_DESCRIPTION}
           </p>
-          {config && (
-            <p className="text-xs text-muted-foreground mt-1">
-               Stakes <span className="font-semibold text-foreground">£50 / £100</span> ·
-               Lay offset <span className="font-semibold text-emerald-400">
-                 {config.layOffset.toFixed(2)}
-              </span>
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            Stake <span className="font-semibold text-foreground">£50</span> ·
+            Under-win lock <span className="font-semibold text-emerald-400">at least £20 net</span>
+          </p>
         </div>
 
         <div className="flex flex-col items-end gap-2">
@@ -429,14 +414,6 @@ export default function SoccerBot() {
                                  : ""}
                              </div>
                           )}
-                           {t.fallbackAttemptedAt && (
-                             <div className="text-amber-400">
-                                 Profit-exit check: {t.fallbackDecision?.replace(/_/g, " ").toLowerCase()} at {new Date(t.fallbackAttemptedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                               {t.fallbackPrice != null ? ` @ ${t.fallbackPrice.toFixed(2)}` : ""}
-                                {t.fallbackProjectedPnl != null ? ` · projected ${t.fallbackProjectedPnl >= 0 ? "+" : ""}£${t.fallbackProjectedPnl.toFixed(2)}` : ""}
-                               {" · "}£{(t.layMatchedStake ?? 0).toFixed(2)} total matched
-                             </div>
-                           )}
                           {(t.exitOdds || t.exitReason) && (
                             <div>Exit: {t.exitOdds ? <span className="font-medium text-foreground">@ {t.exitOdds.toFixed(2)}</span> : ''} {t.exitReason ? `(${t.exitReason})` : ''}</div>
                           )}
