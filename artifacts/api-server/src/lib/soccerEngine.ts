@@ -39,6 +39,7 @@ import {
   compatibleLayAggregate,
   inferScore,
   isStakeFullyMatched,
+  isRegularLeagueCompetition,
   estimateMinute,
   chooseEntryLine,
   layLockPrice,
@@ -397,6 +398,27 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
     const competition = cs.competition?.name ?? null;
     const minute = estimateMinute(cs.marketStartTime);
     if (eventId && openEventIds.has(eventId)) continue;
+
+    if (!isRegularLeagueCompetition(competition)) {
+      snap.push({
+        eventName,
+        competition,
+        marketId: null,
+        score: "?",
+        goalGap: 0,
+        minute,
+        tightLine: null,
+        tightOdds: null,
+        bufferLine: null,
+        bufferOdds: null,
+        liquidity: null,
+        verdict: "SKIPPED",
+        reason: competition
+          ? `Competition "${competition}" is not a confirmed regular domestic league`
+          : "Competition type is unknown — regular domestic league required",
+      });
+      continue;
+    }
 
     if (eventId && enteredEventIds.has(eventId)) {
       snap.push({

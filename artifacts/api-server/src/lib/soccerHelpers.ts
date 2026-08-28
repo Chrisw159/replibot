@@ -17,6 +17,25 @@ export function isStakeFullyMatched(
   return Math.round(availableOrMatchedStake * 100) >= Math.round(requiredStake * 100);
 }
 
+const NON_LEAGUE_COMPETITION =
+  /\b(cup(?:en)?|pokal(?:en)?|coppa|copa|coupe|taça|taca|beker|kupa|kubok|trophy|shield|knockout|knock-out|qualif(?:ier|iers|ying|ication)?|play[\s-]?offs?|champions league|europa league|conference league|libertadores|sudamericana|world cup|nations league|friendl(?:y|ies)|olympic(?:s)?|quarter[\s-]?finals?|semi[\s-]?finals?|finals?|uefa|fifa|concacaf|conmebol|ucl|uel)\b/i;
+
+const REGULAR_LEAGUE_COMPETITION =
+  /\b(league|liga|ligue|serie|bundesliga|eredivisie|premiership|championship|division|divisie|superliga|allsvenskan|superettan|eliteserien|veikkausliiga|ekstraklasa|ligat|primera|segunda|terceira|deild|urvalsdeild|úrvalsdeild|meistriliiga|virsliga)\b/i;
+
+/**
+ * Betfair provides a competition name but no dependable competition-format
+ * enum. Fail closed: explicit cup/stage terms are rejected first, and only
+ * names that positively identify a regular league are accepted.
+ */
+export function isRegularLeagueCompetition(
+  competitionName: string | null | undefined,
+): boolean {
+  const name = competitionName?.trim();
+  if (!name || NON_LEAGUE_COMPETITION.test(name)) return false;
+  return REGULAR_LEAGUE_COMPETITION.test(name);
+}
+
 // ── Score inference ──────────────────────────────────────────────────────────
 
 /** Parse "2 - 0" / "2-0" correct-score runner names. Returns null for named buckets. */

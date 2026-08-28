@@ -14,6 +14,7 @@ import {
   isEligibleFirstHalfEntry,
   FULL_MATCH_ENTRY_STAKE_GBP,
   isStakeFullyMatched,
+  isRegularLeagueCompetition,
   entryStakeForOdds,
   fixedOffsetLayTarget,
   layLockPrice,
@@ -98,6 +99,46 @@ describe("first-half entry rules", () => {
   it("rejects non-first-half market types", () => {
     expect(firstHalfGoalLineFromMarketType("OVER_UNDER_25")).toBeNull();
     expect(firstHalfGoalLineFromMarketType(undefined)).toBeNull();
+  });
+});
+
+describe("full-match competition eligibility", () => {
+  it.each([
+    "English Premier League",
+    "English Championship",
+    "Spanish La Liga",
+    "Italian Serie A",
+    "German Bundesliga",
+    "Dutch Eredivisie",
+    "Swedish Allsvenskan",
+    "Argentinian Primera Division",
+  ])("accepts regular domestic league competition %s", (competition) => {
+    expect(isRegularLeagueCompetition(competition)).toBe(true);
+  });
+
+  it.each([
+    "English FA Cup",
+    "English League Cup",
+    "Spanish Copa del Rey",
+    "German DFB Pokal",
+    "Dutch KNVB Beker",
+    "Portuguese Taça de Portugal",
+    "Swedish Svenska Cupen",
+    "UEFA Champions League",
+    "UEFA Champions League Qualifying",
+    "UEFA Europa League",
+    "UEFA Conference League",
+    "Premier League Play-Offs",
+    "World Cup Qualifiers",
+    "UEFA Nations League",
+    "International Friendlies",
+  ])("rejects cup, knockout, playoff, qualifying, or international competition %s", (competition) => {
+    expect(isRegularLeagueCompetition(competition)).toBe(false);
+  });
+
+  it("fails closed when the competition is missing or unrecognised", () => {
+    expect(isRegularLeagueCompetition(null)).toBe(false);
+    expect(isRegularLeagueCompetition("Unknown Tournament")).toBe(false);
   });
 });
 
