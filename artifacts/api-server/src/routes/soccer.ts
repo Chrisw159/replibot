@@ -13,6 +13,7 @@ import {
   getWatchedGameCount,
 } from "../lib/soccerEngine";
 import { getSession } from "../lib/betfair";
+import { isRegularLeagueCompetition } from "../lib/soccerHelpers";
 
 const router: IRouter = Router();
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
@@ -75,24 +76,27 @@ async function statusPayload() {
       eq(soccerTradesTable.strategy, "LAY_LOCK"),
       sql`${soccerTradesTable.status} IN ('OPEN', 'HEDGED')`,
     ));
-  const today = await db
+  const todayRows = await db
     .select({
-      pnl: sql<string>`coalesce(sum(${soccerTradesTable.profit}), 0)`,
-      trades: sql<number>`count(*)`,
+      competition: soccerTradesTable.competition,
+      profit: soccerTradesTable.profit,
     })
     .from(soccerTradesTable)
     .where(and(
       eq(soccerTradesTable.strategy, "LAY_LOCK"),
       sql`${soccerTradesTable.placedAt} >= date_trunc('day', now())`,
     ));
+  const eligibleTodayRows = todayRows.filter((trade) =>
+    isRegularLeagueCompetition(trade.competition)
+  );
   const config = await getSoccerConfig();
   return {
     isRunning: isSoccerBotRunning(),
     startedAt: getSoccerBotStartedAt()?.toISOString() ?? null,
     openTrades: Number(open[0]?.n ?? 0),
     watchedGames: getWatchedGameCount(),
-    todayPnl: num(today[0]?.pnl),
-    todayTrades: Number(today[0]?.trades ?? 0),
+    todayPnl: eligibleTodayRows.reduce((total, trade) => total + num(trade.profit), 0),
+    todayTrades: eligibleTodayRows.length,
     paperMode: true,
     lastCycleAt: getSoccerLastCycleAt()?.toISOString() ?? null,
     betfairConnected: !!getSession(),
@@ -167,10 +171,18 @@ router.get("/soccer/trades", async (req, res) => {
 });
 
 router.get("/soccer/summary", async (_req, res) => {
-  const rows = await db
+  const allRows = await db
     .select()
     .from(soccerTradesTable)
     .where(eq(soccerTradesTable.strategy, "LAY_LOCK"));
+  // Historical full-match records do not have a reliable format enum. Keep
+  // them visible through /soccer/trades for audit, but only include records
+  // whose competition positively identifies a regular league in P&L.
+  // This deliberately excludes cup, knockout, playoff, qualifier,
+  // continental, international, missing, and unknown competitions.
+  const rows = allRows.filter((trade) =>
+    isRegularLeagueCompetition(trade.competition)
+  );
   const closed = rows.filter((t) => t.status !== "OPEN" && t.status !== "HEDGED");
   const settled = closed.filter((t) => t.status.startsWith("SETTLED_"));
   const count = (s: string) => rows.filter((t) => t.status === s).length;
