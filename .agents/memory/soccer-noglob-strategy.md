@@ -12,7 +12,12 @@ Key design decisions:
 - **Why:** disagreement often means a goal is in flight and one source is delayed; refusing that cycle avoids entering from stale score data.
 - Goal-after-entry detection: re-read CS market and compare total vs entryTotalGoals; price-spike (≥1.4× entry) only as fallback when score unreadable.
 - The full-match strategy uses a fixed £50 paper back after minute 80, then immediately rests one equal-stake lay at the valid exchange price that locks at least £20 net if the Under wins and £0 if it loses. Do not reintroduce dynamic staking or comparison strategies.
+- Full-match entries are limited to positively identified regular domestic round-robin leagues. Reject cup, knockout, playoff, qualifier, continental, international, missing, and unrecognized competition names; first-half eligibility is unchanged.
+- **Why:** Betfair supplies competition names but no dependable competition-format enum, so a fail-closed name classifier is safer than allowing unknown fixtures.
 - Paper resting lays need a dedicated fast monitor independent of the slower entry scan. **Why:** a 20-second check missed a brief lay-price crossing before a goal and falsely booked a £50 loss while the real resting lay had matched.
+- Delayed REST market books expose no exchange publish timestamp, so never assume or manufacture a fixed free-key delay. Freeze credited lay evidence when a losing goal is first detected and retain later volume as uncertain; Under winners may reconcile final volume safely.
+- **Why:** receipt time cannot establish whether bundled delayed volume traded before or after a goal. Crediting later volume can create false break-even losses, while discarding it from a winning Under would only understate a safely knowable fill.
+- **How to apply:** persist observation and goal receipt times, keep credited aggregates monotonic with compare-and-set writes, and report ambiguous post-goal volume separately from P&L.
 - Each Betfair event may be entered only once. A settled win or loss must block every later scan from re-entering that fixture, including after a bot restart.
 - **Why:** allowing re-entry after losses created repeated £50 positions on the same late-game market.
 - Each bot remains single-strategy with no comparison totals, but the dashboard now has separate full-match and first-half bot views with independent controls and P&L.

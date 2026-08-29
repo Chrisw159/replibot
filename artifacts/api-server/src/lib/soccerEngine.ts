@@ -45,6 +45,8 @@ import {
   layLockPrice,
   layLockWinProfit,
   tradedVolumeAtPrice,
+  attributeDelayedLayVolume,
+  freezeDelayedLayCreditAtSettlement,
   immediateLayFill,
   ouLineFromMarketType,
 } from "./soccerHelpers";
@@ -723,6 +725,10 @@ async function scanForEntries(config: SoccerConfig): Promise<void> {
       layQueueAhead: layEvidence.queueAhead.toFixed(2),
       layImmediateMatchedStake: layEvidence.immediateMatchedStake.toFixed(2),
       layImmediatePriceStake: layEvidence.immediatePriceStake.toFixed(2),
+      layLastTradedVolume: layEvidence.tradedVolumeBaseline.toFixed(2),
+      layLastVolumeObservedAt: enteredAt,
+      layUncertainAfterGoalStake: "0.00",
+      goalDetectedAt: null,
       layMatchedAt: immediatelyHedged ? new Date() : null,
       fallbackNextCheckAt: null,
       fallbackAttemptCount: 0,
@@ -830,20 +836,26 @@ async function monitorRestingLays(generation: number): Promise<void> {
     let matchedStake = compatibleAggregate.matchedStake;
     let matchedPriceStake = compatibleAggregate.priceStake;
     const matchedBeforeTargetEvidence = matchedStake;
+    const observedAt = new Date();
+    const currentTargetVolume = tradedVolumeAtPrice(
+      runner.ex?.tradedVolume ?? [],
+      targetPrice,
+    );
     // Attribute only volume at our exact target after clearing the captured
     // queue. Comparing cumulative target evidence with the durable aggregate
     // prevents the one-second monitor from counting the same fill twice.
-    const restingTargetStake = Math.min(
-      stake - initialImmediateStake,
-      Math.max(
-        0,
-        tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice) -
-          num(trade.layTradedVolumeBaseline) -
-          num(trade.layQueueAhead),
-      ),
+    const attribution = attributeDelayedLayVolume(
+      stake,
+      initialImmediateStake,
+      num(trade.layTradedVolumeBaseline),
+      num(trade.layQueueAhead),
+      currentTargetVolume,
+      matchedStake,
+      trade.goalAfterEntry,
     );
-    const evidencedTargetStake = initialImmediateStake + restingTargetStake;
-    if (evidencedTargetStake > matchedStake + 0.005) {
+    const evidencedTargetStake = attribution.creditableStake;
+    const newlyCreditedStake = evidencedTargetStake - matchedStake;
+    if (newlyCreditedStake > 0.005) {
       const targetFill = addEqualLayFill(
         stake,
         matchedStake,
@@ -853,11 +865,84 @@ async function monitorRestingLays(generation: number): Promise<void> {
       );
       matchedStake = targetFill.matchedStake;
       matchedPriceStake = targetFill.priceStake;
+    }
+
+    if (attribution.uncertainStake > num(trade.layUncertainAfterGoalStake) + 0.005) {
+      await slog(
+        "warn",
+        `UNCERTAIN DELAYED VOLUME ${trade.eventName} — £${attribution.uncertainStake.toFixed(2)} ` +
+          `of possible target fill was first visible after goal detection and was not credited`,
+        {
+          tradeId: trade.id,
+          goalDetectedAt: trade.goalDetectedAt,
+          observedAt,
+          previousObservedAt: trade.layLastVolumeObservedAt,
+          currentTargetVolume,
+          evidencedStake: attribution.evidencedStake,
+          creditedStake: matchedStake,
+        },
+      );
+    }
+
+    const now = observedAt;
+    const fullyHedged = isStakeFullyMatched(stake, matchedStake);
+    const averageLayPrice =
+      matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice;
+    if (!running || generation !== runGeneration) return;
+    const updated = await db
+      .update(soccerTradesTable)
+      .set({
+        status: fullyHedged ? "HEDGED" : "OPEN",
+        layMatchedStake: matchedStake.toFixed(2),
+        layMatchedPriceStake: matchedPriceStake.toFixed(2),
+        layLastTradedVolume: currentTargetVolume.toFixed(2),
+        layLastVolumeObservedAt: observedAt,
+        layUncertainAfterGoalStake: attribution.uncertainStake.toFixed(2),
+        layMatchedAt: fullyHedged ? now : null,
+        layPrice: averageLayPrice.toFixed(2),
+        exitOdds: fullyHedged ? averageLayPrice.toFixed(2) : null,
+        exitReason: fullyHedged
+          ? `Equal-stake lay fully matched @ weighted average ${averageLayPrice.toFixed(2)}`
+          : `Partial lay evidence: £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} matched`,
+      })
+      .where(
+        trade.goalAfterEntry
+          ? and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "OPEN"),
+              eq(soccerTradesTable.layMatchedStake, trade.layMatchedStake),
+              eq(
+                soccerTradesTable.layMatchedPriceStake,
+                trade.layMatchedPriceStake,
+              ),
+              eq(
+                soccerTradesTable.layLastTradedVolume,
+                trade.layLastTradedVolume,
+              ),
+            )
+          : and(
+              eq(soccerTradesTable.id, trade.id),
+              eq(soccerTradesTable.status, "OPEN"),
+              eq(soccerTradesTable.goalAfterEntry, false),
+              eq(soccerTradesTable.layMatchedStake, trade.layMatchedStake),
+              eq(
+                soccerTradesTable.layMatchedPriceStake,
+                trade.layMatchedPriceStake,
+              ),
+              eq(
+                soccerTradesTable.layLastTradedVolume,
+                trade.layLastTradedVolume,
+              ),
+            ),
+      )
+      .returning({ id: soccerTradesTable.id });
+
+    if (updated.length > 0 && newlyCreditedStake > 0.005) {
       await slog(
         "info",
         `TARGET LAY EVIDENCE ${trade.eventName} — newly proved £${(matchedStake - matchedBeforeTargetEvidence).toFixed(2)} ` +
           `@ ${targetPrice.toFixed(2)}; aggregate £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} ` +
-          `(traded £${tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice).toFixed(2)}, ` +
+          `(traded £${currentTargetVolume.toFixed(2)}, ` +
           `baseline £${num(trade.layTradedVolumeBaseline).toFixed(2)}, queue £${num(trade.layQueueAhead).toFixed(2)})`,
         {
           tradeId: trade.id,
@@ -869,32 +954,6 @@ async function monitorRestingLays(generation: number): Promise<void> {
         },
       );
     }
-
-    const now = new Date();
-    const fullyHedged = isStakeFullyMatched(stake, matchedStake);
-    const averageLayPrice =
-      matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice;
-    if (!running || generation !== runGeneration) return;
-    const updated = await db
-      .update(soccerTradesTable)
-      .set({
-        status: fullyHedged ? "HEDGED" : "OPEN",
-        layMatchedStake: matchedStake.toFixed(2),
-        layMatchedPriceStake: matchedPriceStake.toFixed(2),
-        layMatchedAt: fullyHedged ? now : null,
-        layPrice: averageLayPrice.toFixed(2),
-        exitOdds: fullyHedged ? averageLayPrice.toFixed(2) : null,
-        exitReason: fullyHedged
-          ? `Equal-stake lay fully matched @ weighted average ${averageLayPrice.toFixed(2)}`
-          : `Partial lay evidence: £${matchedStake.toFixed(2)} of £${stake.toFixed(2)} matched`,
-      })
-      .where(
-        and(
-          eq(soccerTradesTable.id, trade.id),
-          eq(soccerTradesTable.status, "OPEN"),
-        ),
-      )
-      .returning({ id: soccerTradesTable.id });
 
     if (updated.length > 0 && fullyHedged) {
       await slog(
@@ -1014,9 +1073,10 @@ async function manageOpenTrades(): Promise<void> {
       const priceSaysGoal = !!layOffer && layOffer.price >= entryOdds * 1.4;
       if (scoreSaysGoal || (currentTotal === undefined && priceSaysGoal)) {
         goalAfterEntry = true;
+        const goalDetectedAt = new Date();
         const updated = await db
           .update(soccerTradesTable)
-          .set({ goalAfterEntry: true })
+          .set({ goalAfterEntry: true, goalDetectedAt })
           .where(
             and(
               eq(soccerTradesTable.id, trade.id),
@@ -1027,7 +1087,9 @@ async function manageOpenTrades(): Promise<void> {
         if (updated.length > 0) {
           await slog(
             "warn",
-            `GOAL against us in ${trade.eventName} (${scoreSaysGoal ? `score now totals ${currentTotal}` : `${trade.selectionName} spiked to ${layOffer?.price}`}) — resting lay was not yet confirmed matched`,
+            `GOAL against us in ${trade.eventName} (${scoreSaysGoal ? `score now totals ${currentTotal}` : `${trade.selectionName} spiked to ${layOffer?.price}`}) — ` +
+              `resting lay credit frozen at £${num(trade.layMatchedStake).toFixed(2)}; later delayed volume will remain uncertain`,
+            { tradeId: trade.id, goalDetectedAt },
           );
         }
       }
@@ -1105,14 +1167,9 @@ async function settleTrades(): Promise<void> {
     // monitor ticks, then settle from the durable target-fill aggregate.
     const targetPrice = num(trade.targetLayPrice ?? trade.layPrice);
     const immediateStake = num(trade.layImmediateMatchedStake);
-    const finalRestingStake = Math.min(
-      stake - immediateStake,
-      Math.max(
-        0,
-        tradedVolumeAtPrice(runner.ex?.tradedVolume ?? [], targetPrice) -
-          num(trade.layTradedVolumeBaseline) -
-          num(trade.layQueueAhead),
-      ),
+    const finalTargetVolume = tradedVolumeAtPrice(
+      runner.ex?.tradedVolume ?? [],
+      targetPrice,
     );
     const compatibleAggregate = compatibleLayAggregate(
       trade.status, stake, num(trade.layPrice),
@@ -1121,7 +1178,17 @@ async function settleTrades(): Promise<void> {
     );
     let matchedStake = compatibleAggregate.matchedStake;
     let matchedPriceStake = compatibleAggregate.priceStake;
-    const evidencedTargetStake = immediateStake + finalRestingStake;
+    const underWon = runner.status === "WINNER";
+    const attribution = attributeDelayedLayVolume(
+      stake,
+      immediateStake,
+      num(trade.layTradedVolumeBaseline),
+      num(trade.layQueueAhead),
+      finalTargetVolume,
+      matchedStake,
+      freezeDelayedLayCreditAtSettlement(underWon),
+    );
+    const evidencedTargetStake = attribution.creditableStake;
     if (evidencedTargetStake > matchedStake + 0.005) {
       const reconciled = addEqualLayFill(
         stake,
@@ -1135,7 +1202,6 @@ async function settleTrades(): Promise<void> {
     }
     const averageLayPrice =
       matchedStake > 0 ? matchedPriceStake / matchedStake : targetPrice;
-    const underWon = runner.status === "WINNER";
     const net = equalStakeCombinedProfit(
       stake,
       entryOdds,
@@ -1156,6 +1222,9 @@ async function settleTrades(): Promise<void> {
         status: settledStatus,
         layMatchedStake: matchedStake.toFixed(2),
         layMatchedPriceStake: matchedPriceStake.toFixed(2),
+        layLastTradedVolume: finalTargetVolume.toFixed(2),
+        layLastVolumeObservedAt: new Date(),
+        layUncertainAfterGoalStake: attribution.uncertainStake.toFixed(2),
         layPrice:
           matchedStake > 0 ? averageLayPrice.toFixed(2) : trade.layPrice,
         profit: net.toFixed(2),
@@ -1164,12 +1233,24 @@ async function settleTrades(): Promise<void> {
         exitReason:
           `${underWon ? "Under won" : "Line broken"} — settled back plus ` +
           `£${matchedStake.toFixed(2)} of £${stake.toFixed(2)} resting target lay fills ` +
-          `@ ${matchedStake > 0 ? averageLayPrice.toFixed(2) : "n/a"}`,
+          `@ ${matchedStake > 0 ? averageLayPrice.toFixed(2) : "n/a"}` +
+          (attribution.uncertainStake > 0
+            ? `; £${attribution.uncertainStake.toFixed(2)} delayed post-goal volume excluded as uncertain`
+            : ""),
       })
       .where(
         and(
           eq(soccerTradesTable.id, trade.id),
           inArray(soccerTradesTable.status, ["OPEN", "HEDGED"]),
+          eq(soccerTradesTable.layMatchedStake, trade.layMatchedStake),
+          eq(
+            soccerTradesTable.layMatchedPriceStake,
+            trade.layMatchedPriceStake,
+          ),
+          eq(
+            soccerTradesTable.layLastTradedVolume,
+            trade.layLastTradedVolume,
+          ),
         ),
       )
       .returning({ id: soccerTradesTable.id });

@@ -8,6 +8,8 @@ import {
   betfairTickFloor,
   restingLayHasEnoughTradedVolume,
   tradedVolumeAtPrice,
+  attributeDelayedLayVolume,
+  freezeDelayedLayCreditAtSettlement,
   immediateLayFill,
   ouLineFromMarketType,
   firstHalfGoalLineFromMarketType,
@@ -480,6 +482,41 @@ describe("same-stake lay lock", () => {
       priceStake: 80,
       averageOdds: 1.6,
     });
+  });
+});
+
+describe("delayed resting-lay attribution", () => {
+  it("credits queue-clearing volume observed before a goal", () => {
+    expect(attributeDelayedLayVolume(50, 0, 100, 20, 145, 0, false))
+      .toEqual({ evidencedStake: 25, creditableStake: 25, uncertainStake: 0 });
+  });
+
+  it("does not credit new volume first observed after a goal", () => {
+    expect(attributeDelayedLayVolume(50, 0, 100, 20, 160, 15, true))
+      .toEqual({ evidencedStake: 40, creditableStake: 15, uncertainStake: 25 });
+  });
+
+  it("preserves immediate fills when a goal is already detected", () => {
+    expect(attributeDelayedLayVolume(50, 10, 100, 20, 150, 10, true))
+      .toEqual({ evidencedStake: 40, creditableStake: 10, uncertainStake: 30 });
+  });
+
+  it("never attributes more than the intended equal stake", () => {
+    expect(attributeDelayedLayVolume(50, 5, 100, 10, 500, 5, false))
+      .toEqual({ evidencedStake: 50, creditableStake: 50, uncertainStake: 0 });
+  });
+
+  it("keeps a restart-restored durable match even if a later snapshot is lower", () => {
+    expect(attributeDelayedLayVolume(50, 0, 100, 20, 110, 18, false))
+      .toEqual({ evidencedStake: 0, creditableStake: 18, uncertainStake: 0 });
+  });
+
+  it("reconciles every winning Under even if an insured line survived a goal", () => {
+    expect(freezeDelayedLayCreditAtSettlement(true)).toBe(false);
+  });
+
+  it("freezes final delayed credit when the Under lost", () => {
+    expect(freezeDelayedLayCreditAtSettlement(false)).toBe(true);
   });
 });
 

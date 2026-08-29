@@ -430,6 +430,54 @@ export function tradedVolumeAtPrice(
   );
 }
 
+export interface DelayedLayVolumeAttribution {
+  evidencedStake: number;
+  creditableStake: number;
+  uncertainStake: number;
+}
+
+/** Losing selections freeze delayed fill credit; winning selections can reconcile safely. */
+export function freezeDelayedLayCreditAtSettlement(
+  backedSelectionWon: boolean,
+): boolean {
+  return !backedSelectionWon;
+}
+
+/**
+ * Attribute cumulative exact-price volume from a delayed REST snapshot.
+ *
+ * REST market books do not include an exchange publish timestamp. Before a
+ * goal is observed, queue-clearing volume is usable paper evidence. Once a
+ * goal is observed, any newly received volume has ambiguous ordering and must
+ * not improve the trade's credited match.
+ */
+export function attributeDelayedLayVolume(
+  stake: number,
+  immediateStake: number,
+  baselineVolume: number,
+  queueAhead: number,
+  currentVolume: number,
+  durableMatchedStake: number,
+  goalDetected: boolean,
+): DelayedLayVolumeAttribution {
+  const restingEvidence = Math.min(
+    Math.max(0, stake - immediateStake),
+    Math.max(0, currentVolume - baselineVolume - queueAhead),
+  );
+  const evidencedStake = Math.min(
+    Math.max(0, stake),
+    Math.max(0, immediateStake) + restingEvidence,
+  );
+  const durable = Math.min(Math.max(0, stake), Math.max(0, durableMatchedStake));
+  return {
+    evidencedStake,
+    creditableStake: goalDetected ? durable : Math.max(durable, evidencedStake),
+    uncertainStake: goalDetected
+      ? Math.max(0, evidencedStake - durable)
+      : 0,
+  };
+}
+
 /**
  * A new lay can immediately consume availableToLay liquidity at its requested
  * odds or lower. Lower odds are a better execution for the layer.

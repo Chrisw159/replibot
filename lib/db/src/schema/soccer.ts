@@ -121,6 +121,17 @@ export const soccerTradesTable = pgTable("soccer_trades", {
   targetLayPrice: numeric("target_lay_price", { precision: 6, scale: 2 }),
   layMatchedStake: numeric("lay_matched_stake", { precision: 10, scale: 2 }).notNull().default("0.00"),
   layMatchedPriceStake: numeric("lay_matched_price_stake", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  // Receipt-time evidence for delayed REST snapshots. Betfair does not expose
+  // an exchange publish timestamp here, so volume first seen after a detected
+  // goal is retained as uncertain rather than credited as a pre-goal fill.
+  layLastTradedVolume: numeric("lay_last_traded_volume", { precision: 14, scale: 2 })
+    .notNull()
+    .default("0.00"),
+  layLastVolumeObservedAt: timestamp("lay_last_volume_observed_at", { withTimezone: true }),
+  layUncertainAfterGoalStake: numeric("lay_uncertain_after_goal_stake", { precision: 10, scale: 2 })
+    .notNull()
+    .default("0.00"),
+  goalDetectedAt: timestamp("goal_detected_at", { withTimezone: true }),
   fallbackNextCheckAt: timestamp("fallback_next_check_at", { withTimezone: true }),
   fallbackAttemptCount: integer("fallback_attempt_count").notNull().default(0),
   fallbackAttemptedAt: timestamp("fallback_attempted_at", { withTimezone: true }),
